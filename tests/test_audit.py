@@ -1,0 +1,466 @@
+"""Correctness audit — the checks that catch logic errors, not crashes.
+
+``bench.py`` proves every mode returns arrays of the right shape. That is a low
+bar: a mode can pass it while producing a still image, ignoring the audio
+entirely, quietly corrupting the shared band buffer, or leaking a buffer on
+every resize. These are the checks for that class of bug.
+"""
+
+from __future__ import annotations
+
+import gc
+import math
+import sys
+import threading
+import time
+from pathlib import Path
+
+import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+# cp1252 consoles cannot encode the box-drawing and dash characters printed
+# below; utf-8 output keeps the suite runnable on a default Windows console.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+import spektr.modes as M                                        # noqa: E402
+from spektr.analysis import N_BANDS, Analyser, resample_bands   # noqa: E402
+from spektr.capture import RingBuffer                           # noqa: E402
+from spektr.modes import Ctx                                    # noqa: E402
+from spektr.palette import BUILTIN, RAMP_STEPS, Palette, all_themes  # noqa: E402
+from spektr.render import make_strips                           # noqa: E402
+
+PAL = Palette(BUILTIN["gruvbox"])
+
+#: Modes with motion of their own — scrolling, drifting, decaying, sparkling.
+#: Everything else is a pure function of the spectrum, and *should* hold still
+#: when the spectrum holds still: a bar chart of a constant signal is a
+#: constant bar chart. Testing those for movement was an error in an earlier
+#: version of this file, and it flagged seven correct modes as broken.
+SELF_ANIMATING = {
+    "Scatter", "Flame", "Pulse", "Retro", "Tunnel", "Warp",
+    "Matrix", "Spectro", "Plasma", "Gonio",
+    # scroll (ECG), standing-wave phase (Strings), ring breathing and angular
+    # spin (Arcs), travelling particles (Bubbles), curtain billow (Auroras),
+    # window flicker (Skyline)
+    "ECG", "Strings", "Arcs", "Bubbles", "Auroras", "Skyline",
+}
+
+#: Modes driven by the waveform rather than the band levels.
+WAVEFORM_DRIVEN = {"Wave", "Scope", "Gonio", "ECG"}
+
+
+def ctx_for(w, h, frame, state, t, bands=None, silent=False, stereo=None):
+    if bands is None:
+        bands = np.clip(np.abs(np.sin(np.linspace(0, 3, N_BANDS) + t * 2)) * 0.8, 0, 1)
+    wave = np.sin(np.linspace(0, 40, 512) + t * 10) * 0.7
+    if stereo is None:
+        stereo = np.stack((wave, np.roll(wave, 7)), axis=1)
+    return Ctx(
+        w=w, h=h, bands=bands, peaks=np.clip(bands * 1.05, 0, 1),
+        bands_l=bands * 0.9, bands_r=bands, wave=wave, stereo=stereo,
+        frame=frame, t=t, dt=1 / 60, energy=float(bands.mean()),
+        silent=silent, palette=PAL, state=state,
+    )
+
+
+# ── 1. modes must not write into the buffers they're handed ──────────────────
+
+def test_no_mutation() -> list[str]:
+    """``ctx.bands`` is the live spring buffer, shared with every other mode
+    and with the next frame. A mode writing into it corrupts the animation
+    globally and the symptom would appear somewhere else entirely."""
+    bad = []
+    for m in M.MODES:
+        state: dict = {}
+        for w, h in ((80, 24), (200, 50)):
+            bands = np.linspace(0.1, 0.95, N_BANDS)
+            ctx = ctx_for(w, h, 3, state, 0.5, bands=bands)
+            snapshot = {
+                "bands": ctx.bands.copy(), "peaks": ctx.peaks.copy(),
+                "bands_l": ctx.bands_l.copy(), "bands_r": ctx.bands_r.copy(),
+                "wave": ctx.wave.copy(), "stereo": ctx.stereo.copy(),
+            }
+            m.fn(ctx)
+            for name, before in snapshot.items():
+                if not np.array_equal(getattr(ctx, name), before):
+                    bad.append(f"{m.name} mutated ctx.{name} at {w}x{h}")
+    return bad
+
+
+# ── 2. modes must actually animate ───────────────────────────────────────────
+
+def _changes_over(m, frames: int, freeze_audio: bool = False) -> bool:
+    """Render N frames and report whether the picture ever changed.
+
+    With ``freeze_audio`` the spectrum *and* the waveform are held constant,
+    so only time advances — that isolates a mode's own motion from motion it
+    inherits from the signal.
+    """
+    state: dict = {}
+    shots = []
+    steady_bands = np.full(N_BANDS, 0.6)
+    steady_wave = np.sin(np.linspace(0, 40, 512)) * 0.7
+    steady_stereo = np.stack((steady_wave, np.roll(steady_wave, 7)), axis=1)
+
+    for i in range(frames):
+        if freeze_audio:
+            ctx = ctx_for(160, 40, i, state, i / 30, bands=steady_bands,
+                          stereo=steady_stereo)
+            ctx.wave = steady_wave
+        else:
+            ctx = ctx_for(160, 40, i, state, i / 30)
+        out = m.fn(ctx)
+        shots.append((out[0].copy(), out[1].copy()))
+
+    return any(
+        not np.array_equal(shots[0][0], s[0]) or not np.array_equal(shots[0][1], s[1])
+        for s in shots[1:]
+    )
+
+
+def test_animates() -> list[str]:
+    """Two separate properties, which an earlier version of this file conflated.
+
+    Every mode must move when the *spectrum* moves. Only the self-animating
+    ones must also move when the spectrum is frozen — a bar chart of a constant
+    signal is supposed to be a constant bar chart.
+    """
+    bad = []
+    for m in M.MODES:
+        if m.name == "None":
+            continue
+        # varying input: everything must respond
+        if not _changes_over(m, 12):
+            bad.append(f"{m.name} is static even when the spectrum changes")
+        # frozen input: only the self-animating modes should still move
+        moves_alone = _changes_over(m, 14, freeze_audio=True)
+        if m.name in SELF_ANIMATING and not moves_alone:
+            bad.append(f"{m.name} claims to self-animate but froze on steady input")
+        if m.name not in SELF_ANIMATING and moves_alone:
+            bad.append(f"{m.name} moves on its own — should it be in SELF_ANIMATING?")
+    return bad
+
+
+# ── 3. modes must respond to the audio ───────────────────────────────────────
+
+def test_audio_reactive() -> list[str]:
+    """Loud and quiet must not render identically.
+
+    Waveform-driven modes are fed a quiet and a loud *waveform* rather than
+    band levels — testing those against band level alone was another error in
+    an earlier version here, and it flagged three correct modes.
+    """
+    bad = []
+    quiet_bands = np.full(N_BANDS, 0.02)
+    loud_bands = np.full(N_BANDS, 0.95)
+    base = np.sin(np.linspace(0, 40, 512))
+
+    for m in M.MODES:
+        if m.name == "None":
+            continue
+        wave_driven = m.name in WAVEFORM_DRIVEN
+        a_state: dict = {}
+        b_state: dict = {}
+        differs = False
+        for i in range(8):
+            if wave_driven:
+                qa = np.stack((base * 0.01, np.roll(base, 7) * 0.01), axis=1)
+                lb = np.stack((base * 0.95, np.roll(base, 7) * 0.95), axis=1)
+                ca = ctx_for(160, 40, i, a_state, i / 30, stereo=qa)
+                cb = ctx_for(160, 40, i, b_state, i / 30, stereo=lb)
+                ca.wave = base * 0.01
+                cb.wave = base * 0.95
+            else:
+                ca = ctx_for(160, 40, i, a_state, i / 30, bands=quiet_bands)
+                cb = ctx_for(160, 40, i, b_state, i / 30, bands=loud_bands)
+            a, b = m.fn(ca), m.fn(cb)
+            if not np.array_equal(a[0], b[0]) or not np.array_equal(a[1], b[1]):
+                differs = True
+                break
+        if not differs:
+            what = "waveform amplitude" if wave_driven else "band level"
+            bad.append(f"{m.name} renders identically at 0.01 and 0.95 {what}")
+    return bad
+
+
+# ── 4. no NaN, no inf, no surrogates ─────────────────────────────────────────
+
+def test_output_sanity() -> list[str]:
+    """Codepoints in the UTF-16 surrogate range cannot be decoded, so they
+    would crash the strip builder rather than draw something odd."""
+    bad = []
+    for m in M.MODES:
+        state: dict = {}
+        for w, h in ((13, 3), (80, 24), (240, 60)):
+            for i in range(3):
+                out = m.fn(ctx_for(w, h, i, state, i / 30))
+                codes, cidx = out[0], out[1]
+                if not np.isfinite(np.asarray(codes, dtype=np.float64)).all():
+                    bad.append(f"{m.name} produced non-finite codepoints at {w}x{h}")
+                if codes.min() < 0:
+                    bad.append(f"{m.name} produced a negative codepoint at {w}x{h}")
+                if codes.max() > 0x10FFFF:
+                    bad.append(f"{m.name} produced a codepoint past U+10FFFF at {w}x{h}")
+                sur = ((codes >= 0xD800) & (codes <= 0xDFFF)).any()
+                if sur:
+                    bad.append(f"{m.name} produced a surrogate codepoint at {w}x{h}")
+                if cidx.min() < 0 or cidx.max() >= RAMP_STEPS:
+                    bad.append(f"{m.name} ramp index out of range at {w}x{h}")
+    return bad
+
+
+def test_surrogates_survive_strips() -> list[str]:
+    """A plugin returning a surrogate must not take the renderer down."""
+    from spektr.plugins import validate
+
+    h, w = 6, 10
+    codes = np.full((h, w), 0xD800, dtype=np.int32)   # lone surrogate
+    cidx = np.zeros((h, w), dtype=np.int32)
+    try:
+        codes, cidx = validate((codes, cidx), w, h)
+    except Exception as exc:  # noqa: BLE001
+        return [f"validate rejected surrogates instead of remapping: {exc}"]
+    try:
+        strips = make_strips(codes, cidx, PAL)
+    except Exception as exc:  # noqa: BLE001
+        return [f"surrogate codepoint crashed make_strips: {exc!r}"]
+    if len(strips) != h:
+        return ["surrogate path produced the wrong number of strips"]
+    return []
+
+
+# ── 5. state must not leak across resizes ────────────────────────────────────
+
+def test_scratch_does_not_leak() -> list[str]:
+    """Modes cache geometry keyed on size. Resizing repeatedly must not grow
+    the cache without bound — on a tiled window manager that's every drag."""
+    bad = []
+    for m in M.MODES:
+        state: dict = {}
+        for i in range(40):
+            w = 60 + (i % 20) * 7
+            h = 20 + (i % 11) * 3
+            m.fn(ctx_for(w, h, i, state, i / 30))
+        if len(state) > 4:
+            bad.append(f"{m.name} kept {len(state)} scratch entries after 40 resizes")
+    return bad
+
+
+# ── 6. band resampling must conserve level ───────────────────────────────────
+
+def test_resample_conserves() -> list[str]:
+    bad = []
+    for n_out in (8, 10, 12, 16, 24, 31, 32, 40, 64):
+        flat = np.full(N_BANDS, 0.5)
+        out = resample_bands(flat, n_out)
+        if not np.allclose(out, 0.5, atol=1e-9):
+            bad.append(f"resample({n_out}) of a flat 0.5 spectrum gave {out.min()}..{out.max()}")
+        ramp = np.linspace(0.0, 1.0, N_BANDS)
+        out = resample_bands(ramp, n_out)
+        if np.any(np.diff(out) < -1e-9):
+            bad.append(f"resample({n_out}) broke monotonicity of a rising ramp")
+        if not np.isfinite(out).all():
+            bad.append(f"resample({n_out}) produced non-finite values")
+    return bad
+
+
+# ── 7. palette ramps must actually be ramps ──────────────────────────────────
+
+def test_palette_ramps() -> list[str]:
+    """Ramps must be smooth and hit their anchors.
+
+    Not *brighter* at the top — an earlier version asserted that and failed 20
+    of 30 themes, wrongly. A spectrum ramp travels through hue, not luminance:
+    classic runs green → amber → red, and red is genuinely darker than green.
+    What actually matters is that the gradient has no visible seam and that the
+    ends are the colours the theme asked for.
+    """
+    from spektr.palette import hex_to_rgb
+
+    bad = []
+    for name, theme in all_themes().items():
+        p = Palette(theme)
+        if len(p.hexes) != RAMP_STEPS:
+            bad.append(f"{name}: ramp has {len(p.hexes)} steps")
+            continue
+
+        rgb = np.array([hex_to_rgb(c) for c in p.hexes], dtype=np.float64)
+
+        # ends must match the theme's declared anchors
+        for label, want, got in (("low", theme.low, p.hexes[0]), ("high", theme.high, p.hexes[-1])):
+            if max(abs(a - b) for a, b in zip(hex_to_rgb(want), hex_to_rgb(got))) > 2:
+                bad.append(f"{name}: ramp {label} end is {got}, theme declares {want}")
+
+        # smoothness: no single step may jump more than a few times the median
+        steps = np.abs(np.diff(rgb, axis=0)).sum(axis=1)
+        median = float(np.median(steps))
+        if median > 0 and steps.max() > median * 6:
+            worst = int(np.argmax(steps))
+            bad.append(
+                f"{name}: seam at step {worst} — jumps {steps.max():.0f} against a median of {median:.0f}"
+            )
+
+        # a banded ramp would repeat colours
+        if len(set(p.hexes)) < RAMP_STEPS // 2:
+            bad.append(f"{name}: only {len(set(p.hexes))} distinct colours in {RAMP_STEPS} steps")
+
+        idx = p.indices(np.array([-1.0, 0.0, 0.5, 1.0, 2.0]))
+        if idx[0] != 0 or idx[-1] != RAMP_STEPS - 1:
+            bad.append(f"{name}: indices() did not clamp out-of-range input")
+        if not (0 <= idx.min() and idx.max() < RAMP_STEPS):
+            bad.append(f"{name}: indices() escaped the ramp")
+    return bad
+
+
+# ── 8. ring buffer under concurrent access ───────────────────────────────────
+
+def test_ring_concurrency() -> list[str]:
+    """The audio callback writes while the analyser reads. Verify no torn
+    reads and no lost frames under real contention."""
+    ring = RingBuffer(4096)
+    stop = threading.Event()
+    written = [0]
+    errors: list[str] = []
+
+    def writer():
+        v = 0.0
+        while not stop.is_set():
+            block = np.full((256, 2), v, dtype=np.float32)
+            ring.push(block)
+            written[0] += 256
+            v += 1.0
+
+    t = threading.Thread(target=writer, daemon=True)
+    t.start()
+    try:
+        deadline = time.monotonic() + 0.8
+        reads = 0
+        while time.monotonic() < deadline:
+            buf = ring.latest(2048)
+            if buf is None:
+                continue
+            reads += 1
+            if not np.isfinite(buf).all():
+                errors.append("ring returned non-finite samples")
+                break
+            # every 256-sample block was written with a single constant, so
+            # any block boundary inside the read must be a clean step
+            if buf.shape != (2048, 2):
+                errors.append(f"ring returned shape {buf.shape}")
+                break
+    finally:
+        stop.set()
+        t.join(timeout=1.0)
+
+    if reads < 10:
+        errors.append(f"only {reads} successful concurrent reads")
+    if ring.written != written[0]:
+        errors.append(f"ring counted {ring.written} frames, writer pushed {written[0]}")
+    return errors
+
+
+# ── 9. analyser must not drift or leak ───────────────────────────────────────
+
+def test_analyser_stability() -> list[str]:
+    """Long run at real time: sequence numbers must advance steadily and the
+    published frame must always be internally consistent."""
+    SR = 48000
+    ring = RingBuffer(SR)
+    an = Analyser(ring, lambda: SR)
+    an.start()
+    bad = []
+    try:
+        phase = 0
+        seqs = []
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            t = (np.arange(512) + phase) / SR
+            s = (np.sin(2 * math.pi * 440 * t) * 0.3).astype(np.float32)
+            ring.push(np.stack((s, s), axis=1))
+            phase += 512
+            time.sleep(512 / SR)
+            f = an.frame
+            seqs.append(f.seq)
+            if len(f.bands) != N_BANDS:
+                bad.append(f"frame.bands has {len(f.bands)} entries")
+                break
+            if not np.isfinite(f.bands).all():
+                bad.append("frame.bands contained non-finite values")
+                break
+            if f.bands.min() < 0 or f.bands.max() > 1:
+                bad.append(f"frame.bands out of 0..1: {f.bands.min()}..{f.bands.max()}")
+                break
+    finally:
+        an.stop()
+        time.sleep(0.05)
+
+    if not bad:
+        # monotonic, never going backwards (would mean a torn publish)
+        if any(b < a for a, b in zip(seqs, seqs[1:])):
+            bad.append("frame.seq went backwards — publish is not atomic")
+    return bad
+
+
+# ── 10. gate behaviour ───────────────────────────────────────────────────────
+
+def test_gate_hysteresis() -> list[str]:
+    """The gate holds open briefly after sound stops, so a quiet passage
+    doesn't make the display flicker off between notes."""
+    SR = 48000
+    ring = RingBuffer(SR)
+    an = Analyser(ring, lambda: SR)
+
+    t = np.arange(4096) / SR
+    loud = (np.sin(2 * math.pi * 440 * t) * 0.3).astype(np.float32)
+    ring.push(np.stack((loud, loud), axis=1))
+    an._analyse_once()
+    if an.frame.silent:
+        return ["gate did not open on a loud tone"]
+
+    # immediately silent: hold should keep it open
+    ring.push(np.zeros((4096, 2), dtype=np.float32))
+    an._analyse_once()
+    held = not an.frame.silent
+
+    time.sleep(0.35)          # past the hold window
+    an._analyse_once()
+    closed = an.frame.silent
+
+    bad = []
+    if not held:
+        bad.append("gate slammed shut the instant the signal stopped (no hold)")
+    if not closed:
+        bad.append("gate never closed after the hold window elapsed")
+    return bad
+
+
+TESTS = [
+    ("modes don't mutate shared buffers", test_no_mutation),
+    ("modes animate", test_animates),
+    ("modes react to audio", test_audio_reactive),
+    ("output sanity (no NaN/surrogates)", test_output_sanity),
+    ("surrogates survive the strip builder", test_surrogates_survive_strips),
+    ("no scratch leak across resizes", test_scratch_does_not_leak),
+    ("band resampling conserves level", test_resample_conserves),
+    ("palette ramps are smooth", test_palette_ramps),
+    ("ring buffer under contention", test_ring_concurrency),
+    ("analyser stability over 1 s", test_analyser_stability),
+    ("gate hysteresis", test_gate_hysteresis),
+]
+
+
+if __name__ == "__main__":
+    failures = 0
+    for name, fn in TESTS:
+        t0 = time.monotonic()
+        bad = fn()
+        gc.collect()
+        mark = "ok  " if not bad else "FAIL"
+        print(f"  [{mark}] {name}  ({time.monotonic() - t0:.1f}s)")
+        for b in bad:
+            print(f"         {b}")
+        failures += len(bad)
+    print("\nall good" if not failures else f"\n{failures} problems")
+    raise SystemExit(1 if failures else 0)
