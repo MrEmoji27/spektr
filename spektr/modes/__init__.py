@@ -19,7 +19,7 @@ from typing import Callable
 
 import numpy as np
 
-from ..analysis import N_BANDS, resample_bands
+from ..analysis import resample_bands
 from ..palette import Palette
 from ..render import SPACE
 
@@ -58,6 +58,9 @@ class Ctx:
     silent: bool                 # True when the noise gate is shut
     palette: Palette
     state: dict = field(default_factory=dict)
+    #: How many bars the user asked for, or 0 for "fit the terminal". Read
+    #: through :attr:`n_display`; modes should not consult it directly.
+    bars: int = 0
 
     # ── derived geometry ──
     @property
@@ -81,9 +84,16 @@ class Ctx:
 
     @property
     def n_display(self) -> int:
-        """How many bars to draw. Wide terminals get more, so a 200-column
-        window doesn't end up with ten 20-cell slabs."""
-        return int(max(8, min(N_BANDS, self.w // 7)))
+        """How many bars to draw.
+
+        Defaults to fitting the terminal, so a 200-column window doesn't end up
+        with ten 20-cell slabs. A user setting overrides it, still bounded by
+        what the width can actually show — asking for 64 bars in an 80-column
+        terminal would give you one-cell bars and a worse picture.
+        """
+        if self.bars:
+            return int(max(4, min(self.bars, self.n_bands, max(4, self.w // 2))))
+        return int(max(8, min(self.n_bands, self.w // 7)))
 
     def range(self, lo: float, hi: float) -> float:
         """Mean level across a slice of the spectrum, given as fractions.

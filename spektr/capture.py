@@ -20,6 +20,7 @@ real WASAPI quirks and the fallback order earns its keep.
 from __future__ import annotations
 
 import os
+import sys
 import threading
 import time
 from typing import Callable, NamedTuple, Optional
@@ -39,6 +40,62 @@ _HRESULTS = {
     0x88890008: "AUDCLNT_E_UNSUPPORTED_FORMAT — the endpoint rejected this sample rate/channel count",
     0x8889000E: "AUDCLNT_E_SERVICE_NOT_RUNNING — the Windows Audio service is stopped",
 }
+
+
+def load_soundcard():
+    """Import ``soundcard``, with the shutdown crash patched out.
+
+    soundcard's ``_COMLibrary`` sets ``self.com_loaded`` inside a ``try`` in
+    ``__init__`` and reads it in ``__del__``. When the attribute never gets set
+    — a failed construction, or an instance dict already torn down at
+    interpreter exit — the destructor raises, and Python prints
+
+        Exception ignored in: <function _COMLibrary.__del__ ...>
+        AttributeError: '_COMLibrary' object has no attribute 'com_loaded'
+
+    as spektr closes. Harmless, but it is the last thing a user sees, and in
+    the frozen exe it looks exactly like a crash on exit.
+
+    A class-level default fixes it at the source rather than hiding the
+    message, and the fallback value is the correct one: if the flag is missing,
+    this object never initialised COM, so the destructor must not uninitialise
+    it. Guarded so a future soundcard that has already fixed this is untouched.
+    """
+    import soundcard as sc
+
+    try:
+        from soundcard import mediafoundation as _mf   # Windows only
+
+        if not hasattr(_mf._COMLibrary, "com_loaded"):
+            _mf._COMLibrary.com_loaded = False
+    except Exception:  # noqa: BLE001 — not Windows, or the internals moved
+        pass
+    return sc
+
+
+def install_shutdown_filter() -> None:
+    """Swallow destructor noise from the audio libraries at interpreter exit.
+
+    ``__del__`` failures are routed to :func:`sys.unraisablehook`, which prints
+    them and carries on. During shutdown, module globals are already being set
+    to None, so any destructor that touches one can raise through no fault of
+    its own — soundcard has several. Nothing in this class of error can be
+    acted on, and the process is going away regardless.
+
+    Deliberately narrow: only unraisables raised from inside the audio
+    libraries' own destructors are dropped, and everything else is handed to
+    whichever hook was installed before. A blanket hook would hide real bugs.
+    """
+    previous = sys.unraisablehook
+
+    def hook(unraisable):
+        func = getattr(unraisable.object, "__qualname__", "") or ""
+        module = getattr(unraisable.object, "__module__", "") or ""
+        if func.endswith("__del__") and module.startswith(("soundcard", "sounddevice")):
+            return
+        previous(unraisable)
+
+    sys.unraisablehook = hook
 
 
 def _pkg_version(module, name: str) -> str:
@@ -99,6 +156,42 @@ def _com_uninit() -> None:
         pass
 
 
+def default_tap(notes: "list[str] | None" = None) -> "Optional[Source]":
+    """Loopback of whatever the OS currently calls the default output.
+
+    This is cava's model, and it is the whole selection strategy: ask the
+    system which device is playing and record that one. cava's PulseAudio
+    input takes the default sink's monitor; its Windows capture takes the
+    default render endpoint. Neither auditions devices looking for signal.
+
+    The previous approach here enumerated every loopback endpoint and sorted
+    the one whose ``name`` equalled ``default_speaker().name`` to the front.
+    That comparison is fragile — WASAPI reports endpoint names that do not
+    always match the render device's name character for character, and when it
+    misses, the "default" ends up being whichever endpoint enumerated first,
+    which on a laptop with HDMI attached is routinely a device that never
+    plays anything. ``get_microphone`` does soundcard's own id resolution
+    instead, which is the documented way to ask this question.
+    """
+    try:
+        sc = load_soundcard()
+        speaker = sc.default_speaker()
+        mic = sc.get_microphone(id=str(speaker.name), include_loopback=True)
+        return Source(
+            mic,
+            48000,
+            max(1, min(2, int(getattr(mic, "channels", 2) or 2))),
+            None,
+            f"loopback: {speaker.name}",
+            "loopback",
+            "sc",
+        )
+    except Exception as exc:  # noqa: BLE001
+        if notes is not None:
+            notes.append(f"default output loopback unavailable: {explain_hresult(exc)}")
+        return None
+
+
 class Source(NamedTuple):
     """One candidate capture device.
 
@@ -147,6 +240,9 @@ class _LoopbackStream:
         self._ring = ring
         self._running = True
         self.error: BaseException | None = None
+        #: frames handed to the ring, and whether the recorder ever opened
+        self.pushed = 0
+        self.opened = False
         self._ready = threading.Event()
         self._thread = threading.Thread(target=self._pump, daemon=True)
         self._thread.start()
@@ -162,10 +258,16 @@ class _LoopbackStream:
             with self._mic.recorder(
                 samplerate=self._sr, channels=self._ch, blocksize=self._bs
             ) as rec:
+                self.opened = True
                 self._ready.set()
                 while self._running:
                     data = rec.record(numframes=self._bs)
                     if data is not None and len(data):
+                        # Counted so a stream that opens cleanly but never
+                        # delivers can be told apart from one that failed to
+                        # open. On WASAPI loopback those look identical from
+                        # the outside and have completely different causes.
+                        self.pushed += len(data)
                         self._ring.push(np.asarray(data, dtype=np.float32))
         except Exception as exc:  # noqa: BLE001
             self.error = exc
@@ -264,15 +366,42 @@ class Capture:
         self.on_mic = False
         self._stream = None
         self._running = False
+        #: how many sources to step past — bumped by `d`
         self._skip = 0
-        self._rescan = 0
+        #: sources that would not open, with the reason. Shown in the status
+        #: when we end up somewhere other than a loopback tap.
+        self._skipped: list[str] = []
+        #: candidates resolved by start(); None means "not enumerated yet"
+        self._cands: "list[Source] | None" = None
+        #: why enumeration produced what it did — surfaced by --monitor
+        self.notes: list[str] = []
         self._thread: threading.Thread | None = None
-        self._probe_seconds = 2.5
-        #: base watch window when holding a silent tap; grows with each sweep
-        self._watch_seconds = 6.0
 
     # ── lifecycle ──
     def start(self) -> None:
+        # Enumerate here, on the caller's thread, rather than inside the
+        # capture thread.
+        #
+        # This is not a style preference. Device discovery goes through COM,
+        # and on at least one real machine ``soundcard`` returns *no loopback
+        # endpoints at all* when it is first imported and queried from a
+        # freshly created MTA thread, while the identical call from the thread
+        # that started the process returns three. ``--diagnose`` enumerated
+        # from the main thread and saw everything; the app enumerated from its
+        # capture thread, silently got an empty list, and fell through to
+        # Stereo Mix — which is muted by default on Realtek hardware, so the
+        # display sat flat with no error anywhere.
+        #
+        # Opening still happens on the capture/pump thread, exactly as before.
+        # Only the question "what devices exist" moves, and that is the call
+        # we know works, because it is the one --diagnose has been making all
+        # along.
+        try:
+            self._cands = self.candidates()
+        except Exception as exc:  # noqa: BLE001
+            self._cands = None
+            self.notes.append(f"enumeration on the calling thread failed: {exc}")
+
         self._running = True
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
@@ -282,8 +411,21 @@ class Capture:
         self._close()
 
     def next_source(self) -> None:
-        """Drop the current source and rescan starting from the next one."""
+        """Drop the current source and reopen on the next candidate."""
         self._skip += 1
+        self._reopen()
+
+    def reset_source(self) -> None:
+        """Forget manual picks and go back to the OS default output.
+
+        `d` is sticky for the rest of the session, which is right — a manual
+        choice should not be silently undone — but there has to be a way back,
+        otherwise cycling past the device you wanted means restarting spektr.
+        """
+        self._skip = 0
+        self._reopen()
+
+    def _reopen(self) -> None:
         self._running = False
         self._close()
         time.sleep(0.05)
@@ -344,22 +486,24 @@ class Capture:
 
         # ── 1a. soundcard: the only path that actually does WASAPI loopback ──
         try:
-            import soundcard as sc
+            sc = load_soundcard()
+
+            # The default output's own loopback, resolved the way soundcard
+            # documents it. See default_tap() for why this is not the same as
+            # picking the endpoint whose name matches the default speaker's.
+            default_src = default_tap(self.notes)
+            if default_src is not None:
+                out.append(default_src)
 
             loops = [m for m in sc.all_microphones(include_loopback=True)
                      if getattr(m, "isloopback", False)]
             if not loops:
                 self.notes.append("soundcard found no loopback endpoints")
 
-            # put the current default output first — it's what you're hearing
-            try:
-                default_name = sc.default_speaker().name
-            except Exception:  # noqa: BLE001
-                default_name = None
-            if default_name:
-                loops.sort(key=lambda m: m.name != default_name)
-
+            default_name = default_src.label.split(": ", 1)[-1] if default_src else None
             for m in loops:
+                if default_name and m.name == default_name:
+                    continue          # already first in the list
                 out.append(
                     Source(
                         m, 48000, max(1, min(2, int(getattr(m, "channels", 2) or 2))),
@@ -496,16 +640,6 @@ class Capture:
                     last = exc
         raise last
 
-    def _heard_signal(self, seconds: float) -> bool:
-        self.ring.clear()
-        end = time.time() + seconds
-        while time.time() < end and self._running:
-            buf = self.ring.latest(2048)
-            if buf is not None and float(np.abs(buf).max()) > 3e-5:
-                return True
-            time.sleep(0.05)
-        return False
-
     def _run(self) -> None:
         # The capture thread enumerates devices as well as opening them, and
         # both go through COM. Give this thread an apartment for its lifetime.
@@ -517,11 +651,13 @@ class Capture:
                 _com_uninit()
 
     def _run_inner(self) -> None:
-        first_ok = None
         last_err = None
+        self._skipped = []
 
         try:
-            cands = self.candidates()
+            # Enumerated in start(), on the thread that asked us to run — see
+            # the note there. Only re-enumerate if that could not be done.
+            cands = self._cands if self._cands is not None else self.candidates()
         except (ImportError, OSError) as exc:
             # a missing library used to kill this thread silently, leaving the
             # status stuck on "starting capture…" forever
@@ -531,84 +667,47 @@ class Capture:
             self._say(f"could not enumerate audio devices: {exc}")
             return
 
-        # Output taps are auditioned; the microphone is not. Probing for "which
-        # source carries signal" and taking the first hit sounds reasonable and
-        # is wrong: launch spektr with nothing playing and every loopback tap
-        # reports silence — correctly — while the microphone picks up the room,
-        # so the room wins. spektr would then happily visualise your keyboard.
+        # Take the first source that opens, and stay on it.
         #
-        # Silence on a tap is a real answer. The mic is only reached if no tap
-        # could be opened at all, or if you ask for it with `d` or --mic.
+        # This used to audition: open each tap, measure 2.5 seconds of signal,
+        # and rotate onward if it was quiet, re-sweeping every few seconds
+        # forever. The reasoning was that a silent tap might be the wrong tap.
+        # In practice it is the wrong strategy, for the same reason cava does
+        # not do it: *silence on the default output is the correct answer* when
+        # nothing is playing, and auditioning cannot tell that apart from a bad
+        # device. What it did instead was wander onto whatever endpoint
+        # happened to enumerate first — an idle HDMI output, typically — and
+        # then keep reopening devices, so pressing play produced nothing.
+        #
+        # The system already knows which device is playing. Ask it, take that,
+        # hold it. `d` cycles manually when you want something else.
         taps = [c for c in cands if c.is_tap]
         mics = [c for c in cands if not c.is_tap]
         manual = self._skip > 0
 
-        # Outer loop: keep hunting across taps for as long as we're running.
-        # Launching spektr before pressing play, or output going to a
-        # non-default endpoint, both leave us holding a tap that is real but
-        # silent. Rather than sit there forever, hold it, watch for audio, and
-        # rotate on if none arrives. Only ever taps — never a microphone.
-        while self._running:
-            order = list(taps)
-            if self._rescan and taps:
-                r = self._rescan % len(taps)
-                order = order[r:] + order[:r]
-            if manual or self._allow_mic:
-                order += mics          # an explicit request may reach the mic
-            if order:
-                skip = self._skip % len(order)
-                order = order[skip:] + order[:skip]
+        order = list(taps)
+        if manual or self._allow_mic:
+            order += mics              # an explicit request may reach the mic
+        if order:
+            skip = self._skip % len(order)
+            order = order[skip:] + order[:skip]
 
-            first_ok = None
-            for src in order:
-                if not self._running:
-                    return
-                try:
-                    stream = self._open_source(src)
-                except Exception as exc:
-                    last_err = f"{src.label} -> {exc}"
-                    continue
-
-                self._stream = stream
-                self._say(f"probing — {src.label}")
-
-                # a manually chosen source is honoured whether or not it has signal
-                if manual or self._heard_signal(self._probe_seconds):
-                    self._settle(src, heard=True)
-                    return
-
-                if first_ok is None:
-                    first_ok = src
-                self._close()
-
-            if first_ok is None:
-                break                  # nothing opened at all — fall through
-
-            try:
-                self._stream = self._open_source(first_ok)
-            except Exception as exc:
-                last_err = f"{first_ok.label} -> {exc}"
-                break
-
-            self.label = first_ok.label
-            self.on_mic = False
-            self._say(
-                f"silent — {first_ok.label} (waiting for audio; press d to change source)"
-            )
-            # Back off as rounds go by. Someone who leaves spektr open on a
-            # silent machine shouldn't have it reopening audio devices every
-            # six seconds forever; a minute between sweeps is plenty to notice
-            # playback starting, since audio on the *held* tap is seen instantly.
-            watch = min(self._watch_seconds * (1 + self._rescan // max(1, len(taps))), 60.0)
-            if self._wait_for_audio(first_ok, watch):
-                return                 # audio arrived, or we were stopped
-
-            if len(taps) < 2:
-                self._settle(first_ok, heard=False)   # nowhere else to look
+        for src in order:
+            if not self._running:
                 return
-
-            self._close()
-            self._rescan += 1          # rotate and go round again
+            try:
+                self._stream = self._open_source(src)
+            except Exception as exc:
+                # Not swallowed. Falling past the device the OS says is playing
+                # is the single most confusing thing this class can do, and the
+                # reason has to travel with the result — it used to be reported
+                # only if *every* source failed, so landing on Stereo Mix said
+                # nothing at all about the three loopbacks that came first.
+                last_err = f"{src.label} -> {explain_hresult(exc)}"
+                self._skipped.append(last_err)
+                continue
+            self._settle(src)
+            return
 
         if not self._running:
             return
@@ -620,38 +719,54 @@ class Capture:
                 return
             try:
                 self._stream = self._open_source(src)
-                self._settle(src, heard=True)
+                self._settle(src)
                 return
             except Exception as exc:
                 last_err = f"{src.label} -> {exc}"
 
         self._say(f"no audio source. last error: {last_err}")
 
-    def _wait_for_audio(self, src: Source, seconds: float | None = None) -> bool:
-        """Hold a silent tap open and watch. True if audio turned up."""
-        end = time.time() + (self._watch_seconds if seconds is None else seconds)
-        while time.time() < end and self._running:
-            buf = self.ring.latest(2048)
-            if buf is not None and float(np.abs(buf).max()) > 3e-5:
-                self._settle(src, heard=True)
-                return True
-            time.sleep(0.1)
-        return not self._running
+    def _settle(self, src: Source) -> None:
+        """Hold the chosen source open until asked to stop.
 
-    def _settle(self, src: Source, heard: bool) -> None:
-        """Hold a chosen source open until asked to stop."""
+        The status line still distinguishes "audio is arriving" from "nothing
+        is playing", because that is the first question anyone asks when the
+        display is flat. It just never acts on it — reporting silence and
+        switching device in response to silence are very different things, and
+        only the first one is useful.
+        """
         self.label = src.label
         self.on_mic = src.kind == "mic"
 
-        if self.on_mic:
-            self._say(f"⚠ microphone — {src.label}. No output tap found; press d to cycle.")
-        elif heard:
-            self._say(f"listening — {src.label}")
-        else:
-            self._say(f"silent — {src.label} (nothing is playing; press d to change source)")
+        # Anything we had to skip to get here is part of the answer to "why is
+        # it listening to *that*?", so it goes in the status rather than into a
+        # note nobody reads. So is the fact that *you* chose it: `d` is sticky
+        # for the rest of the session, and a manual pick looks identical to a
+        # bad automatic one unless it says so.
+        why = ""
+        if self._skip > 0:
+            why = f"  |  manual pick {self._skip + 1} — press D for the default output"
+        elif self._skipped and src.kind != "loopback":
+            why = "  |  skipped " + "; ".join(self._skipped[:2])
 
+        if self.on_mic:
+            self._say(f"microphone — {src.label}. No output tap opened.{why}")
+        else:
+            self._say(f"listening — {src.label}{why}")
+
+        quiet_since = time.time()
+        reported_quiet = False
         while self._running:
-            time.sleep(0.1)
+            buf = self.ring.latest(2048)
+            if buf is not None and float(np.abs(buf).max()) > 3e-5:
+                quiet_since = time.time()
+                if reported_quiet and not self.on_mic:
+                    self._say(f"listening — {src.label}")
+                    reported_quiet = False
+            elif not reported_quiet and time.time() - quiet_since > 3.0 and not self.on_mic:
+                self._say(f"{src.label} — nothing playing (press d for another source)")
+                reported_quiet = True
+            time.sleep(0.2)
 
 
 #: What to tell someone whose audio backend isn't usable. Both the TUI and
@@ -696,13 +811,25 @@ def diagnose(seconds: float = 2.0) -> str:
     lines = ["environment"]
     lines.append(f"  sounddevice      {getattr(sd, '__version__', 'unknown')}  (playback devices, monitors, mic)")
     try:
-        import soundcard as sc
+        sc = load_soundcard()
 
         loops = [m for m in sc.all_microphones(include_loopback=True)
                  if getattr(m, "isloopback", False)]
         lines.append(
             f"  soundcard        {_pkg_version(sc, 'SoundCard')}  "
             f"— {len(loops)} WASAPI loopback endpoint(s)"
+        )
+        # This is now the entire selection rule, so it is the first thing to
+        # check when the display is flat: is the OS pointing at the device you
+        # are actually listening to?
+        try:
+            lines.append(f"  default output   {sc.default_speaker().name}")
+        except Exception as exc:  # noqa: BLE001
+            lines.append(f"  default output   could not be read — {explain_hresult(exc)}")
+        picked = default_tap()
+        lines.append(
+            f"  spektr will use  {picked.label}" if picked
+            else "  spektr will use  (default output loopback unavailable — see notes below)"
         )
     except ImportError:
         lines.append("  soundcard        NOT INSTALLED — this is what provides loopback")
@@ -821,6 +948,96 @@ def diagnose(seconds: float = 2.0) -> str:
     return "\n".join(lines)
 
 
+def monitor(seconds: float = 12.0) -> str:
+    """Run the app's own capture path headlessly and report what arrives.
+
+    ``--diagnose`` opens each device from the main thread, one at a time, and
+    measures it. That answers "can this device deliver audio", which is not
+    the same question as "is the running application receiving any". When the
+    two disagree — a device that measures fine but a flat display — everything
+    interesting is in the gap between them, and nothing in the TUI shows it.
+
+    So this builds the same :class:`Capture`, on its own thread, exactly as the
+    widget does, attaches the same analyser, and prints the pipeline stage by
+    stage once a second:
+
+        frames   samples the capture backend handed to the ring
+        rms      level in the ring, which is what the analyser reads
+        gate     whether the noise gate is open
+        bars     peak band height, i.e. what would be drawn
+
+    Where the zeros start is the answer.
+    """
+    from .analysis import Analyser
+
+    out = []
+
+    def say(text):
+        out.append(text)
+        print(text, flush=True)
+
+    cap = Capture()
+    an = Analyser(cap.ring, lambda: cap.samplerate)
+    cap.start()
+    an.start()
+
+    # What the app is actually choosing between. When this disagrees with
+    # --diagnose, the disagreement *is* the bug — enumeration is not returning
+    # the same devices in both places.
+    cands = cap._cands or []
+    kinds = {}
+    for c in cands:
+        kinds[c.kind] = kinds.get(c.kind, 0) + 1
+    say("  candidates: " + (", ".join(f"{n}x {k}" for k, n in kinds.items()) or "none"))
+    for c in cands[:6]:
+        say(f"    {c.label}")
+    if cap.notes:
+        say("  notes:")
+        for note in cap.notes:
+            say(f"    {note}")
+    say("")
+    say("Play something now. Watching the same pipeline the visualiser uses.")
+    say("")
+    say(f"  {'t':>5}  {'frames':>9}  {'rms':>9}  {'gate':>6}  {'sens':>9}  {'bars':>5}  source")
+    try:
+        end = time.time() + seconds
+        while time.time() < end:
+            time.sleep(1.0)
+            frames = cap.ring.written
+            buf = cap.ring.latest(4096)
+            rms = float(np.sqrt(np.mean(buf * buf))) if buf is not None else 0.0
+            frame = an.frame
+            gate = "shut" if frame.silent else "open"
+            peak = float(frame.bands.max()) if frame.bands.size else 0.0
+            t = seconds - (end - time.time())
+            say(f"  {t:5.1f}  {frames:>9}  {rms:9.2e}  {gate:>6}  {an._sens:9.1f}  "
+                f"{peak:5.2f}  {cap.label or cap.status}")
+    finally:
+        an.stop()
+        cap.stop()
+
+    say("")
+    stream = cap._stream
+    pushed = getattr(stream, "pushed", None)
+    if pushed is not None:
+        say(f"  the capture backend pushed {pushed} frames "
+            f"(recorder opened: {getattr(stream, 'opened', '?')})")
+    if cap._skipped:
+        say("  sources skipped on the way here:")
+        for note in cap._skipped:
+            say(f"    {note}")
+
+    say("")
+    if cap.ring.written == 0:
+        say("  Nothing reached the ring: the capture backend is not delivering.")
+    elif all("0.00e+00" in line for line in out[-int(seconds) - 4:] if "  " in line):
+        say("  The device is open but every block is digital silence.")
+    else:
+        say("  Audio reached the ring — if the display is still flat the problem")
+        say("  is downstream of capture, not in device selection.")
+    return "\n".join(out)
+
+
 def describe_devices() -> str:
     try:
         import sounddevice as sd
@@ -837,7 +1054,7 @@ def describe_devices() -> str:
             f"out={d['max_output_channels']:>2} {d['name']}"
         )
     try:
-        import soundcard as sc
+        sc = load_soundcard()
 
         loops = [m for m in sc.all_microphones(include_loopback=True)
                  if getattr(m, "isloopback", False)]

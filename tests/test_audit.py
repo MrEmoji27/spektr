@@ -412,7 +412,10 @@ def test_gate_hysteresis() -> list[str]:
     ring = RingBuffer(SR)
     an = Analyser(ring, lambda: SR)
 
-    t = np.arange(4096) / SR
+    # Enough samples to fill the bass window — the analyser reads 8192 frames
+    # at this rate and publishes nothing until it has them.
+    n = 16384
+    t = np.arange(n) / SR
     loud = (np.sin(2 * math.pi * 440 * t) * 0.3).astype(np.float32)
     ring.push(np.stack((loud, loud), axis=1))
     an._analyse_once()
@@ -420,7 +423,7 @@ def test_gate_hysteresis() -> list[str]:
         return ["gate did not open on a loud tone"]
 
     # immediately silent: hold should keep it open
-    ring.push(np.zeros((4096, 2), dtype=np.float32))
+    ring.push(np.zeros((n, 2), dtype=np.float32))
     an._analyse_once()
     held = not an.frame.silent
 

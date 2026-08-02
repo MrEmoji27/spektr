@@ -218,10 +218,10 @@ def goniometer(ctx: Ctx):
 
     pts = ctx.stereo
     if pts.size and not ctx.silent:
-        l = np.clip(pts[:, 0], -1.0, 1.0)
-        r = np.clip(pts[:, 1], -1.0, 1.0)
-        x = (r - l) * 0.7071
-        y = (r + l) * 0.7071
+        left = np.clip(pts[:, 0], -1.0, 1.0)
+        right = np.clip(pts[:, 1], -1.0, 1.0)
+        x = (right - left) * 0.7071
+        y = (right + left) * 0.7071
 
         cx, cy = (dc - 1) / 2.0, (dr - 1) / 2.0
         # squash x so the display stays circular despite non-square cells

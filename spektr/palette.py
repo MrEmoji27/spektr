@@ -112,6 +112,18 @@ BUILTIN: dict[str, Theme] = dict(
         _t("ice", "#0a2a5e", "#3aa0ff", "#e8f6ff", "#050b16", "#cfe6ff", "#3aa0ff"),
         _t("matte-black", "#4a4a4a", "#8a8a8a", "#d5d5d5", "#121212", "#bcbcbc", "#eaeaea"),
         _t("vantablack", "#333333", "#888888", "#ffffff", "#000000", "#ffffff", "#ffffff"),
+        # ── more editor ports ──
+        _t("nightfly", "#a1cd5e", "#e3d18a", "#fc514e", "#011627", "#c3ccdc", "#82aaff"),
+        _t("material", "#c3e88d", "#ffcb6b", "#f07178", "#263238", "#eeffff", "#82aaff"),
+        _t("gotham", "#2aa889", "#edb443", "#d26937", "#0c1014", "#98d1ce", "#195466"),
+        _t("oceanic", "#99c794", "#fac863", "#ec5f67", "#1b2b34", "#d8dee9", "#6699cc"),
+        _t("gruvbox-light", "#79740e", "#b57614", "#9d0006", "#fbf1c7", "#3c3836", "#076678"),
+        _t("tokyo-night-day", "#587539", "#8f5e15", "#f52a65", "#e1e2e7", "#3760bf", "#2e7de9"),
+        # ── more moods ──
+        _t("vaporwave", "#00f0c0", "#ff77e9", "#ff2e88", "#1a0b2e", "#f2e6ff", "#b967ff"),
+        _t("infrared", "#3a0000", "#c22800", "#ffd000", "#0d0000", "#ffb4a2", "#ff4800"),
+        _t("deep-sea", "#0a3d62", "#12cbc4", "#a5f3ff", "#04141f", "#b8e0e6", "#12cbc4"),
+        _t("magma", "#2c115f", "#b73779", "#fcfdbf", "#0b0417", "#f5e3ff", "#fe9f6d"),
     ]
 )
 

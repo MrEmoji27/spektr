@@ -160,3 +160,133 @@ class Picker(ModalScreen[str | None]):
 
     def action_cancel(self) -> None:
         self.dismiss(None)
+
+
+class Setting:
+    """One row of the settings panel: a label, a value, and how to change it.
+
+    Values are picked from a fixed list of stops rather than typed. Every
+    setting here has a small set of sensible values and a live preview, so
+    stepping through them with the arrow keys is both faster than typing and
+    impossible to get wrong — there is no invalid state to validate.
+    """
+
+    __slots__ = ("key", "label", "choices", "render", "apply", "note")
+
+    def __init__(self, key, label, choices, render, apply, note=""):
+        self.key = key
+        self.label = label
+        self.choices = list(choices)
+        self.render = render          # value -> str
+        self.apply = apply            # value -> None
+        self.note = note
+
+    def index_of(self, value) -> int:
+        """Nearest stop to the current value, so an --fps 37 still lands somewhere."""
+        if value in self.choices:
+            return self.choices.index(value)
+        numeric = [c for c in self.choices if isinstance(c, (int, float))]
+        if numeric and isinstance(value, (int, float)):
+            nearest = min(numeric, key=lambda c: abs(c - value))
+            return self.choices.index(nearest)
+        return 0
+
+
+class SettingsPanel(ModalScreen[None]):
+    """Live settings, in the same shape as the pickers.
+
+    Everything applies as you move — the visualiser is right there behind the
+    panel, and a settings screen you have to close to see the effect of is a
+    settings screen you fight with. There is no OK button for the same reason.
+    """
+
+    CSS = """
+    SettingsPanel {
+        align: right top;
+        background: transparent;
+    }
+    SettingsPanel > #panel {
+        width: 42;
+        height: 100%;
+        background: $surface;
+        border-left: tall $accent;
+        padding: 0 1;
+    }
+    SettingsPanel #title {
+        color: $accent;
+        text-style: bold;
+        padding: 1 0 0 0;
+    }
+    SettingsPanel OptionList {
+        background: $surface;
+        border: none;
+        height: 1fr;
+        scrollbar-size-vertical: 1;
+    }
+    SettingsPanel #hint {
+        color: $text-muted;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape,enter", "close", "Close", show=False),
+        Binding("up", "move(-1)", "Up", show=False),
+        Binding("down", "move(1)", "Down", show=False),
+        Binding("left", "step(-1)", "Lower", show=False),
+        Binding("right", "step(1)", "Raise", show=False),
+        Binding("h", "step(-1)", "Lower", show=False),
+        Binding("l", "step(1)", "Raise", show=False),
+    ]
+
+    def __init__(self, settings: Sequence[Setting], values: dict):
+        super().__init__()
+        self._settings = list(settings)
+        self._values = dict(values)
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="panel"):
+            yield Label("settings", id="title")
+            yield OptionList(id="rows")
+            yield Label("↑↓ row · ←→ change · esc done", id="hint")
+
+    def on_mount(self) -> None:
+        self._repaint()
+        self.query_one("#rows", OptionList).focus()
+
+    def _row_text(self, s: Setting) -> str:
+        value = s.render(self._values[s.key])
+        pad = " " * max(1, 14 - len(s.label))
+        line = f"  {s.label}{pad}{value}"
+        return f"{line}\n    [dim]{s.note}[/dim]" if s.note else line
+
+    def _repaint(self) -> None:
+        rows = self.query_one("#rows", OptionList)
+        keep = rows.highlighted or 0
+        rows.clear_options()
+        rows.add_options([self._row_text(s) for s in self._settings])
+        rows.highlighted = min(keep, len(self._settings) - 1)
+
+    def _current(self) -> Setting | None:
+        i = self.query_one("#rows", OptionList).highlighted
+        if i is None or i >= len(self._settings):
+            return None
+        return self._settings[i]
+
+    def action_move(self, delta: int) -> None:
+        rows = self.query_one("#rows", OptionList)
+        cur = rows.highlighted or 0
+        rows.highlighted = max(0, min(len(self._settings) - 1, cur + delta))
+
+    def action_step(self, delta: int) -> None:
+        s = self._current()
+        if s is None:
+            return
+        i = s.index_of(self._values[s.key])
+        i = max(0, min(len(s.choices) - 1, i + delta))
+        value = s.choices[i]
+        self._values[s.key] = value
+        s.apply(value)
+        self._repaint()
+
+    def action_close(self) -> None:
+        self.dismiss(None)

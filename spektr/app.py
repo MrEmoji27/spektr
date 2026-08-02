@@ -10,15 +10,17 @@ from textual.widgets import Footer, Header
 
 from . import config
 from . import modes as mode_registry
-from .pickers import Picker
+from .pickers import Picker, Setting, SettingsPanel
 from .widget import AudioVisualizer
 
 __version__ = "0.2.0"
 
 
 class Spektr(App):
+    # The screen colour is taken over by the active spektr theme once the
+    # visualiser mounts — see AudioVisualizer._paint_background.
     CSS = """
-    Screen { background: $background; }
+    Screen { background: #000000; }
     AudioVisualizer { height: 1fr; }
     """
 
@@ -30,10 +32,12 @@ class Spektr(App):
         Binding("M", "cycle_mode(-1)", "Prev mode", show=False),
         Binding("v", "pick_mode", "Modes"),
         Binding("t", "pick_theme", "Themes"),
+        Binding("c", "settings", "Settings"),
         Binding("T", "cycle_theme", "Next theme", show=False),
         Binding("f", "toggle_chrome", "Full screen"),
         Binding("s", "show_status", "Source"),
         Binding("d", "next_source", "Next source", show=False),
+        Binding("D", "default_source", "Default output", show=False),
         Binding("r", "reload", "Reload themes + plugins", show=False),
         Binding("left_square_bracket", "gain(-1)", "Sens -", show=False),
         Binding("right_square_bracket", "gain(1)", "Sens +", show=False),
@@ -188,7 +192,17 @@ class Spektr(App):
 
     def action_next_source(self) -> None:
         self.viz.restart_capture()
-        self.notify("re-scanning audio sources…", timeout=2)
+        self.notify("next audio source…", timeout=2)
+        self.set_timer(3.5, self.action_show_status)
+
+    def action_default_source(self) -> None:
+        """Back to whatever the OS calls the default output.
+
+        `d` is sticky for the session, so without this, cycling one past the
+        device you wanted means restarting spektr.
+        """
+        self.viz.reset_capture()
+        self.notify("back to the default output…", timeout=2)
         self.set_timer(3.5, self.action_show_status)
 
     def action_show_status(self) -> None:
@@ -204,6 +218,59 @@ class Spektr(App):
             severity = "warning"
 
         self.notify(f"{status}\n{viz.level}", severity=severity, timeout=7)
+
+    def action_settings(self) -> None:
+        """The live settings panel.
+
+        Sensitivity and gate are here as well as on their keys, because a
+        keybinding you have to remember is not a discoverable setting — and
+        seeing the current value is half of knowing which way to nudge it.
+        """
+        viz = self.viz
+        s = self.settings
+
+        def show_bands(v):
+            return "fit the terminal" if v == 0 else f"{v}" + ("  (resolved)" if v > 32 else "")
+
+        rows = [
+            Setting(
+                "fps", "frame rate", config.FPS_CHOICES,
+                lambda v: f"{v} fps",
+                lambda v: viz._retime(v, requested=True),
+                "the motion is timed in seconds, so this changes smoothness only",
+            ),
+            Setting(
+                "bands", "bands", config.BAND_CHOICES,
+                show_bands,
+                viz.set_bands,
+                "above 32 the analyser resolves more, below it modes draw fewer",
+            ),
+            Setting(
+                "sensitivity", "sensitivity",
+                (0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0),
+                lambda v: f"x{v:g}",
+                viz.set_sensitivity,
+                "trim on top of the automatic gain",
+            ),
+            Setting(
+                "gate", "noise gate",
+                (1e-5, 3e-5, 8e-5, 2e-4, 5e-4, 1e-3),
+                lambda v: f"{v:.0e}",
+                viz.set_gate,
+                "below this, input counts as silence",
+            ),
+            Setting(
+                "chrome", "header + footer", (True, False),
+                lambda v: "shown" if v else "hidden",
+                self._set_chrome,
+                "same as f",
+            ),
+        ]
+        values = {
+            "fps": viz._target_fps, "bands": s.bands, "sensitivity": s.sensitivity,
+            "gate": s.gate, "chrome": s.chrome,
+        }
+        self.push_screen(SettingsPanel(rows, values))
 
     def action_show_perf(self) -> None:
         self.notify(f"{self.viz.perf}\n{self.viz.level}", timeout=4)
@@ -227,6 +294,11 @@ usage: spektr [options]
        spektr plugins <command>
 
   --diagnose         probe every source and report what it delivers
+                     (says which device the OS calls the default, and which
+                      endpoint spektr resolved it to — start here if flat)
+  --monitor          run the app's own capture path headlessly and show
+                     frames/level/gate/bars once a second — use when
+                     --diagnose looks fine but the display does not move
   --devices          list every audio device and exit
   --device <n>       force a capture device by index
   --mode <name>      start in a given visualiser
@@ -346,6 +418,25 @@ def _arg(argv, flag, cast=str):
 def main() -> None:
     argv = sys.argv[1:]
 
+    # A console inherits whatever code page the terminal happens to be in.
+    # spektr prints braille and the → between theme colours, so force UTF-8
+    # before anything writes — otherwise --list-themes and --diagnose raise
+    # UnicodeEncodeError on a default Windows console. The frozen exe already
+    # does this in packaging/entry.py; this covers the pip-installed script.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
+    # Before anything touches the audio libraries: their destructors can raise
+    # during interpreter shutdown, and the traceback lands on screen after the
+    # UI is gone, which reads as a crash on exit.
+    from .capture import install_shutdown_filter
+
+    install_shutdown_filter()
+
     if argv and argv[0] == "plugins":
         raise SystemExit(_plugins_cli(argv[1:]))
 
@@ -359,6 +450,11 @@ def main() -> None:
         from .capture import diagnose
 
         print(diagnose())
+        return
+    if "--monitor" in argv:
+        from .capture import monitor
+
+        monitor()
         return
     if "--devices" in argv:
         from .capture import describe_devices

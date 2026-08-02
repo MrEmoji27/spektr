@@ -13,7 +13,6 @@ from __future__ import annotations
 import time
 import traceback
 
-import numpy as np
 from textual.reactive import reactive
 from textual.strip import Strip
 from textual.widget import Widget
@@ -35,10 +34,13 @@ SLOW_MODE_MS = 11.0
 
 
 class AudioVisualizer(Widget):
+    # background is set from the active theme in _paint_background(); the
+    # value here is only what shows for the instant before the first theme
+    # is applied
     DEFAULT_CSS = """
     AudioVisualizer {
         height: 1fr;
-        background: $background;
+        background: #000000;
     }
     """
 
@@ -52,6 +54,8 @@ class AudioVisualizer(Widget):
         self.capture = Capture(device=device, allow_mic=allow_mic)
         self.analyser = Analyser(self.capture.ring, lambda: self.capture.samplerate)
         self.analyser.sensitivity = self.settings.sensitivity
+        if self.settings.bands:
+            self.analyser.set_bands(self.settings.bands)
 
         self.palette = Palette()
         self._themes = all_themes()
@@ -223,9 +227,27 @@ class AudioVisualizer(Widget):
         if remember:
             self._preview = None
             self.settings.theme = self._theme_name
+        self._paint_background()
         self._strips = None
         self.refresh()
         return self.palette.note
+
+    def _paint_background(self) -> None:
+        """Fill the terminal with the theme's own background colour.
+
+        Left to Textual's ``$background`` the widget shows through to whatever
+        the terminal is set to, so a dark theme over a light terminal is a
+        light rectangle with coloured bars on it. A theme names its background
+        for a reason — vantablack means black, gruvbox means #282828 — and the
+        cells the modes leave blank should be that colour, not a guess.
+        """
+        colour = self.palette.theme.bg or "#000000"
+        self.styles.background = colour
+        try:
+            self.screen.styles.background = colour
+            self.app.screen.styles.background = colour
+        except Exception:  # noqa: BLE001 — not mounted yet, on_mount will redo it
+            pass
 
     def preview_theme(self, name: str) -> str:
         if self._preview is None:
@@ -267,10 +289,55 @@ class AudioVisualizer(Widget):
         self.settings.gate = v
         return v
 
+    # Absolute setters, for the settings panel. The nudge pair above is what
+    # the [ ] and g G keys use; a panel showing a value needs to be able to
+    # put it somewhere specific rather than only step it.
+    def set_sensitivity(self, value: float) -> float:
+        self.analyser.sensitivity = max(0.15, min(8.0, float(value)))
+        self.settings.sensitivity = self.analyser.sensitivity
+        return self.analyser.sensitivity
+
+    def set_gate(self, value: float) -> float:
+        v = self.analyser.set_gate(value)
+        self.settings.gate = v
+        return v
+
     def restart_capture(self) -> None:
         self.capture.next_source()
 
+    def reset_capture(self) -> None:
+        self.capture.reset_source()
+
     # ── frame loop ───────────────────────────────────────────────────────────
+
+    def _resize_bands(self, n: int) -> None:
+        """Rebuild the smoothing state for a new band count.
+
+        Silent frames carry the same length as live ones, so this only runs
+        when the setting actually changes — not every time the music pauses.
+        """
+        self._spring = Spring(n)
+        self._stereo_l = Spring(n)
+        self._stereo_r = Spring(n)
+        self._peaks = Peaks(n)
+        self._mode_state.clear()      # cached geometry is sized for the old count
+        self._strips = None
+
+    def set_bands(self, n: int) -> int:
+        """Change how many bars are drawn, live.
+
+        One control, two mechanisms. Up to the analyser's native resolution the
+        modes simply draw fewer bars out of the same analysis; past it, the
+        analyser resolves more bands for real. ``0`` restores the default,
+        which is to fit the terminal width.
+        """
+        n = int(n)
+        self.settings.bands = 0 if n <= 0 else max(8, min(64, n))
+        self.analyser.set_bands(self.settings.bands or N_BANDS)
+        self._mode_state.clear()
+        self._strips = None
+        self.refresh()
+        return self.settings.bands
 
     def _retime(self, fps: int, *, requested: bool = False) -> None:
         """Re-pace the render timer.
@@ -299,12 +366,16 @@ class AudioVisualizer(Widget):
         self._frame += 1
 
         frame = self.analyser.frame
-        targets = np.zeros(N_BANDS) if frame.silent else frame.bands
+        # The band count is settable at runtime, so the springs have to follow
+        # the analyser rather than a module constant. Cheap to check, and the
+        # alternative is a shape mismatch the moment someone changes it.
+        if len(frame.bands) != len(self._spring.x):
+            self._resize_bands(len(frame.bands))
 
-        self._spring.step(targets, dt)
+        self._spring.step(frame.bands, dt)
         self._peaks.step(self._spring.x, dt)
-        self._stereo_l.step(np.zeros(N_BANDS) if frame.silent else frame.bands_l, dt)
-        self._stereo_r.step(np.zeros(N_BANDS) if frame.silent else frame.bands_r, dt)
+        self._stereo_l.step(frame.bands_l, dt)
+        self._stereo_r.step(frame.bands_r, dt)
         if frame.seq != self._last_seq:
             self._trace.step(frame.wave, dt)
             self._last_seq = frame.seq
@@ -318,9 +389,12 @@ class AudioVisualizer(Widget):
         if self._frame % 45 == 0 and self._build_ms is not None:
             budget = 1000.0 / self._fps * 0.5
             if self._build_ms > budget and self._fps > 30:
-                self._retime(self._fps - 10)
+                # 6 rather than 10: with a coarse step the pacer can only ever
+                # sit on multiples of ten, so a machine that comfortably holds
+                # 54 gets dropped to 50 and one that wants 48 lands on 40.
+                self._retime(self._fps - 6)
             elif self._build_ms < budget * 0.35 and self._fps < self._target_fps:
-                self._retime(self._fps + 10)
+                self._retime(min(self._fps + 6, self._target_fps))
 
         # A mode that can't hold the budget gets its previous frame reused on
         # alternate ticks rather than dragging the whole UI down with it. The
@@ -375,6 +449,7 @@ class AudioVisualizer(Widget):
             silent=frame.silent,
             palette=self.palette,
             state=self._mode_state.setdefault(m.name, {}),
+            bars=self.settings.bands,
         )
 
         from .modes import empty

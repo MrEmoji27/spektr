@@ -34,7 +34,7 @@ except ModuleNotFoundError:                         # Windows
     resource = None
 
 import spektr.modes as M                                   # noqa: E402
-from spektr.analysis import FFT_SIZE, HOP, N_BANDS, Analyser  # noqa: E402
+from spektr.analysis import HOP, N_BANDS, Analyser, BandPlan  # noqa: E402
 from spektr.capture import RingBuffer                      # noqa: E402
 from spektr.modes import Ctx                               # noqa: E402
 from spektr.palette import BUILTIN, Palette                 # noqa: E402
@@ -103,8 +103,11 @@ def check_analyser() -> list[str]:
     ring = RingBuffer(SR)
     an = Analyser(ring, lambda: SR)
 
-    # cost of one analysis, measured directly
-    t = np.arange(FFT_SIZE) / SR
+    # cost of one analysis, measured directly. The window that matters is the
+    # long one — the analyser reads that many frames every hop and runs four
+    # FFTs over them (two channels x bass and mid).
+    plan = BandPlan(SR)
+    t = np.arange(plan.bass_size) / SR
     s = (np.sin(2 * math.pi * 440 * t) * 0.3).astype(np.float32)
     ring.push(np.stack((s, s), axis=1))
     for _ in range(5):
@@ -119,7 +122,7 @@ def check_analyser() -> list[str]:
     rate = SR / HOP
     duty = per * rate / 1000 * 100
 
-    print(f"    one analysis      {per:6.3f} ms  (window {FFT_SIZE}, hop {HOP})")
+    print(f"    one analysis      {per:6.3f} ms  (windows {plan.bass_size}/{plan.mid_size}, hop {HOP})")
     print(f"    analyses/sec      {rate:6.1f} Hz  at {SR} Hz sample rate")
     print(f"    continuous load   {duty:6.2f} % of one core")
 

@@ -8,33 +8,31 @@
 [![License](https://img.shields.io/badge/license-MIT-00c853)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20·%20Linux%20·%20macOS-546e7a)](#how-it-captures-audio)
 [![Modes](https://img.shields.io/badge/render%20modes-27-ff6d00)](#modes)
-[![Themes](https://img.shields.io/badge/themes-30-7c4dff)](#themes)
+[![Themes](https://img.shields.io/badge/themes-40-7c4dff)](#themes)
 [![Built with Textual](https://img.shields.io/badge/built%20with-Textual-5e35b1)](https://textual.textualize.io/)
 
 </div>
 
-```
-                                        ──────
-───────                         ─────── ▅▅▅▅▅▅
-▇▇▇▇▇▇▇                         ███████ ██████
-███████                         ███████ ██████
-███████                         ███████ ██████ ▄▄▄▄▄▄
-███████ ───────         ─────── ███████ ██████ ██████
-███████ ▆▆▆▆▆▆▆         ▆▆▆▆▆▆▆ ███████ ██████ ██████
-███████ ███████         ███████ ███████ ██████ ██████ ▂▂▂▂▂▂
-███████ ███████ ▄▄▄▄▄▄▄ ███████ ███████ ██████ ██████ ██████ ▁▁▁▁▁▁ ▅▅▅▅▅▅
-███████ ███████ ███████ ███████ ███████ ██████ ██████ ██████ ██████ ██████
-███████ ███████ ███████ ███████ ███████ ██████ ██████ ██████ ██████ ██████
-███████ ███████ ███████ ███████ ███████ ██████ ██████ ██████ ██████ ██████
-```
-
+<!-- Drop a screenshot or GIF in docs/ and point this at it:
+     <img src="docs/demo.gif" alt="spektr running" width="900"> -->
 
 Point it at nothing. Play music anywhere — Spotify, a browser tab, a game, a call — and
-spektr draws it: an overlapped 2048-point FFT across 32 log-spaced bands from 20 Hz to
-20 kHz, rendered with braille sub-characters so the picture moves at four times the
-vertical resolution of a text cell.
+spektr draws it: overlapped FFTs across 32 log-spaced bands (settable) from 50 Hz to 10 kHz, laid
+out the way cava does it, rendered with braille sub-characters so the picture moves at
+four times the vertical resolution of a text cell.
 
-**Twenty-seven render modes. Thirty themes. Locked 60 fps.**
+**Twenty-seven render modes. Forty themes. Locked 60 fps.**
+
+## Install
+
+**Windows, no Python required** — grab `spektr.exe` from the
+[latest release](https://github.com/MrEmoji27/spektr/releases) and double-click it.
+A black window opens with the visualiser in it; that's a terminal, and it's meant to
+happen. Windows may warn that it doesn't recognise the app — **More info → Run anyway**;
+the build is unsigned because certificates cost money. There's an installer in the same
+release if you'd rather have a Start Menu entry and a faster start.
+
+**With Python 3.10+:**
 
 ```bash
 pip install spektr
@@ -50,100 +48,20 @@ pip install -e .
 spektr
 ```
 
+On Windows you can also just double-click `start.bat`, which builds a private
+environment on first run and starts spektr on every run after.
+
 No configuration, no file to point it at, no music service to log into. It finds your
 output device, taps it, and draws.
 
 ---
 
-**Contents** · [Gallery](#gallery) · [Modes](#modes) · [Themes](#themes) ·
+**Contents** · [Modes](#modes) · [Themes](#themes) ·
 [Plugins](#plugins) · [Keys](#keys) · [Command line](#command-line) ·
 [Audio capture](#how-it-captures-audio) · [How it works](#how-it-works) ·
 [Development](#development)
 
 ---
-
-## Gallery
-
-Snapshots below are the real render path with the colour stripped out — in the terminal
-every cell carries one of 64 gradient steps from the active theme.
-
-<details open>
-<summary><b>Flame</b> — fire, licking upward from each band</summary>
-
-```
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣤⡀⠀⠀⠀⠀⠀⣀⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣴⣶⡆⠀⠀⠀⠀⠀⢠⣤⣤
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⣾⣿⡇⠀⠀⠀⠀⠠⣿⣿⠆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣹⣿⣯⠀⠀⠀⠀⠀⣼⣿⡯
-⠀⠀⢀⣀⠀⠀⠀⠀⠀⣶⣿⣿⠆⠀⠀⠀⠀⢘⣿⣿⡿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣤⡄⠀⠀⠀⣿⣿⣷⡀⠀⠀⠀⠰⣿⣿⣗
-⠀⠀⣸⣿⣧⡀⠀⠀⠸⣾⣿⣿⡃⠀⠀⠀⠀⢸⣿⣿⣧⠀⠀⠀⢀⣶⣦⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣿⣿⡟⠀⠀⠀⣹⣿⣿⣯⠀⠀⠀⣾⣿⣿⡯⠀⠀⠀⠀⠀⢰⣶⣶
-⠀⠀⣻⣿⣿⡧⠀⠀⣺⣿⣿⣿⢆⠀⠀⠀⠀⣿⣿⣿⣟⡄⠀⠀⢈⣿⣿⡧⠀⠀⠀⢀⣀⣀⠀⠀⠀⠀⠀⣜⣿⣿⡧⠀⠀⠀⣹⣿⣿⣿⣧⠀⢨⣿⣿⣿⣷⠀⠀⠀⠀⠀⣿⣿⣇
-⠀⠀⢿⣿⣿⣿⡄⠀⣿⣿⣿⣿⡾⠀⠀⠀⣰⣿⣿⣿⡏⡄⠀⠀⠸⣿⣿⣷⢆⠀⠀⢿⣿⣷⡄⠀⠀⠀⠐⣽⣿⣿⣯⡄⠀⠀⣺⣿⣿⣿⣷⡄⣏⣿⣿⣿⡯⡇⠀⠀⢀⣸⣿⣿⡏⡄
-⠀⠐⣻⣿⣿⣿⣾⢸⣹⣿⣿⣿⣧⡇⠀⡰⣼⣿⣿⣿⣷⡃⠀⠀⣫⣿⣿⣿⡟⡄⢘⣿⣿⣿⣷⠀⠀⠠⣶⣿⣿⣿⡟⡃⠀⠀⣽⣿⣿⣿⣿⠠⡹⣿⣿⣿⣿⡇⠀⠀⣴⣿⣿⣿⣷⠃⠀⠀⠀⠀⣶⣶⡄
-⠀⢰⣽⣿⣿⣿⡇⣇⢿⣿⣿⣿⣿⣲⡀⣫⣿⣿⣿⣿⣯⡁⠀⢸⢾⣿⣿⣿⣷⢦⢨⣿⣿⣿⣷⣧⠀⣚⣿⣿⣿⣿⣿⡁⠀⢰⣼⣿⣿⣿⣿⡷⡧⣿⣿⣿⣿⣷⡂⢘⣿⣿⣿⣿⣿⡅⠀⠀⠀⣻⣿⣿⣇⡀
-⢀⣾⣿⣿⣿⣿⣿⣗⣿⣿⣿⣿⣿⣿⣥⣼⣿⣿⣿⣿⡇⠆⢀⡗⣿⣿⣿⣿⣿⢚⡹⣿⣿⣿⣿⣷⣃⣽⣿⣿⣿⣿⣧⡇⠀⢎⣿⣿⣿⣿⣿⣓⣏⣿⣿⣿⣿⣿⡽⢨⣿⣿⣿⣿⣇⡆⠀⣀⣹⣿⣿⣿⣿⣎
-```
-
-</details>
-
-<details>
-<summary><b>Arcs</b> — hollow rings, one per band, pushed out by level</summary>
-
-```
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣀⣠⣤⣤⠤⠶⠶⠶⠒⠒⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠓⠒⠲⠶⠶⠦⢤⣤⣤⣀⣀⡀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⣤⡴⠶⠛⠛⠉⠉⠁⠀⠀⠀⢀⣀⣀⣠⣤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⢤⣤⣀⣀⣀⡀⠀⠀⠀⠉⠉⠙⠛⠳⠶⣤⣄⣀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣤⣶⠾⠛⠉⠁⠀⠀⠀⣀⣠⡤⠶⠒⠛⠉⠉⠁⠀⠀⢀⣀⣀⣀⣀⡀⠀⠀⠀⣀⣀⣀⣀⣀⠀⠀⠀⠉⠉⠙⠓⠲⠦⣤⣀⡀⠀⠀⠀⠉⠙⠻⢶⣦⣄
-⠀⠀⠀⠀⠀⠀⠀⣠⣾⡿⠋⠀⠀⠀⠀⢀⣤⡶⠛⠉⠀⠀⠀⢀⣠⠤⠖⢒⣉⡭⠥⠴⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠲⠤⠭⣍⣑⠒⠦⢤⣀⠀⠀⠀⠈⠙⠳⣦⣄⠀⠀⠀⠀⠈⠻⣿⣦⡀
-⠀⠀⠀⠀⠀⢀⣾⣿⠋⠀⠀⠀⠀⢀⣴⡿⠁⠀⠀⠀⠀⣤⠞⠋⣠⡶⠛⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠙⠳⣦⡈⠛⢦⡄⠀⠀⠀⠀⠹⣷⣄⠀⠀⠀⠀⠈⢻⣿⣆
-⠀⠀⠀⠀⠀⢸⣿⡇⠀⠀⠀⠀⠀⣾⣿⠀⠀⠀⠀⠀⢼⡏⠀⢼⣟⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢘⣿⡆⠈⣿⠄⠀⠀⠀⠀⢸⣿⡆⠀⠀⠀⠀⠀⣿⣿
-⠀⠀⠀⠀⠀⠘⣿⣷⡀⠀⠀⠀⠀⠘⢿⣦⠀⠀⠀⠀⠈⠿⣄⡈⠻⣦⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣠⡾⠋⣀⡼⠏⠀⠀⠀⠀⢠⣾⠟⠀⠀⠀⠀⠀⣰⣿⡟
-⠀⠀⠀⠀⠀⠀⠈⠻⣿⣦⡀⠀⠀⠀⠀⠙⠷⣦⣀⠀⠀⠀⠈⠙⠲⠤⣍⣙⠒⠦⠤⢤⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣠⠤⠤⠖⢚⣉⡥⠴⠚⠉⠀⠀⠀⢀⣠⡶⠟⠁⠀⠀⠀⠀⣠⣾⡿⠋
-⠀⠀⠀⠀⠀⠀⠀⠀⠈⠙⠿⣶⣤⣀⠀⠀⠀⠀⠉⠛⠲⠦⣤⣀⣀⠀⠀⠀⠉⠉⠑⠒⠒⠒⠒⠒⠀⠀⠐⠒⠒⠒⠒⠒⠉⠉⠁⠀⠀⢀⣀⣠⡤⠶⠚⠋⠁⠀⠀⠀⢀⣠⣴⡾⠟⠉
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠙⠛⠷⢦⣤⣀⣀⠀⠀⠀⠀⠉⠉⠛⠓⠒⠲⠶⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠤⠴⠶⠒⠒⠛⠋⠉⠁⠀⠀⠀⢀⣀⣠⣤⠶⠟⠛⠉
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠉⠛⠛⠳⠶⠶⠤⣤⣤⣤⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣠⣤⣤⡤⠴⠶⠶⠛⠛⠋⠉⠁
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠉⠁
-```
-
-</details>
-
-<details>
-<summary><b>Skyline</b> — a city at night, windows lit by their band</summary>
-
-```
-                        ╹╹╹╹╹╹╹ ╹╹╹╹╹╹╹
-                        ███████ ███████
-                        ████▀██ █████▀█
-                        ███████ ███████
-                        ███████ ███████
-                ███████ ███████ ███████ ██████
-                ▀██▀███ █▀██▀██ ██▀████ ███▀██
-███████         ███████ ███████ ███████ ██████ ██████ ██████ ██████
-████▀██ ███████ ███████ █▀█████ █████▀█ ▀█████ ██████ █▀████ ██████ ██████
-███████ ███████ ███████ ███████ ███████ ██████ ██████ ██████ ██████ ██████
-███████ ███████ ███▀██▀ █▀█████ ██▀██▀█ ███▀██ █████▀ ████▀█ ██████ ██▀███
-███████ ███████ ███████ ███████ ███████ ██████ ██████ ██████ ██████ ██████
-```
-
-</details>
-
-<details>
-<summary><b>Matrix</b> — digital rain, falling faster when it's loud</summary>
-
-```
-   ﾆ    ﾆ      ﾍ   *    ｶ      ｽ            ﾎ 6 ﾏ    4   7         ﾒ 8ｳ94>
-   ﾀ         ｾ2ﾏ        3      ﾕ  1         ﾜ ｳ ﾁ  ﾃ ﾉ   ﾂ        ﾐ3 >ﾎﾁｸﾐ
-   =     2<  ﾜｴﾊ    ｾ ﾍ           ﾕ         < ﾒｹﾈ ﾗﾑ ﾄ ﾗ ｻ        ﾛ3ｾﾆﾓ|ｶﾗ
-   ﾒ     ﾋﾁ  ﾝﾚﾄ    ﾆ ｼ           8ﾝ        ﾓ ﾄ1ｳ ﾆﾚ ﾘ ﾈ ｹ        ﾑ ﾍ ﾒ6ｿﾍ
-   ﾈ     ﾉﾖ  ｻﾚﾁ    ｳ4ﾀ           ﾌﾜ 1      4 ﾆﾐﾓ ﾎ| ｺ ﾖ        ﾊｾ6 ﾃ 6> ﾐ
-       ﾅ 6=  ﾌ>5    ﾒ5ｾ   ｾ       ｵｿ |      ｲ ﾙｿﾊ ｼﾆ ﾒ 8  >     ﾊﾛｷ ﾐ ﾅﾃ 5
-       ﾔ ﾎ   ﾁ 4    ﾊﾌｳ   3       69 ｿ     <ﾁ ｷﾎ5 8ﾎ   ﾔ  ｺ     5ﾃｶ ｼ ｷﾒ ｿ
-      ﾘｵ ﾙ   8 ﾚ  0 5ﾆ7   ﾈﾆ      ﾕ5 ﾏ     ﾆﾉ ﾝｸｴ 8ｵ      ﾚ     ｽﾙ  ﾍ  5 ﾝ
- =  ﾊｿﾈ  ﾐ   ｸ   ﾃﾁ ﾄﾖ6   ﾁﾗ         ｳ    7ﾚﾙ ｿﾚ3ﾇﾅｶﾈ     *     2ｷ  ﾅ  ｽ
- ﾍ  ﾕﾋﾋ  ﾙ  ﾁｻ   ｱｽ 6ﾋﾉ   ﾃﾅ          ﾎ  ||ﾗﾒ ｼﾜ ｱｹｷ2           4|  ﾇ
-5ﾚ  ﾒｴ   ﾙ  ﾌ    ﾈﾂ ﾁ*9ｻ  ｸ9     ｽ    ｸ  ﾁﾚﾀ     82ﾔﾊ           ｾﾗ
-ｸﾊﾂ ﾇﾀ   ﾊ  ﾙ    |ﾈ ﾃﾂｾ|  ﾓﾅﾁ   62    ｲ  ｸﾚﾖ     ﾜﾈ<ﾀ           ｲｻ
-ﾝ ﾖ ｾ+   | ｱｾ    ﾆｲ  = 7  +ﾈ3ﾑ  ｺﾁ    ﾃ  ﾌﾚ4      ｶﾝﾗ ﾛ         ﾁｹ
-```
-
-</details>
 
 ## Modes
 
@@ -170,17 +88,23 @@ Listed in the order the picker cycles them.
 A twenty-eighth entry, **None**, is registered as the off switch — it draws nothing.
 That is why the test output counts 28 modes against the twenty-seven listed here.
 
+Still frames of a few of them, straight from the render path: **[docs/gallery.md](docs/gallery.md)**.
+
 ## Themes
 
-Thirty built in, previewed live from the `t` picker: `classic`, `gruvbox`, `catppuccin`
-(+`-latte`), `dracula`, `nord`, `tokyo-night`, `rose-pine`, `everforest`, `kanagawa`,
-`ayu-mirage`, `monokai`, `solarized`, `nightfox`, `oxocarbon`, `miasma`, `osaka-jade`,
-`ristretto`, `flexoki-light`, `hackerman`, `ember`, `ethereal`, `synthwave`,
-`blade-runner`, `nostromo`, `plasma`, `viridis`, `ice`, `matte-black`, `vantablack` —
-plus `auto`, which derives a ramp from whatever Textual theme your terminal is wearing.
+Forty built in, previewed live from the `t` picker: `classic`, `gruvbox`, `catppuccin`
+(+`-latte`), `dracula`, `nord`, `tokyo-night` (+`-day`), `rose-pine`, `everforest`,
+`kanagawa`, `ayu-mirage`, `monokai`, `solarized`, `nightfox`, `oxocarbon`, `miasma`,
+`osaka-jade`, `ristretto`, `flexoki-light`, `nightfly`, `material`, `gotham`, `oceanic`,
+`gruvbox-light`, `hackerman`, `ember`, `ethereal`, `synthwave`, `blade-runner`,
+`nostromo`, `plasma`, `viridis`, `ice`, `vaporwave`, `infrared`, `deep-sea`, `magma`,
+`matte-black`, `vantablack` — plus `auto`, which derives a ramp from whatever Textual
+theme your terminal is wearing.
 
 Gradients are blended in linear light rather than straight sRGB, so the midpoint of a
-ramp doesn't go muddy the way naive hex interpolation does.
+ramp doesn't go muddy the way naive hex interpolation does. The terminal background is
+painted with the theme's own `bg`, so a dark theme is dark whatever your terminal is set
+to rather than showing through it.
 
 ### Custom themes
 
@@ -223,7 +147,7 @@ def nightrider(ctx):
 ```
 
 You return codepoints and *heat* — never colours — so every plugin works with all
-thirty themes for free.
+forty themes for free.
 
 > [!WARNING]
 > **Plugins are Python and run with your privileges.** spektr can't sandbox them, and
@@ -253,13 +177,21 @@ Full guide, including the whole of `ctx` and the drawing toolkit: **[docs/plugin
 | Key | Action | | Key | Action |
 |---|---|---|---|---|
 | `v` | Visualizer picker — live preview, `/` filter | | `s` | What am I listening to? |
-| `t` | Theme picker — live preview, `/` filter | | `d` | Try the next audio source |
+| `t` | Theme picker — live preview, `/` filter | | `d` / `D` | Next audio source / back to the default |
+| `c` | Settings — frame rate, bands, sensitivity, gate | | | |
 | `m` / `space` | Next mode (`M` for previous) | | `[` `]` | Sensitivity down / up |
 | `T` | Next theme | | `g` `G` | Noise gate down / up |
 | `f` | Hide header and footer — full-screen visual | | `r` | Reload themes and plugins from disk |
 | `p` | Frame time and FPS | | `q` | Quit |
 
-Mode, theme, sensitivity and gate are remembered between runs.
+Mode, theme, frame rate, band count, sensitivity and gate are remembered between runs.
+
+`c` opens a settings panel in the same shape as the pickers — arrow keys change values
+and everything applies live, because a settings screen you have to close to see the
+effect of is one you fight with. **Bands** is one control over two mechanisms: at or
+below the analyser's native 32 the modes simply draw fewer bars out of the same
+analysis, and above it the band plan is rebuilt so 48 or 64 bars are genuinely 48 or 64
+distinct ranges of FFT bins rather than interpolated copies of their neighbours.
 
 ## Command line
 
@@ -302,16 +234,23 @@ for that reason; sounddevice is still used to enumerate monitors and the mic.
 If `spektr --diagnose` shows no `loopback:` entries, the environment block at the top says
 which library is missing or unusable.
 
-**It will never pick your microphone on its own.** A loopback tap reporting silence is
-telling the truth — nothing is playing — whereas a mic always has *something* on it, so
-selecting whichever source has signal picks the room every time you start spektr with the
-music paused. The mic is only used automatically if no output tap can be opened at all,
-and it says so in red when that happens. Press `d` to cycle onto it deliberately, or start
-with `--mic`.
+**It taps whatever the OS calls your default output, and stays there.** This is cava's
+rule, and it replaced a cleverer one that was worse: spektr used to open each candidate,
+listen for 2.5 seconds, and rotate onward if it was quiet. That cannot tell "wrong
+device" apart from "nothing is playing yet", so starting spektr before pressing play sent
+it wandering onto whichever endpoint enumerated first — on one laptop, a virtual
+"AI noise-cancelling output" that plays nothing — and it stayed there. Silence on your
+default output is a correct answer, and the only useful response to it is to say so,
+which the status line does.
 
-If a tap opens but stays silent, spektr holds it, watches for audio, and rotates onto the
-next tap if none arrives — so launching before you press play, or output going to a
-non-default endpoint, both sort themselves out.
+**It will never pick your microphone on its own.** A loopback tap reporting silence is
+telling the truth, whereas a mic always has *something* on it, so choosing by "which
+source has signal" picks the room every time you start with the music paused. The mic is
+used automatically only if no output tap can be opened at all. Press `d` to cycle onto it
+deliberately, or start with `--mic`.
+
+If the display is flat, `spektr --diagnose` prints which device Windows calls the default
+and which endpoint spektr resolved it to — those two lines answer it most of the time.
 
 Press `s` at any time for the current source and the input level against the noise gate.
 When nothing adds up, `spektr --diagnose` opens every candidate in turn and prints the
@@ -328,10 +267,18 @@ measured RMS and peak for each, which settles it:
 
 Three details do most of the work.
 
-**Analysis runs on its own clock.** A 2048-sample window advances by a 512-sample hop —
-75% overlap, about 94 analyses per second at 48 kHz. Sampling the FFT from the frame
-timer instead (23 blocks/sec read by a 30–60 fps loop) produces beat-rate aliasing that
-no amount of easing can hide, because the target sequence itself is stepped.
+**Analysis runs on its own clock.** The windows advance by a 512-sample hop — about 94
+analyses per second at 48 kHz. Sampling the FFT from the frame timer instead (23
+blocks/sec read by a 30–60 fps loop) produces beat-rate aliasing that no amount of easing
+can hide, because the target sequence itself is stepped.
+
+**The bands come from [cava](https://github.com/karlstav/cava)'s distribution.** Two
+windows, not one: 8192 samples for everything below 100 Hz, where frequency resolution
+matters and time resolution doesn't, and 4096 above it, where the reverse is true. Bars
+span 50 Hz–10 kHz, their bin ranges are forced strictly disjoint, and each is tilted by
+`f^0.85` so the treble doesn't flatline. Sensitivity is judged on overshoot — down 2% per
+analysis while any bar is clipping, up 0.1% when none is — never on loudness, because a
+loudness-following gain shrinks the whole display on every kick.
 
 **The easing is expressed in seconds, not frames.** Bands are driven by a damped spring
 integrated with sub-stepping, and peak markers hold for a duration rather than a frame
@@ -354,12 +301,15 @@ python tests/test_plugins.py # discovery, trust, loading, quarantine
 python tests/perf.py all     # analyser cost, strip scaling, memory, headroom
 ```
 
+Building the Windows exe and installer: **[packaging/README.md](packaging/README.md)** —
+one PowerShell command, or a tagged push and let CI do it.
+
 `bench.py` prints build and strip time for every mode at 120×16, 200×50 and 240×60.
 `test_audit.py` is the one that catches logic errors rather than crashes — a mode that
 writes into the shared band buffer, or renders the same picture regardless of the audio,
 passes every shape check ever written.
 
-Measured on one core: the analyser costs **1.5%** of a core continuously, the audio
+Measured on one core: the analyser costs **2.9%** of a core continuously, the audio
 callback **0.02%**, and the heaviest mode at 240×60 takes **7.5 ms** against a 16.7 ms
 budget. Nothing exceeds budget even at 400×100.
 

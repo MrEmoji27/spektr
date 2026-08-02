@@ -14,6 +14,16 @@ from dataclasses import asdict, dataclass, fields
 from . import palette
 
 
+#: Band counts offered in the settings panel. 0 means "fit the terminal",
+#: which is what every mode did unconditionally before this was settable.
+BAND_CHOICES = (0, 8, 12, 16, 24, 32, 48, 64)
+
+#: Frame rates offered in the settings panel. Anything in 15..120 is valid via
+#: ``--fps``; these are just the useful stops — 24 and 48 for people who want
+#: the film-ish look, 30/60 for the obvious ones, 90/120 for high-refresh.
+FPS_CHOICES = (24, 30, 36, 48, 56, 60, 72, 90, 120)
+
+
 @dataclass
 class Settings:
     mode: str = "Bars"
@@ -22,6 +32,10 @@ class Settings:
     gate: float = 8e-5
     fps: int = 60
     chrome: bool = True
+    #: How many bars to draw. 0 fits the terminal width. Above the analyser's
+    #: native 32 this rebuilds the band plan for real resolution rather than
+    #: interpolating, which is why it lives here and not in the widget.
+    bands: int = 0
 
     def clamp(self) -> "Settings":
         """Force every field back into range, replacing junk with the default.
@@ -35,6 +49,8 @@ class Settings:
         self.sensitivity = _clamp_number(self.sensitivity, 0.15, 8.0, 1.0)
         self.gate = _clamp_number(self.gate, 1e-6, 2e-3, 8e-5)
         self.fps = int(_clamp_number(self.fps, 15, 120, 60))
+        bands = int(_clamp_number(self.bands, 0, 64, 0))
+        self.bands = bands if bands == 0 else max(8, bands)
         self.mode = self.mode if isinstance(self.mode, str) and self.mode else "Bars"
         self.theme = self.theme if isinstance(self.theme, str) and self.theme else "classic"
         self.chrome = bool(self.chrome)

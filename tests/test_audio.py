@@ -27,11 +27,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-from spektr.analysis import HOP, N_BANDS, Analyser, resample_bands  # noqa: E402
+from spektr.analysis import HOP, N_BANDS, Analyser, BandPlan, resample_bands  # noqa: E402
 from spektr.capture import Capture, RingBuffer, Source              # noqa: E402
 from spektr.motion import Peaks, Spring                             # noqa: E402
 
 SR = 48000
+
+#: Long enough to fill the bass window at any supported rate.
+FEED = 16384
 
 
 def tone(freq: float, n: int, amp: float = 0.3, phase: float = 0.0) -> np.ndarray:
@@ -40,9 +43,34 @@ def tone(freq: float, n: int, amp: float = 0.3, phase: float = 0.0) -> np.ndarra
     return np.stack((s, s), axis=1)
 
 
-def band_of(freq: float) -> int:
-    edges = np.logspace(math.log10(20.0), math.log10(20000.0), N_BANDS + 1)
-    return int(np.clip(np.searchsorted(edges, freq) - 1, 0, N_BANDS - 1))
+def band_of(freq: float, plan: BandPlan | None = None) -> int:
+    """Which bar a frequency belongs to, asked of the plan rather than guessed.
+
+    An earlier version of this file recomputed the band edges from its own copy
+    of the formula, which meant the test agreed with itself rather than with
+    the analyser.
+    """
+    plan = plan or BandPlan(SR)
+    return int(np.clip(np.searchsorted(plan.cutoff, freq) - 1, 0, N_BANDS - 1))
+
+
+def settle(an: Analyser, ring: RingBuffer, signal: np.ndarray, rounds: int = 250) -> np.ndarray:
+    """Feed a signal hop by hop until autosens has converged, return the bands.
+
+    cava's sensitivity loop needs a few hundred analyses to find its level;
+    reading one frame straight after the first push measures the transient, not
+    the steady state.
+    """
+    ring.clear()
+    ring.push(signal[:FEED])
+    pos = FEED
+    for _ in range(rounds):
+        if pos + HOP > len(signal):
+            pos = 0
+        ring.push(signal[pos : pos + HOP])
+        pos += HOP
+        an._analyse_once()
+    return an.frame.bands
 
 
 def test_ring_roundtrip() -> list[str]:
@@ -67,36 +95,220 @@ def test_ring_roundtrip() -> list[str]:
     return bad
 
 
+def test_band_plan() -> list[str]:
+    """Every bar must read its own bins.
+
+    This is the bug the cava port exists to fix. The old layout spread 32 bands
+    over 20 Hz-20 kHz and read them from one 2048-point FFT, so at 48 kHz the
+    bottom bands all landed on the same two bins — five were exact duplicates
+    of an earlier band and nine were under two bins wide. The bass moved as a
+    slab because it was, quite literally, one number drawn four times.
+    """
+    bad = []
+    for rate in (44100, 48000, 96000, 22050):
+        p = BandPlan(rate)
+        cut = p.bass_bar
+        widths = p.upper - p.lower + 1
+
+        if np.any(widths < 1):
+            bad.append(f"{rate}: {int((widths < 1).sum())} bars read no bins at all")
+        if not np.all(np.diff(p.lower[:cut]) > 0):
+            bad.append(f"{rate}: bass bars do not advance through the spectrum")
+        if not np.all(np.diff(p.lower[cut:]) > 0):
+            bad.append(f"{rate}: mid bars do not advance through the spectrum")
+        # disjoint within each window — the two windows have their own indices,
+        # so a bass bar and a mid bar sharing a bin *number* is not a collision
+        if not np.all(p.lower[1:cut] > p.upper[: cut - 1]):
+            bad.append(f"{rate}: bass bars overlap")
+        if not np.all(p.lower[cut + 1 :] > p.upper[cut:-1]):
+            bad.append(f"{rate}: mid bars overlap")
+        if not np.all(np.diff(p.cutoff) > 0):
+            bad.append(f"{rate}: cut-off frequencies are not increasing")
+        if p.bass_size <= p.mid_size:
+            bad.append(f"{rate}: the bass window must be longer than the mid window")
+
+    p = BandPlan(SR)
+    print(f"    {SR} Hz: bass window {p.bass_size} ({SR / p.bass_size:.1f} Hz/bin), "
+          f"mid {p.mid_size} ({SR / p.mid_size:.1f} Hz/bin), {p.bass_bar} bass bars")
+    print(f"    narrowest bar {int((p.upper - p.lower + 1).min())} bins, "
+          f"widest {int((p.upper - p.lower + 1).max())}, "
+          f"range {p.cutoff[0]:.0f}-{p.cutoff[-1]:.0f} Hz")
+    return bad
+
+
 def test_bands() -> list[str]:
     bad = []
     ring = RingBuffer(SR)
     an = Analyser(ring, lambda: SR)
+    plan = BandPlan(SR)
 
-    for freq in (120.0, 1000.0, 8000.0):
-        ring.clear()
-        ring.push(tone(freq, 4096))
-        an._analyse_once()
-        f = an.frame
-        if f.silent:
+    for freq in (60.0, 120.0, 300.0, 1000.0, 3000.0, 8000.0):
+        bands = settle(an, ring, tone(freq, SR))
+        if an.frame.silent:
             bad.append(f"{freq:.0f} Hz: gated as silent")
             continue
-        peak = int(np.argmax(f.bands))
-        want = band_of(freq)
+        peak = int(np.argmax(bands))
+        want = band_of(freq, plan)
         if abs(peak - want) > 1:
             bad.append(f"{freq:.0f} Hz: peak band {peak}, expected ~{want}")
+    return bad
+
+
+def test_treble_reaches_full_height() -> list[str]:
+    """The eq tilt earns its place here.
+
+    Spectra fall off with frequency, so without cava's ``f^0.85`` boost the top
+    bars sit near the floor no matter what is playing, and a third of the
+    display is decoration. A tone at 6 kHz should drive its bar as hard as a
+    tone at 200 Hz drives that one.
+    """
+    bad = []
+    ring = RingBuffer(SR)
+    heights = {}
+    for freq in (200.0, 6000.0):
+        an = Analyser(ring, lambda: SR)      # a fresh sens per source
+        bands = settle(an, ring, tone(freq, SR), rounds=400)
+        heights[freq] = float(bands.max())
+    for freq, h in heights.items():
+        if h < 0.5:
+            bad.append(f"{freq:.0f} Hz only reached {h:.2f} of full height")
+    print("    peak height: " + "  ".join(f"{k:.0f}Hz={v:.2f}" for k, v in heights.items()))
+    return bad
+
+
+def test_autosens_converges() -> list[str]:
+    """A quiet source and a loud one must both end up using the display.
+
+    The old auto-gain normalised on frame RMS, which meant a kick raised the
+    RMS, lowered the gain and shrank the whole display *on the beat* — exactly
+    backwards. cava scales on overshoot instead: down while anything clips, up
+    while nothing does.
+    """
+    bad = []
+    results = {}
+    for amp in (0.004, 0.05, 0.5):
+        ring = RingBuffer(SR)
+        an = Analyser(ring, lambda: SR)
+        bands = settle(an, ring, tone(440.0, SR, amp=amp), rounds=600)
+        results[amp] = float(bands.max())
+    for amp, peak in results.items():
+        if peak < 0.4:
+            bad.append(f"amplitude {amp}: settled at {peak:.2f} — never reached the display")
+        if peak > 1.0001:
+            bad.append(f"amplitude {amp}: {peak:.2f} exceeds full height")
+    print("    settled peak: " + "  ".join(f"amp{k}={v:.2f}" for k, v in results.items()))
+    return bad
+
+
+def test_band_count_is_settable() -> list[str]:
+    """One control, two mechanisms — and the boundary has to hold.
+
+    Asking for fewer bars than the analyser resolves is a drawing question:
+    the modes resample and nothing about the analysis changes. Asking for more
+    is an analysis question, and answering it by interpolating would be a lie —
+    the extra bars have to be real bin ranges. So below 32 the plan must stay
+    put, and above it the plan must actually grow.
+    """
+    bad = []
+    ring = RingBuffer(SR)
+
+    for want, expect in ((8, N_BANDS), (32, N_BANDS), (48, 48), (64, 64)):
+        an = Analyser(ring, lambda: SR)
+        an.set_bands(want)
+        settle(an, ring, tone(440.0, SR), rounds=120)
+        got = len(an.frame.bands)
+        if got != expect:
+            bad.append(f"asked for {want} bands, analyser resolved {got}, expected {expect}")
+        plan = an.plan
+        if len(plan.lower) != expect:
+            bad.append(f"{want}: plan has {len(plan.lower)} bars, expected {expect}")
+        # the guarantees from test_band_plan must survive a rebuild
+        if np.any(plan.upper - plan.lower + 1 < 1):
+            bad.append(f"{want}: some bars read no bins after the rebuild")
+        cut = plan.bass_bar
+        if not np.all(np.diff(plan.lower[cut:]) > 0):
+            bad.append(f"{want}: mid bars stopped advancing after the rebuild")
+
+    # a silent frame must be the same width as a live one, or the widget
+    # resizes its springs every time the music pauses
+    an = Analyser(ring, lambda: SR)
+    an.set_bands(64)
+    settle(an, ring, tone(440.0, SR), rounds=60)
+    live = len(an.frame.bands)
+    ring.clear()
+    ring.push(np.zeros((FEED, 2), dtype=np.float32))
+    time.sleep(0.35)          # past the gate's hold window
+    an._analyse_once()
+    if not an.frame.silent:
+        bad.append("silence was not gated")
+    elif len(an.frame.bands) != live:
+        bad.append(f"silent frame is {len(an.frame.bands)} wide, live is {live}")
+
+    print("    8/32 keep the plan at 32; 48 and 64 rebuild it")
+    return bad
+
+
+def test_shutdown_filter_is_narrow() -> list[str]:
+    """The exit-noise filter must drop soundcard's destructor noise only.
+
+    soundcard's ``_COMLibrary.__del__`` raises during interpreter shutdown and
+    prints a traceback after the UI is gone, which looks like a crash on exit —
+    especially in the frozen exe. Suppressing it is right; suppressing anything
+    else would hide real bugs, so that boundary is worth a test.
+    """
+    import spektr.capture as C
+
+    original = sys.unraisablehook
+    seen = []
+    try:
+        sys.unraisablehook = lambda u: seen.append(getattr(u.object, "__qualname__", "?"))
+        C.install_shutdown_filter()
+
+        class _COMLibrary:                      # stands in for soundcard's
+            def __del__(self):
+                pass
+
+        _COMLibrary.__del__.__module__ = "soundcard.mediafoundation"
+
+        class Ours:
+            def __del__(self):
+                pass
+
+        Ours.__del__.__module__ = "spektr.capture"
+
+        def fire(fn, exc):
+            u = type("U", (), {})()
+            u.object, u.exc_type, u.exc_value = fn, type(exc), exc
+            u.exc_traceback, u.err_msg = None, None
+            sys.unraisablehook(u)
+
+        fire(_COMLibrary.__del__, AttributeError("no attribute 'com_loaded'"))
+        fire(Ours.__del__, AttributeError("one of ours broke"))
+        fire(len, ValueError("not a destructor at all"))
+    finally:
+        sys.unraisablehook = original
+
+    # these are nested classes, so qualnames carry a <locals> prefix
+    bad = []
+    if any("_COMLibrary" in name for name in seen):
+        bad.append("soundcard's destructor noise was not suppressed")
+    for want in ("Ours.__del__", "len"):
+        if not any(want in name for name in seen):
+            bad.append(f"the filter swallowed {want} — it is too broad")
+    print(f"    dropped soundcard's, passed through {len(seen)} others")
     return bad
 
 
 def test_gate() -> list[str]:
     ring = RingBuffer(SR)
     an = Analyser(ring, lambda: SR)
-    ring.push(tone(1000.0, 4096, amp=1e-7))
+    ring.push(tone(1000.0, FEED, amp=1e-7))
     an._analyse_once()
     if not an.frame.silent:
         return ["gate: near-silence was not gated"]
 
     ring.clear()
-    ring.push(tone(1000.0, 4096, amp=0.2))
+    ring.push(tone(1000.0, FEED, amp=0.2))
     an._analyse_once()
     if an.frame.silent:
         return ["gate: real audio was gated"]
@@ -195,22 +407,13 @@ def test_never_picks_mic() -> list[str]:
         cap.chosen = None
         cap.kind = ""
         cap._close = lambda: None
-        cap._settle = lambda src, heard: setattr(cap, "chosen", src)
+        cap._settle = lambda src: setattr(cap, "chosen", src)
 
         def fake_open(dev, sr, ch, extra):
             cap.kind = next((s.kind for s in sources if s.device == dev), "?")
             return object()
 
         cap._open = fake_open
-        # only the microphone carries signal, exactly as when nothing is playing
-        cap._heard_signal = lambda secs: cap.kind == "mic"
-        # one sweep only: the real loop hunts forever, which is correct but
-        # would never return here
-        def one_pass(src, seconds=0.0):
-            cap._running = False
-            return False
-
-        cap._wait_for_audio = one_pass
         cap._running = True
         cap._run()
         return cap
@@ -229,10 +432,17 @@ def test_never_picks_mic() -> list[str]:
     return bad
 
 
-def test_hunts_for_a_live_tap() -> list[str]:
-    """Launching before you press play, or output going to a non-default
-    endpoint, must both resolve themselves. spektr holds a silent tap, watches
-    for audio, and rotates onto the next — without ever reaching for the mic."""
+def test_takes_the_default_output_and_stays() -> list[str]:
+    """cava's rule: ask the system which device is playing, take it, hold it.
+
+    The previous behaviour auditioned every tap for 2.5 seconds of signal and
+    rotated onward when one was quiet, re-sweeping forever. That cannot tell
+    "wrong device" apart from "nothing is playing yet", so starting spektr
+    before pressing play sent it wandering onto whichever endpoint enumerated
+    first — usually an idle HDMI output — and it would keep reopening devices
+    from there. Silence on the default output is a correct answer, and the
+    only sane response to it is to say so.
+    """
     import threading
 
     from spektr.capture import Source
@@ -246,10 +456,7 @@ def test_hunts_for_a_live_tap() -> list[str]:
 
     cap = Capture()
     cap.candidates = lambda: taps + [mic]
-    cap._probe_seconds = 0.3
-    cap._watch_seconds = 0.8
 
-    state = {"live": None, "cur": None}
     opens: list = []
 
     class FakeStream:
@@ -258,39 +465,45 @@ def test_hunts_for_a_live_tap() -> list[str]:
 
     def fake_open(dev, sr, ch, extra):
         opens.append(dev)
-        state["cur"] = dev
         return FakeStream()
 
     cap._open = fake_open
-
-    def pump():
-        while cap._running:
-            amp = 0.3 if state["cur"] == state["live"] else 0.0
-            cap.ring.push(np.full((256, 2), amp, dtype=np.float32))
-            time.sleep(0.005)
-
-    cap._running = True
-    threading.Thread(target=pump, daemon=True).start()
     cap.start()
 
     bad = []
     try:
-        time.sleep(2.5)                       # nothing playing yet
+        # nothing playing at all: it must still be on the first tap, and must
+        # say so rather than going looking
+        time.sleep(1.0)
+        if cap.label != "loopback: Speakers":
+            bad.append(f"did not take the default output; on {cap.label!r}")
         if cap.on_mic:
-            bad.append("fell back to the microphone while taps were silent")
-        state["live"] = "B"                   # audio starts on a non-default tap
-        time.sleep(3.5)
-        if cap.label != "loopback: HDMI":
-            bad.append(f"did not find the live tap; settled on {cap.label!r}")
-        if cap.on_mic:
-            bad.append("ended up on the microphone")
-        if len(opens) > 40:
-            bad.append(f"re-opened devices {len(opens)} times — probe loop is spinning")
+            bad.append("fell back to the microphone while a tap was open")
+        if len(opens) != 1:
+            bad.append(f"opened {len(opens)} devices — it is still hunting")
+
+        # a status that reports the silence is useful; switching device is not
+        time.sleep(2.5)
+        if "nothing playing" not in cap.status:
+            bad.append(f"silence was not reported: {cap.status!r}")
+
+        # audio arrives on the device we are already holding
+        def pump():
+            for _ in range(120):
+                cap.ring.push(np.full((256, 2), 0.3, dtype=np.float32))
+                time.sleep(0.005)
+
+        threading.Thread(target=pump, daemon=True).start()
+        time.sleep(1.0)
+        if "listening" not in cap.status:
+            bad.append(f"audio arrived but the status still says {cap.status!r}")
+        if len(opens) != 1:
+            bad.append(f"reopened the device {len(opens)} times")
     finally:
         cap.stop()
         time.sleep(0.2)
 
-    print(f"    settled on {cap.label!r} after {len(opens)} device opens")
+    print(f"    held {cap.label!r} throughout, {len(opens)} device open(s)")
     return bad
 
 
@@ -426,7 +639,81 @@ def _fake_soundcard(live_name, endpoints):
         [FakeMic(n) for n in endpoints] if include_loopback else []
     )
     sc.default_speaker = lambda: types.SimpleNamespace(name=live_name)
+
+    def get_microphone(id, include_loopback=False):
+        """soundcard resolves an id by fuzzy match, not by equality.
+
+        That difference is the entire bug this replaced: WASAPI does not
+        promise that a render device's name and its loopback endpoint's name
+        are character-for-character identical, so comparing them directly
+        misses and the "default" silently becomes whatever enumerated first.
+        """
+        want = str(id).lower()
+        for name in endpoints:
+            if want in name.lower() or name.lower() in want:
+                return FakeMic(name)
+        raise RuntimeError(f"no microphone matching {id!r}")
+
+    sc.get_microphone = get_microphone
     return sc
+
+
+def test_enumerates_off_the_capture_thread() -> list[str]:
+    """Device discovery must happen where it is known to work.
+
+    On a real machine, ``soundcard`` returned three WASAPI loopback endpoints
+    when queried from the process's own thread and *none* when first imported
+    and queried from a freshly spawned capture thread. Nothing raised — the
+    list simply came back empty, spektr fell through to Stereo Mix (muted by
+    default on Realtek hardware) and the display sat flat with no error
+    anywhere. ``--diagnose`` enumerated from the main thread and reported
+    everything as healthy, which is what made it so hard to see.
+
+    So enumeration happens in start(), on the caller's thread. This checks it
+    stays there: a backend that only works on the starting thread must still
+    produce a full candidate list.
+    """
+    import threading
+
+    from spektr.capture import Capture, Source
+
+    home = threading.get_ident()
+    calls = []
+
+    loopback = Source("A", SR, 2, None, "loopback: Headphones", "loopback")
+    stereo_mix = Source("B", SR, 2, None, "monitor: Stereo Mix", "monitor")
+
+    def thread_sensitive_candidates():
+        here = threading.get_ident()
+        calls.append(here)
+        # the failure mode, reproduced: loopbacks vanish off the home thread
+        return [loopback, stereo_mix] if here == home else [stereo_mix]
+
+    cap = Capture()
+    cap.candidates = thread_sensitive_candidates
+
+    class FakeStream:
+        def stop(self): pass
+        def close(self): pass
+
+    cap._open = lambda dev, sr, ch, extra: FakeStream()
+    cap.start()
+    time.sleep(0.6)
+
+    bad = []
+    try:
+        if cap.label != "loopback: Headphones":
+            bad.append(f"enumerated on the wrong thread — settled on {cap.label!r}")
+        if not calls:
+            bad.append("candidates() was never called")
+        elif calls[0] != home:
+            bad.append("candidates() was first called off the starting thread")
+    finally:
+        cap.stop()
+        time.sleep(0.2)
+
+    print(f"    enumerated on the starting thread, chose {cap.label!r}")
+    return bad
 
 
 def test_soundcard_loopback_backend() -> list[str]:
@@ -437,6 +724,11 @@ def test_soundcard_loopback_backend() -> list[str]:
     mutes by default. soundcard talks to WASAPI directly. This checks that
     loopback endpoints are enumerated with the current default output first, and
     that audio actually reaches the ring through that backend.
+
+    The endpoint order below is the point: a virtual "AI noise-cancelling"
+    device enumerates ahead of the real speakers and plays nothing. Anything
+    that picks by enumeration order lands on it and shows a flat display
+    forever, which is exactly what happened on a real machine.
     """
     import sys
 
@@ -468,12 +760,23 @@ def test_soundcard_loopback_backend() -> list[str]:
         if any(s.backend != "sc" for s in loops):
             bad.append("loopback sources were not attributed to the soundcard backend")
 
+        # The endpoint name need not match the render device's name exactly.
+        # Comparing them for equality is what used to fail; resolving the id
+        # through soundcard is what fixes it.
+        skewed = _fake_soundcard(live, ["AI Noise-cancelling Output (ASUS Utility)",
+                                        live + " [Loopback]"])
+        sys.modules["soundcard"] = skewed
+        cap_skew = Capture()
+        first = [s for s in cap_skew.candidates() if s.kind == "loopback"]
+        if not first or live not in first[0].label:
+            got = first[0].label if first else "nothing"
+            bad.append(f"name mismatch defeated the default lookup: picked {got!r}")
+        sys.modules["soundcard"] = _fake_soundcard(live, others)
+
         # and audio must actually flow through it
         cap2 = Capture()
-        cap2._probe_seconds = 1.0
-        cap2._watch_seconds = 0.8
         cap2.start()
-        time.sleep(2.5)
+        time.sleep(2.0)
         try:
             if cap2.on_mic:
                 bad.append("ended up on the microphone despite live loopback")
@@ -529,8 +832,6 @@ def test_com_is_initialised_per_thread() -> list[str]:
         )
 
         cap = C.Capture()
-        cap._probe_seconds = 0.8
-        cap._watch_seconds = 0.5
         cap.start()
         time.sleep(2.0)
         try:
@@ -576,13 +877,15 @@ def test_knee_suppresses_floor() -> list[str]:
 
     out = {}
     for name, rms_target in (("floor", gate * 1.05), ("music", gate * 400)):
-        ring.clear()
-        t = np.arange(4096) / SR
+        t = np.arange(SR) / SR
         # white-ish content so every band sees something
         sig = np.sin(2 * math.pi * 440 * t) + 0.5 * np.sin(2 * math.pi * 3000 * t)
         sig = sig / np.sqrt(np.mean(sig ** 2)) * rms_target
-        ring.push(np.stack((sig, sig), axis=1).astype(np.float32))
-        an._analyse_once()
+        # Both sources are run to convergence: autosens will happily normalise
+        # the noise floor to full height, and the point of the knee is that the
+        # floor stays small anyway.
+        an = Analyser(ring, lambda: SR)
+        settle(an, ring, np.stack((sig, sig), axis=1).astype(np.float32), rounds=400)
         f = an.frame
         out[name] = (float(f.bands.max()), f.confidence, f.silent)
 
@@ -604,12 +907,18 @@ def test_knee_suppresses_floor() -> list[str]:
 TESTS = [
     ("ring buffer", test_ring_roundtrip),
     ("never auto-selects the microphone", test_never_picks_mic),
-    ("hunts across taps for live audio", test_hunts_for_a_live_tap),
+    ("takes the default output and stays", test_takes_the_default_output_and_stays),
     ("enumeration failures are explained", test_enumeration_failures_are_explained),
+    ("enumerates off the capture thread", test_enumerates_off_the_capture_thread),
     ("soundcard loopback backend", test_soundcard_loopback_backend),
     ("COM initialised per thread", test_com_is_initialised_per_thread),
     ("soft knee suppresses the noise floor", test_knee_suppresses_floor),
+    ("band plan (cava distribution)", test_band_plan),
     ("band mapping", test_bands),
+    ("treble reaches full height", test_treble_reaches_full_height),
+    ("autosens converges", test_autosens_converges),
+    ("band count is settable", test_band_count_is_settable),
+    ("shutdown filter stays narrow", test_shutdown_filter_is_narrow),
     ("noise gate", test_gate),
     ("band resampling", test_resample),
     ("analysis rate", test_analysis_rate),
