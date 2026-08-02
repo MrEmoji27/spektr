@@ -1,8 +1,8 @@
 <div align="center">
 
-# spektr
+<img src="assets/spektr.png" width="96" alt="spektr icon" />
 
-**A terminal spectrum analyser for whatever your speakers are doing.**
+**spektr** — a terminal spectrum analyser for whatever your speakers are doing.
 
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-00c853)](LICENSE)
@@ -25,12 +25,13 @@ four times the vertical resolution of a text cell.
 
 ## Install
 
-**Windows, no Python required** — grab `spektr.exe` from the
-[latest release](https://github.com/MrEmoji27/spektr/releases) and double-click it.
-A black window opens with the visualiser in it; that's a terminal, and it's meant to
-happen. Windows may warn that it doesn't recognise the app — **More info → Run anyway**;
-the build is unsigned because certificates cost money. There's an installer in the same
-release if you'd rather have a Start Menu entry and a faster start.
+> [!TIP]
+> **Windows, no Python required** — grab `spektr.exe` from the
+> [latest release](https://github.com/MrEmoji27/spektr/releases) and double-click it.
+> A black window opens with the visualiser in it; that's a terminal, and it's meant to
+> happen. Windows may warn that it doesn't recognise the app — **More info → Run anyway**;
+> the build is unsigned because certificates cost money. There's an installer in the same
+> release if you'd rather have a Start Menu entry and a faster start.
 
 **With Python 3.10+:**
 
@@ -59,7 +60,7 @@ output device, taps it, and draws.
 **Contents** · [Modes](#modes) · [Themes](#themes) ·
 [Plugins](#plugins) · [Keys](#keys) · [Command line](#command-line) ·
 [Audio capture](#how-it-captures-audio) · [How it works](#how-it-works) ·
-[Development](#development)
+[Development](#development) · [Inspired by](#inspired-by)
 
 ---
 
@@ -318,6 +319,24 @@ budget. Nothing exceeds budget even at 400×100.
 It began as the visualiser inside a terminal music client. It turned out to be the most
 interesting part of that project and the only part that didn't depend on anyone's API,
 so it moved out and got its own name.
+
+## Inspired by
+
+spektr is a terminal visualizer, and the two best ones were already written — so their
+good ideas get cited here, where they belong.
+
+- **[cava](https://github.com/karlstav/cava)** — the console audio visualizer that
+  solved the hard parts of the spectrum first. spektr takes its band distribution
+  (two FFT windows with strictly disjoint bins over 50 Hz–10 kHz), its
+  overshoot-based automatic sensitivity, and its capture rule: tap whatever the OS
+  calls the default output and don't audition for signal.
+
+- **[cliamp](https://github.com/bjarneo/cliamp)** — the terminal music player that
+  spektr began life inside. The mode registry, the theme system and the plugin
+  contract all carry its shape: cliamp theme files port over unchanged (see
+  [Custom themes](#custom-themes)), and the plugin model — code with a decorator,
+  in a folder, vetted by hash before it runs — is the same idea in a different
+  language.
 
 ## License
 
