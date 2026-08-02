@@ -1,0 +1,98 @@
+name: build windows exe
+
+# Builds the portable exe and the installer on a clean Windows runner, so you
+# never need a Windows dev box to cut a release. Tagging v0.2.1 (or whatever)
+# publishes both to the matching GitHub release.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:          # the "Run workflow" button, for a test build
+
+permissions:
+  contents: write             # needed to attach files to a release
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install "pyinstaller>=6.3"
+          pip install -e .
+
+      - name: Run the test suites
+        # No audio device on a runner — every one of these is written to work
+        # without one, and a broken build should not reach a release.
+        run: |
+          python tests/test_audit.py
+          python tests/test_audio.py
+          python tests/test_plugins.py
+          python tests/test_app.py
+
+      - name: Build portable exe
+        run: pyinstaller --noconfirm --clean packaging/spektr.spec
+
+      - name: Smoke test the exe
+        run: |
+          .\dist\spektr.exe --version
+          .\dist\spektr.exe --list-modes
+
+      - name: Build onedir bundle for the installer
+        env:
+          SPEKTR_ONEDIR: "1"
+        run: pyinstaller --noconfirm --clean packaging/spektr.spec
+
+      - name: Check the build script parses
+        # The same script a user runs by hand. Windows PowerShell 5.1 reads
+        # .ps1 as ANSI unless it has a UTF-8 BOM, and a mis-decoded em dash
+        # ends in a curly quote that the parser treats as a string delimiter —
+        # which produces a wall of brace errors on lines that are fine. Cheap
+        # to catch here rather than on someone's machine.
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            "packaging/build_exe.ps1", [ref]$null, [ref]$errors) | Out-Null
+          if ($errors) { $errors | ForEach-Object { Write-Error $_ }; exit 1 }
+          Write-Host "build_exe.ps1 parses cleanly"
+
+      - name: Build installer
+        run: |
+          # Inno Setup ships on the windows-latest image via Chocolatey
+          choco install innosetup --no-progress -y
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" packaging\installer.iss
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spektr-windows
+          path: |
+            dist/spektr.exe
+            dist/installer/*.exe
+          if-no-files-found: error
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/spektr.exe
+            dist/installer/*.exe
+          body: |
+            **Windows — no Python needed.**
+
+            * `spektr.exe` — portable. Download, double-click. A black console
+              window opening is normal: spektr is a terminal program.
+            * `spektr-*-setup.exe` — installer with Start Menu shortcuts and an
+              uninstaller. Starts faster than the portable build.
+
+            Both are unsigned, so Windows SmartScreen may warn on first run:
+            **More info → Run anyway**.
