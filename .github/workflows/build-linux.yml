@@ -1,0 +1,85 @@
+name: build linux binary
+
+# Builds a native Linux executable on a clean Ubuntu runner and attaches it to
+# the same release as the Windows exe, so Linux users get a double-clickable
+# file instead of being told to install Python. The spec is already
+# cross-platform: on Linux it skips the missing `_sounddevice_data` wheel
+# (a note, not a failure) and picks up `soundcard.pulseaudio`.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:          # the "Run workflow" button, for a test build
+
+permissions:
+  contents: write             # needed to attach files to a release
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install system audio libraries
+        # The frozen binary loads these at runtime via cffi/ctypes rather than
+        # bundling them, so they must exist on the build host for analysis to
+        # see them — and on the user's machine to run. soundcard.pulseaudio
+        # dlopens libpulse; sounddevice/PortAudio is the fallback capture path.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpulse-dev portaudio19-dev
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install "pyinstaller>=6.3"
+          pip install -e .
+
+      - name: Run the test suites
+        # Same tests as the Windows build — none of them need an audio device.
+        run: |
+          python tests/test_audit.py
+          python tests/test_audio.py
+          python tests/test_plugins.py
+          python tests/test_app.py
+
+      - name: Build portable binary
+        # No SPEKTR_ONEDIR here: a onefile ELF is the single "download and run"
+        # artifact. The onedir/installer shape is Windows-specific.
+        run: pyinstaller --noconfirm --clean packaging/spektr.spec
+
+      - name: Smoke test the binary
+        run: |
+          ./dist/spektr --version
+          ./dist/spektr --list-modes
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spektr-linux
+          path: dist/spektr
+          if-no-files-found: error
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/spektr
+          # The Windows job creates the release body; append_body: true tacks
+          # these notes onto it instead of overwriting them.
+          append_body: true
+          body: |
+            **Linux (Ubuntu/Arch/Fedora/etc.) — no Python needed.**
+
+            * `spektr` — portable native binary. Download, `chmod +x spektr`, run it from a
+              terminal. It is a terminal program, so launch it from a terminal window.
+            * Built on Ubuntu 22.04 (glibc), the oldest target the runner offers, so it runs
+              on most modern distros.
+            * Needs your system audio libs: `libpulse.so` and PortAudio.
+              Debian/Ubuntu: `sudo apt install libportaudio2`. Arch: `sudo pacman -S portaudio`
+              (PipeWire exposes pulse via `pipewire-pulse`). Fedora: `sudo dnf install portaudio`.

@@ -27,7 +27,10 @@ before it claims success.
 CI does the same thing on a clean `windows-latest` runner —
 [`.github/workflows/build-windows.yml`](../.github/workflows/build-windows.yml)
 builds both artifacts on every `v*` tag and attaches them to the release, so
-you never need a Windows machine to cut one.
+you never need a Windows machine to cut one. A matching
+[`build-linux.yml`](../.github/workflows/build-linux.yml) produces `dist/spektr`,
+the native ELF for Linux users, on `ubuntu-latest`.
+
 
 ## Things that are true and worth knowing before you ship it
 

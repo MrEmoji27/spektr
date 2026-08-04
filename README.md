@@ -33,7 +33,23 @@ four times the vertical resolution of a text cell.
 > the build is unsigned because certificates cost money. There's an installer in the same
 > release if you'd rather have a Start Menu entry and a faster start.
 
-**With Python 3.10+:**
+> [!TIP]
+> **Linux, no Python required** — grab the `spektr` binary from the same
+> [latest release](https://github.com/MrEmoji27/spektr/releases), make it executable, and
+> run it from a terminal (it's a terminal program):
+>
+> ```bash
+> chmod +x spektr
+> ./spektr
+> ```
+>
+> You'll need the system audio libs it loads at run time: `libpulse.so` (PipeWire provides
+> it via `pipewire-pulse`) and PortAudio. Arch: `sudo pacman -S portaudio`. Debian/Ubuntu:
+> `sudo apt install libportaudio2`. Fedora: `sudo dnf install portaudio`. spektr tells you
+> if any are missing. The Windows `spektr.exe` in that release **will not run on Linux** —
+> it's a Windows binary; use the `spektr` file instead.
+
+**With Python 3.10+ (works on Windows, Linux and macOS):**
 
 ```bash
 pip install spektr
