@@ -32,10 +32,16 @@ class Settings:
     gate: float = 8e-5
     fps: int = 60
     chrome: bool = True
-    #: How many bars to draw. 0 fits the terminal width. Above the analyser's
-    #: native 32 this rebuilds the band plan for real resolution rather than
-    #: interpolating, which is why it lives here and not in the widget.
-    bands: int = 0
+    #: How many bars to draw. 0 fits the terminal width; the default is a fixed
+    #: 16 so the picture is consistent whatever the window size. Above the
+    #: analyser's native 32 this rebuilds the band plan for real resolution
+    #: rather than interpolating, which is why it lives here and not in the
+    #: widget.
+    bands: int = 16
+    #: Screensaver-style auto-cycling of mode and theme. Remembered across
+    #: restarts like everything else here — if you left it on, you wanted it
+    #: on, not a surprise burst of quiet the next time you open a terminal.
+    shuffle: bool = False
 
     def clamp(self) -> "Settings":
         """Force every field back into range, replacing junk with the default.
@@ -49,11 +55,12 @@ class Settings:
         self.sensitivity = _clamp_number(self.sensitivity, 0.15, 8.0, 1.0)
         self.gate = _clamp_number(self.gate, 1e-6, 2e-3, 8e-5)
         self.fps = int(_clamp_number(self.fps, 15, 120, 60))
-        bands = int(_clamp_number(self.bands, 0, 64, 0))
+        bands = int(_clamp_number(self.bands, 0, 64, 16))
         self.bands = bands if bands == 0 else max(8, bands)
         self.mode = self.mode if isinstance(self.mode, str) and self.mode else "Bars"
         self.theme = self.theme if isinstance(self.theme, str) and self.theme else "classic"
         self.chrome = bool(self.chrome)
+        self.shuffle = bool(self.shuffle)
         return self
 
 

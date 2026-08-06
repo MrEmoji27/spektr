@@ -130,6 +130,21 @@ def noise(shape: tuple[int, int], seed: int) -> np.ndarray:
     return (h & np.uint32(0xFFFFFF)).astype(np.float32) * _INV24
 
 
+def frac(x: np.ndarray) -> np.ndarray:
+    """Fractional part — ``x - floor(x)``, equivalent to ``np.mod(x, 1.0)``.
+
+    Not a rewrite for style: ``np.mod`` on floats is dramatically slower than
+    this, likely because it has to handle an arbitrary divisor rather than
+    the fixed 1.0 every caller here actually wants. Measured on a 400x800
+    dot grid — Tunnel and Radial's size at a 400x100 terminal — np.mod cost
+    6.7 ms against this function's 0.5 ms, a 13x difference that was most of
+    Tunnel's entire frame budget. Bit-identical output, including for
+    negative input: ``floor`` rounds toward -infinity, which is the same
+    convention Python's ``%`` and ``np.mod`` use.
+    """
+    return x - np.floor(x)
+
+
 def blocks_from_levels(levels: np.ndarray, h: int, chars: str = BLOCKS_UP) -> np.ndarray:
     """Column heights in 0..1 -> ``(h, len(levels))`` partial-block codepoints.
 
@@ -257,6 +272,7 @@ __all__ = [
     "cell_max",
     "cell_mean",
     "noise",
+    "frac",
     "blocks_from_levels",
     "row_gradient",
     "broadcast_rows",

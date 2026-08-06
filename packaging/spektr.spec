@@ -57,8 +57,20 @@ def pull(package: str) -> None:
 # textual ships tree-sitter query files (*.scm) next to its modules;
 # soundcard reads <backend>.py.h at import time and would fail without it —
 # it ships its own PyInstaller hook that says so, and this repeats it in case
-# the hook entry point is not picked up.
-for package in ("textual", "soundcard", "sounddevice", "_sounddevice_data"):
+# the hook entry point is not picked up. winrt and dbus_next are each only
+# installed on one of the two platforms this spec builds for (see
+# pyproject.toml's environment markers) — pull() already treats a missing
+# package as a note rather than a failure, which is exactly what a Linux
+# build needs to do about winrt and a Windows build about dbus_next.
+# "winrt" rather than the two pip package names (winrt-Windows.Media.Control,
+# winrt-Windows.Foundation): both install into one shared winrt/ namespace
+# package on disk, so collecting the namespace once picks up everything
+# either of them contributed, the same as collecting the package would if it
+# weren't split across two distributions.
+for package in (
+    "textual", "soundcard", "sounddevice", "_sounddevice_data",
+    "winrt", "dbus_next",
+):
     pull(package)
 
 hiddenimports += [

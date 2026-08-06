@@ -6,7 +6,7 @@ import math
 
 import numpy as np
 
-from ..render import cell_max, noise, pack_braille
+from ..render import cell_max, frac, noise, pack_braille
 from . import Ctx, empty, mode, spread
 
 
@@ -122,11 +122,16 @@ def pulse(ctx: Ctx):
     phase = math.fmod(ctx.t * 3.6, 1.0)
     strength = avg * (1.0 - phase)
     if strength > 0.1:
+        # reuses nz rather than a second noise() call, same as halo above does
+        # against inside's — a different threshold on the same random field
+        # reads as independently random, and a full-grid hash is expensive
+        # enough (see render.frac's docstring for the same lesson re: np.mod)
+        # that this mode was calling it up to twice a frame for no visible gain.
         band = 1.0 + strength * 2.0
         edge = np.abs(dist - max_r * phase)
         near = edge < band
         fade = 1.0 - edge / band
-        lit |= near & (noise((dr, dc), ctx.frame + 7) < fade * strength)
+        lit |= near & (nz < fade * strength)
 
     lit |= core
     codes = pack_braille(lit)
@@ -311,7 +316,7 @@ def radial(ctx: Ctx):
     outer = inner + (max_r - inner) * nrg
 
     # thin radial gutters so the wedges read as separate bars
-    wedge = np.mod(turn * n, 1.0)
+    wedge = frac(turn * n)
     gutter = (wedge < 0.06) | (wedge > 0.94)
 
     lit = (dist >= inner) & (dist <= outer) & ~gutter
@@ -321,4 +326,53 @@ def radial(ctx: Ctx):
     heat = np.where(lit, np.clip((dist - inner) / np.maximum(outer - inner, 1e-6), 0, 1), 0.0)
     codes = pack_braille(lit)
     cidx = ctx.ramp(cell_max(heat))
+    return codes, cidx
+
+
+@mode("Sonar", group="particles", blurb="one sweep, not the whole spectrum — returns fade like CRT phosphor")
+def sonar(ctx: Ctx):
+    """A ship's sonar scope, not another way to draw a spectrum.
+
+    Radial already shows every band at once, wrapped into a static ring —
+    the whole picture, all the time. This shows one bearing at a time: a
+    beam sweeps continuously, and only the band it's currently crossing gets
+    painted, as a return reaching out from the centre in proportion to that
+    band's level. Everywhere else on the screen is memory, not signal — each
+    return decays exponentially once the beam moves on, the way a real
+    CRT's phosphor keeps glowing after the electron gun passes, so what's on
+    screen at any instant is a fading fan of *recent* returns trailing the
+    beam around rather than a live readout. Band-to-bearing assignment is
+    fixed (``spin=0`` into ``_angular_bands``) like a real plot, where a
+    contact stays at its bearing and only the sweep moves over it.
+    """
+    dr, dc = ctx.dot_rows, ctx.dot_cols
+    if dr < 8 or dc < 8:
+        return empty(ctx.w, ctx.h)
+
+    dist, turn, max_r = _polar(ctx)
+    n = min(24, max(8, ctx.n_display))
+    nrg = _angular_bands(ctx, turn, n, 0.0)
+    r = dist / max_r
+
+    buf = ctx.scratch("sonar_buf", lambda: np.zeros((dr, dc), dtype=np.float32))
+
+    # SWEEP_TURNS_PER_SEC=0.15 is one full rotation every ~6.7s — slow enough
+    # that a band's return is still clearly a fading trail behind the beam
+    # rather than a blur, at the frame rates this runs at.
+    sweep = frac(ctx.t * 0.15)
+    # shortest signed angular distance from the beam, in turns: wrapping
+    # turn-sweep through +0.5 before taking frac() folds the far side of the
+    # wrap back onto [-0.5, 0.5) instead of leaving a 1.0-turn discontinuity
+    # at the 0/1 seam that a plain subtraction would show as a false return.
+    dtheta = np.abs(frac(turn - sweep + 0.5) - 0.5)
+    beam = dtheta < 0.004
+    ret = beam & (r <= nrg)
+
+    decay = float(np.exp(-max(ctx.dt, 0.0) / 0.9))
+    buf *= decay
+    np.maximum(buf, ret, out=buf)
+
+    dots = buf > 0.03
+    codes = pack_braille(dots)
+    cidx = ctx.ramp(cell_max(np.where(dots, buf, 0.0)))
     return codes, cidx

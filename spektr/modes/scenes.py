@@ -7,7 +7,7 @@ import math
 import numpy as np
 
 from ..palette import RAMP_STEPS
-from ..render import SPACE, cell_max, noise, pack_braille
+from ..render import SPACE, cell_max, frac, noise, pack_braille
 from . import Ctx, band_columns, empty, mode, spread
 from .particles import _angular_bands, _polar
 
@@ -233,10 +233,10 @@ def tunnel(ctx: Ctx):
     depth = max_r / np.maximum(dist, 0.9)
 
     speed = 0.6 + ctx.energy * 2.4
-    rings = np.mod(depth * 0.55 - ctx.t * speed, 1.0)
+    rings = frac(depth * 0.55 - ctx.t * speed)
     ribs = rings < (0.10 + 0.22 * nrg)
 
-    spokes = np.mod(turn * 16.0 + depth * 0.03, 1.0)
+    spokes = frac(turn * 16.0 + depth * 0.03)
     walls = spokes < 0.09
 
     lit = (ribs | walls) & (dist > 1.5)

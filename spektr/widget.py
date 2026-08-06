@@ -13,6 +13,7 @@ from __future__ import annotations
 import time
 import traceback
 
+import numpy as np
 from textual.reactive import reactive
 from textual.strip import Strip
 from textual.widget import Widget
@@ -23,14 +24,20 @@ from .capture import Capture
 from .config import Settings
 from .modes import Ctx
 from .motion import Peaks, Spring, Trace
-from .palette import AUTO, Palette, all_themes, theme_from_textual
+from .palette import AUTO, RAMP_STEPS, Palette, all_themes, theme_from_textual
 from .plugins import BadModeOutput, Quarantine, validate
-from .render import make_strips
+from .render import SPACE, make_strips
 
 #: A plugin allowed to eat the whole frame budget would stutter the entire UI,
 #: so anything slower than this gets its previous frame reused on alternate
 #: ticks. cliamp caps Lua plugins at 10 ms for the same reason.
 SLOW_MODE_MS = 11.0
+
+#: How long an animated theme's colour loop takes to turn once, in seconds.
+#: Expressed as a duration rather than a rate tied to RAMP_STEPS, so raising
+#: the ramp's resolution for a smoother gradient doesn't also speed up the
+#: animation — the two used to share one constant and silently coupled.
+RAINBOW_SECONDS_PER_CYCLE = 10.7
 
 
 class AudioVisualizer(Widget):
@@ -46,8 +53,13 @@ class AudioVisualizer(Widget):
 
     mode_name: reactive[str] = reactive("Bars")
 
-    def __init__(self, device=None, settings: Settings | None = None,
-                 allow_mic: bool = False, **kwargs):
+    def __init__(
+        self,
+        device=None,
+        settings: Settings | None = None,
+        allow_mic: bool = False,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         self.settings = settings or Settings()
 
@@ -82,7 +94,7 @@ class AudioVisualizer(Widget):
         self._build_ms: float | None = None
         self._last_seq = -1
 
-        self._preview: str | None = None   # theme name being previewed
+        self._preview: str | None = None  # theme name being previewed
         self._preview_mode: str | None = None
 
         self.quarantine = Quarantine()
@@ -94,7 +106,9 @@ class AudioVisualizer(Widget):
 
     def on_mount(self) -> None:
         self.apply_theme(self._theme_name, remember=False)
-        self.mode_name = self.settings.mode if mode_registry.get(self.settings.mode) else "Bars"
+        self.mode_name = (
+            self.settings.mode if mode_registry.get(self.settings.mode) else "Bars"
+        )
         try:
             self.watch(self.app, "theme", self._on_app_theme, init=False)
         except Exception:
@@ -180,13 +194,15 @@ class AudioVisualizer(Widget):
         try:
             i = (names.index(self.mode_name) + step) % len(names)
         except ValueError:
-            i = 0            # current mode was just quarantined out of the list
+            i = 0  # current mode was just quarantined out of the list
         self.set_mode(names[i])
         return self.mode_name
 
     def _quarantine_mode(self, name: str, detail: str) -> None:
         """Disable a mode that keeps failing and move somewhere safe."""
-        first_line = detail.strip().splitlines()[-1] if detail.strip() else "unknown error"
+        first_line = (
+            detail.strip().splitlines()[-1] if detail.strip() else "unknown error"
+        )
         m = mode_registry.get(name)
         who = f"plugin {m.plugin}" if m and m.plugin else "mode"
         if self.on_mode_disabled is not None:
@@ -320,7 +336,7 @@ class AudioVisualizer(Widget):
         self._stereo_l = Spring(n)
         self._stereo_r = Spring(n)
         self._peaks = Peaks(n)
-        self._mode_state.clear()      # cached geometry is sized for the old count
+        self._mode_state.clear()  # cached geometry is sized for the old count
         self._strips = None
 
     def set_bands(self, n: int) -> int:
@@ -328,8 +344,7 @@ class AudioVisualizer(Widget):
 
         One control, two mechanisms. Up to the analyser's native resolution the
         modes simply draw fewer bars out of the same analysis; past it, the
-        analyser resolves more bands for real. ``0`` restores the default,
-        which is to fit the terminal width.
+        analyser resolves more bands for real. ``0`` fits the terminal width.
         """
         n = int(n)
         self.settings.bands = 0 if n <= 0 else max(8, min(64, n))
@@ -418,6 +433,54 @@ class AudioVisualizer(Widget):
             return strips[y]
         return Strip.blank(self.size.width)
 
+    def _animate_ramp(self, codes, cidx, bidx, w: int):
+        """Spread one full spectrum across the width.
+
+        Only animated themes (``theme.animated``) call this. The steady flow
+        over time comes from rotating the palette's colour loop (see the
+        ``set_phase`` call in ``_build``); here we only add the per-column
+        offset that lays the rainbow across the bands instead of leaving it a
+        single hue. Applied to both the foreground and background index so
+        fg/bg pairs stay coherent.
+
+        Rounded rather than floored: floor sends every column in a
+        ``RAMP_STEPS/w`` span to the *same* bucket, so at a wide terminal
+        (say 200 columns against a 64-step ramp) each colour visibly held for
+        three-odd columns before jumping to the next — a staircase, not a
+        gradient. Rounding centres each bucket's span on the column nearest
+        its true position instead of always taking the low end, which is the
+        difference between a smooth sweep and a visibly pixelated one at the
+        ramp resolutions this actually runs at.
+
+        Only shifted where ``codes`` is not blank. make_strips run-length
+        encodes on colour-index *changes*, and a bar mode's empty space above
+        the bars is normally one constant index per row — courtesy of a
+        vertical gradient that doesn't vary with column — so it collapses to
+        one Segment no matter how wide the terminal is. Shifting blank cells
+        by column too broke that for no visible gain: a space has no glyph, so
+        its colour is never seen, but make_strips still had to build a
+        Segment and look up a Style for every one of those invisible slivers.
+        Profiled on Bars at 400x100: a quiet signal (6% of cells lit) still
+        cost 4.3 ms in make_strips before this — the same as loud (89% lit) —
+        because *every* row was fully fragmented regardless of how much of it
+        was actually visible. Masking dropped the quiet case to 1.1 ms; loud
+        is now the expensive case (6.8 ms) instead of every frame paying
+        loud's price. That constant tax was also large enough on its own to
+        occasionally trip the adaptive frame-rate guard below, which reads as
+        a stutter that then "catches up" once the average recovers — exactly
+        the symptom reported, and tracking real visible cost instead of a
+        flat per-frame cost is what removes it, not just makes it smaller.
+        """
+        cols = np.arange(w, dtype=np.float64)
+        shift = np.rint(cols * RAMP_STEPS / max(w, 1)).astype(np.int32)
+        lit = codes != SPACE
+        shifted = (cidx.astype(np.int32) + shift[None, :]) % RAMP_STEPS
+        cidx = np.where(lit, shifted, cidx)
+        if bidx is not None:
+            shifted_b = (bidx.astype(np.int32) + shift[None, :]) % RAMP_STEPS
+            bidx = np.where(lit, shifted_b, bidx)
+        return cidx, bidx
+
     def _build(self) -> list[Strip]:
         w, h = self.size.width, self.size.height
         if w < 2 or h < 1:
@@ -475,9 +538,21 @@ class AudioVisualizer(Widget):
             codes, cidx = out
             bidx = None
 
+        # animated themes flow their colour ramp. The palette is rotated to the
+        # current point on its loop — a fractional phase, so the colours glide a
+        # fraction of a step each frame instead of jumping a whole step — and the
+        # per-column offset spreads the spectrum across the bands. _build runs
+        # each frame, so the rainbow drifts live.
+        if getattr(self.palette.theme, "animated", False):
+            phase = (time.monotonic() - self._t0) / RAINBOW_SECONDS_PER_CYCLE
+            self.palette.set_phase(phase)
+            cidx, bidx = self._animate_ramp(codes, cidx, bidx, w)
+
         strips = make_strips(codes, cidx, self.palette, bidx)
         ms = (time.perf_counter() - t0) * 1000.0
         prev = self._mode_ms.get(m.name)
         self._mode_ms[m.name] = ms if prev is None else prev * 0.7 + ms * 0.3
-        self._build_ms = ms if self._build_ms is None else self._build_ms * 0.85 + ms * 0.15
+        self._build_ms = (
+            ms if self._build_ms is None else self._build_ms * 0.85 + ms * 0.15
+        )
         return strips

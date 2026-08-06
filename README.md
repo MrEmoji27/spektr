@@ -7,8 +7,8 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-00c853)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20·%20Linux%20·%20macOS-546e7a)](#how-it-captures-audio)
-[![Modes](https://img.shields.io/badge/render%20modes-27-ff6d00)](#modes)
-[![Themes](https://img.shields.io/badge/themes-40-7c4dff)](#themes)
+[![Modes](https://img.shields.io/badge/render%20modes-29-ff6d00)](#modes)
+[![Themes](https://img.shields.io/badge/themes-47-7c4dff)](#themes)
 [![Built with Textual](https://img.shields.io/badge/built%20with-Textual-5e35b1)](https://textual.textualize.io/)
 
 </div>
@@ -21,7 +21,7 @@ spektr draws it: overlapped FFTs across 32 log-spaced bands (settable) from 50 H
 out the way cava does it, rendered with braille sub-characters so the picture moves at
 four times the vertical resolution of a text cell.
 
-**Twenty-seven render modes. Forty themes. Locked 60 fps.**
+**Twenty-nine render modes. Forty-seven themes. Locked 60 fps.**
 
 ## Install
 
@@ -71,6 +71,12 @@ environment on first run and starts spektr on every run after.
 No configuration, no file to point it at, no music service to log into. It finds your
 output device, taps it, and draws.
 
+The header shows what's playing when it can — spektr only ever taps raw audio, so track
+title/artist comes from the OS media session instead (System Media Transport Controls on
+Windows, MPRIS on Linux), the same source your lock screen and media keys already use. No
+session, no supported player, or an unsupported platform (macOS) all just fall back to the
+usual capture status — never an error.
+
 ---
 
 **Contents** · [Modes](#modes) · [Themes](#themes) ·
@@ -91,32 +97,38 @@ Listed in the order the picker cycles them.
 | **Bricks** | chunky, no partial cells | **Radial** | the spectrum wrapped into a circle |
 | **Columns** | gapless, interpolated across the full width | **Retro** | sunset grid, with the spectrum as the horizon |
 | **Ladder** | segmented LED stack | **Auroras** | light curtains, billowing on the treble |
-| **Mirror** | grows out from the centre line | **Skyline** | a city at night, windows lit by their band |
-| **Stereo** | per-band L/R meters, mirrored from centre | **Tunnel** | flying down a pipe, ribbed by the beat |
-| **Wave** | smoothed waveform | **Warp** | starfield, accelerating with the music |
-| **Scope** | trigger-synced oscilloscope — the trace holds still | **Matrix** | digital rain, falling faster when it's loud |
-| **ECG** | scrolling trace, like a heart monitor | **Spectro** | scrolling waterfall — frequency up, time across |
-| **Strings** | plucked strings, bowed by their own band | **Plasma** | solid colour field, warped by the spectrum |
+| **Sonar** | one sweep, not the whole spectrum — returns fade like a scope | **Skyline** | a city at night, windows lit by their band |
+| **Mirror** | grows out from the centre line | **Tunnel** | flying down a pipe, ribbed by the beat |
+| **Stereo** | per-band L/R meters, mirrored from centre | **Warp** | starfield, accelerating with the music |
+| **Wave** | smoothed waveform | **Matrix** | digital rain, falling faster when it's loud |
+| **Scope** | trigger-synced oscilloscope — the trace holds still | **Spectro** | scrolling waterfall — frequency up, time across |
+| **ECG** | scrolling trace, like a heart monitor | **Plasma** | solid colour field, warped by the spectrum |
+| **Strings** | plucked strings, bowed by their own band | **VFD** | vacuum-fluorescent bargraph with phosphor afterglow |
 | **Gonio** | stereo phase scope with a phosphor trail | **Needle** | analogue VU — one sweeping needle, one red zone |
 | **Scatter** | density sparkle, thicker where it's loud | **VU** | big L/R LED meters with peak hold |
 | **Flame** | fire, licking upward from each band | **Arcs** | hollow rings, one per band, pushed out by level |
 | **Pulse** | radial pulse with shockwaves | | |
 
-A twenty-eighth entry, **None**, is registered as the off switch — it draws nothing.
-That is why the test output counts 28 modes against the twenty-seven listed here.
+A thirtieth entry, **None**, is registered as the off switch — it draws nothing.
+That is why the test output counts 30 modes against the twenty-nine listed here.
 
 Still frames of a few of them, straight from the render path: **[docs/gallery.md](docs/gallery.md)**.
 
 ## Themes
 
-Forty built in, previewed live from the `t` picker: `classic`, `gruvbox`, `catppuccin`
+Forty-seven built in, previewed live from the `t` picker: `classic`, `gruvbox`, `catppuccin`
 (+`-latte`), `dracula`, `nord`, `tokyo-night` (+`-day`), `rose-pine`, `everforest`,
 `kanagawa`, `ayu-mirage`, `monokai`, `solarized`, `nightfox`, `oxocarbon`, `miasma`,
 `osaka-jade`, `ristretto`, `flexoki-light`, `nightfly`, `material`, `gotham`, `oceanic`,
 `gruvbox-light`, `hackerman`, `ember`, `ethereal`, `synthwave`, `blade-runner`,
 `nostromo`, `plasma`, `viridis`, `ice`, `vaporwave`, `infrared`, `deep-sea`, `magma`,
-`matte-black`, `vantablack` — plus `auto`, which derives a ramp from whatever Textual
-theme your terminal is wearing.
+`matte-black`, `vantablack`, `rainbow`, `phosphor-amber`, `sakura`, `toxic`, `copper`,
+`polar`, `bubblegum` — plus `auto`, which derives a ramp from whatever Textual theme your
+terminal is wearing.
+
+`rainbow` is animated — its colour loop drifts continuously across the bands instead of
+sitting still, closing red → yellow → green → blue → violet → magenta back to red so the
+flow has no seam to jump at.
 
 Gradients are blended in linear light rather than straight sRGB, so the midpoint of a
 ramp doesn't go muddy the way naive hex interpolation does. The terminal background is
@@ -164,7 +176,7 @@ def nightrider(ctx):
 ```
 
 You return codepoints and *heat* — never colours — so every plugin works with all
-forty themes for free.
+forty-seven themes for free.
 
 > [!WARNING]
 > **Plugins are Python and run with your privileges.** spektr can't sandbox them, and
@@ -193,22 +205,27 @@ Full guide, including the whole of `ctx` and the drawing toolkit: **[docs/plugin
 
 | Key | Action | | Key | Action |
 |---|---|---|---|---|
-| `v` | Visualizer picker — live preview, `/` filter | | `s` | What am I listening to? |
-| `t` | Theme picker — live preview, `/` filter | | `d` / `D` | Next audio source / back to the default |
-| `c` | Settings — frame rate, bands, sensitivity, gate | | | |
-| `m` / `space` | Next mode (`M` for previous) | | `[` `]` | Sensitivity down / up |
-| `T` | Next theme | | `g` `G` | Noise gate down / up |
-| `f` | Hide header and footer — full-screen visual | | `r` | Reload themes and plugins from disk |
-| `p` | Frame time and FPS | | `q` | Quit |
+| `v` | Visualizer picker — live preview, `/` filter | | `d` / `D` | Next audio source / back to the default |
+| `t` | Theme picker — live preview, `/` filter | | `s` | Shuffle — random mode + theme on a timer |
+| `c` | Settings — frame rate, bands, sensitivity, gate, source | | `[` `]` | Sensitivity down / up |
+| `m` / `space` | Next mode (`M` for previous) | | `g` `G` | Noise gate down / up |
+| `T` | Next theme | | `r` | Reload themes and plugins from disk |
+| `f` | Hide header and footer — full-screen visual | | `q` | Quit |
+| `p` | Frame time and FPS | | | |
+| `L` | Save the current mode + theme + settings as a preset | | `l` | Load a saved preset — live preview, `esc` restores |
 
-Mode, theme, frame rate, band count, sensitivity and gate are remembered between runs.
+Mode, theme, frame rate, band count, sensitivity, gate and shuffle are remembered between runs.
+Presets are separate — named snapshots you save on purpose, picked back up with `l`.
 
 `c` opens a settings panel in the same shape as the pickers — arrow keys change values
 and everything applies live, because a settings screen you have to close to see the
 effect of is one you fight with. **Bands** is one control over two mechanisms: at or
 below the analyser's native 32 the modes simply draw fewer bars out of the same
 analysis, and above it the band plan is rebuilt so 48 or 64 bars are genuinely 48 or 64
-distinct ranges of FFT bins rather than interpolated copies of their neighbours.
+distinct ranges of FFT bins rather than interpolated copies of their neighbours. **Source**
+is the last row — it shows what's currently listening, refreshing on its own as a switch
+settles rather than only when you touch it; → cycles to the next candidate device (same as
+`d`), ← resets to the system default (same as `D`).
 
 ## Command line
 

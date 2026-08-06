@@ -2,30 +2,112 @@
 
 from __future__ import annotations
 
+import random
 import sys
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer, Header
 
-from . import config
+from . import __version__, config
 from . import modes as mode_registry
-from .pickers import Picker, Setting, SettingsPanel
+from . import nowplaying
+from . import presets as presets_module
+from .pickers import NamePrompt, Picker, Setting, SettingsPanel
 from .widget import AudioVisualizer
 
-__version__ = "0.2.0"
+#: How often shuffle picks a new mode, in seconds — long enough to actually
+#: look at what changed, short enough to read as "shuffling" rather than
+#: "occasionally different".
+SHUFFLE_MODE_SECONDS = 15.0
+
+#: Theme changes once every this-many mode changes, not every tick. The mode
+#: is usually the more interesting axis, and flipping both at once — new
+#: shapes *and* new colours in the same instant — reads as the picture
+#: breaking rather than as a deliberate change.
+SHUFFLE_THEME_EVERY = 3
+
+#: How often to ask the OS what's playing. A media session doesn't change
+#: fast enough to need polling every frame, and each poll is a real IPC round
+#: trip (WinRT or D-Bus) rather than a free local read.
+NOWPLAYING_POLL_SECONDS = 5.0
 
 
 class Spektr(App):
     # The screen colour is taken over by the active spektr theme once the
     # visualiser mounts — see AudioVisualizer._paint_background.
+    # Overlay panels are styled here in App CSS rather than on the widget
+    # classes: in this Textual version a widget's own CSS attribute is not
+    # applied to widgets that are mounted dynamically (after the app starts),
+    # so the panel would render unframed and full-screen. The visualiser sits
+    # on the base layer; the docked panel rides on the overlay layer above it,
+    # leaving the bands visible and repainting behind it.
     CSS = """
-    Screen { background: #000000; }
-    AudioVisualizer { height: 1fr; }
+    Screen { layers: base overlay; background: #000000; }
+    AudioVisualizer { layer: base; height: 1fr; }
+
+    Picker, SettingsPanel, NamePrompt {
+        layer: overlay;
+        dock: right;
+        width: auto;
+        height: 100%;
+        background: transparent;
+    }
+    Picker > #panel, SettingsPanel > #panel, NamePrompt > #panel {
+        height: 100%;
+        background: $surface;
+        border-left: tall $accent;
+        padding: 0 1;
+    }
+    /* Picker holds up to 29 mode names, each with a blurb that can run past
+       sixty characters; SettingsPanel holds five rows with short notes. Both
+       used to share one 32-wide rule, which was fine for the settings notes
+       and far too narrow for the mode blurbs — every one of them wrapped,
+       and wrapped text with no hanging indent reads as a jumbled paragraph
+       rather than a list. Widened, and given each its own value now that
+       they don't actually want the same one. */
+    Picker > #panel {
+        width: 40;
+    }
+    SettingsPanel > #panel, NamePrompt > #panel {
+        width: 42;
+    }
+    Picker #title, SettingsPanel #title, NamePrompt #title {
+        color: $accent;
+        text-style: bold;
+        padding: 1 0 0 0;
+    }
+    Picker Input, SettingsPanel Input, NamePrompt Input {
+        border: none;
+        background: $surface;
+        padding: 0;
+        margin: 0 0 1 0;
+    }
+    Picker OptionList, SettingsPanel OptionList {
+        background: $surface;
+        border: none;
+        height: 1fr;
+        scrollbar-size-vertical: 1;
+    }
+    Picker #hint, SettingsPanel #hint, NamePrompt #hint {
+        color: $text-muted;
+    }
     """
 
     TITLE = "spektr"
     SUB_TITLE = "system audio, drawn in the terminal"
+
+    # Textual's default ctrl+p command palette is switched off rather than
+    # fixed. Its "Theme" command opens Textual's own theme list — nord,
+    # gruvbox, dracula, monokai, solarized, catppuccin-mocha/latte,
+    # tokyo-night, several of them namesakes of spektr's own audio themes —
+    # unranked and unrelated to the `t` picker's ramp. Picking "nord" there
+    # recolours the header and footer chrome, not a single band, which reads
+    # as the picker being broken rather than as a second, unrelated feature.
+    # spektr already has its own filterable palette (`v` / `t`); a second one
+    # a keystroke away, searching a different list under an identical name,
+    # is a bug waiting to be filed rather than a feature worth keeping.
+    ENABLE_COMMAND_PALETTE = False
 
     BINDINGS = [
         Binding("m,space", "cycle_mode", "Mode"),
@@ -35,10 +117,15 @@ class Spektr(App):
         Binding("c", "settings", "Settings"),
         Binding("T", "cycle_theme", "Next theme", show=False),
         Binding("f", "toggle_chrome", "Full screen"),
-        Binding("s", "show_status", "Source"),
         Binding("d", "next_source", "Next source", show=False),
         Binding("D", "default_source", "Default output", show=False),
         Binding("r", "reload", "Reload themes + plugins", show=False),
+        # s used to be "show source status" — moved into the settings panel
+        # (see action_settings' source row) since it's now free, and s for
+        # Shuffle is a plainer mnemonic than the a it had before.
+        Binding("s", "toggle_shuffle", "Shuffle"),
+        Binding("l", "load_preset", "Load preset", show=False),
+        Binding("L", "save_preset", "Save preset", show=False),
         Binding("left_square_bracket", "gain(-1)", "Sens -", show=False),
         Binding("right_square_bracket", "gain(1)", "Sens +", show=False),
         Binding("g", "gate(-1)", "Gate -", show=False),
@@ -47,18 +134,35 @@ class Spektr(App):
         Binding("q", "quit", "Quit"),
     ]
 
-    def __init__(self, device=None, settings: config.Settings | None = None,
-                 allow_mic: bool = False):
+    def __init__(
+        self,
+        device=None,
+        settings: config.Settings | None = None,
+        allow_mic: bool = False,
+    ):
         super().__init__()
         self._device = device
         self._allow_mic = allow_mic
         self.settings = settings or config.load()
+        #: the picker/settings overlay currently mounted, if any
+        self._overlay = None
+        #: the shuffle timer, or None when shuffle is off
+        self._shuffle_timer = None
+        self._shuffle_count = 0
+        self._presets = presets_module.load()
+        #: the capture/device status text — what the header falls back to
+        #: when nothing is playing that the OS will report on
+        self._capture_status = self.SUB_TITLE
+        #: "Artist — Title" from the OS media session, or None
+        self._now_playing: str | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
         yield AudioVisualizer(
-            device=self._device, settings=self.settings,
-            allow_mic=self._allow_mic, id="viz",
+            device=self._device,
+            settings=self.settings,
+            allow_mic=self._allow_mic,
+            id="viz",
         )
         yield Footer()
 
@@ -72,6 +176,9 @@ class Spektr(App):
         self.viz.on_mode_disabled = self._mode_disabled
         # give the capture thread a moment, then say what it found
         self.set_timer(1.5, self.action_show_status)
+        if self.settings.shuffle:
+            self._start_shuffle()
+        self.set_interval(NOWPLAYING_POLL_SECONDS, self._poll_now_playing)
 
     def _mode_disabled(self, name: str, message: str) -> None:
         """A mode failed repeatedly and was quarantined."""
@@ -83,6 +190,38 @@ class Spektr(App):
 
     def on_unmount(self) -> None:
         config.save(self.settings)
+
+    # ── overlay panels ────────────────────────────────────────────────────────
+    # The pickers/settings are docked overlay widgets on the *same* screen as
+    # the visualiser (see layers in the CSS), so the bands stay visible and
+    # repainting behind them. Mounting is owned by the App; the panel reports
+    # its result through on_done and then removes itself.
+
+    def _open_overlay(self, widget, on_done) -> None:
+        """Mount a Picker/SettingsPanel and route its completion to on_done."""
+        self._close_overlay()
+
+        def finished(*args) -> None:
+            if self._overlay is widget:
+                self._overlay = None
+            on_done(*args)
+            widget.remove()
+
+        widget._on_done = finished
+        self._overlay = widget
+        self.mount(widget)
+
+    def _close_overlay(self) -> None:
+        w = self._overlay
+        if w is not None:
+            self._overlay = None
+            w._on_done = None
+            w.remove()
+
+    def check_action(self, action, parameters) -> bool:
+        # While an overlay panel is open it owns the keyboard: the global keys
+        # (cycle, pick, quit, gain, …) must not fire underneath it.
+        return self._overlay is None
 
     # ── modes ────────────────────────────────────────────────────────────────
 
@@ -103,7 +242,7 @@ class Spektr(App):
                 viz.set_mode(choice)
                 viz.commit_mode()
 
-        self.push_screen(
+        self._open_overlay(
             Picker(
                 "visualizers",
                 viz.mode_names,
@@ -127,7 +266,7 @@ class Spektr(App):
                 viz.commit_theme()
                 self.notify(f"theme — {viz.palette.note}", timeout=2)
 
-        self.push_screen(
+        self._open_overlay(
             Picker(
                 "themes",
                 viz.theme_names,
@@ -139,6 +278,112 @@ class Spektr(App):
 
     def action_cycle_theme(self) -> None:
         self.notify(f"theme — {self.viz.cycle_theme()}", timeout=2)
+
+    # ── shuffle ──────────────────────────────────────────────────────────────
+    # A screensaver toggle: pick a random mode every SHUFFLE_MODE_SECONDS, and
+    # a random theme every SHUFFLE_THEME_EVERY-th tick. Random rather than the
+    # sequential cycle m/T already do — a fixed rotation through the same list
+    # in the same order is exactly what makes a screensaver feel like a slideshow
+    # instead of a surprise.
+
+    def action_toggle_shuffle(self) -> None:
+        self.settings.shuffle = not self.settings.shuffle
+        if self.settings.shuffle:
+            self._start_shuffle()
+        else:
+            self._stop_shuffle()
+        self.notify(f"shuffle {'on' if self.settings.shuffle else 'off'}", timeout=2)
+
+    def _start_shuffle(self) -> None:
+        if self._shuffle_timer is None:
+            self._shuffle_count = 0
+            self._shuffle_timer = self.set_interval(SHUFFLE_MODE_SECONDS, self._shuffle_tick)
+
+    def _stop_shuffle(self) -> None:
+        if self._shuffle_timer is not None:
+            self._shuffle_timer.stop()
+            self._shuffle_timer = None
+
+    def _shuffle_tick(self) -> None:
+        # a picker or the settings panel open means the user is mid-decision;
+        # yanking the mode out from under them would be exactly the wrong kind
+        # of surprise
+        if self._overlay is not None:
+            return
+
+        viz = self.viz
+        others = [n for n in viz.mode_names if n != viz.mode_name]
+        if others:
+            viz.set_mode(random.choice(others))
+            viz.commit_mode()
+
+        self._shuffle_count += 1
+        if self._shuffle_count % SHUFFLE_THEME_EVERY == 0:
+            theme_others = [n for n in viz.theme_names if n != viz.theme_name]
+            if theme_others:
+                viz.apply_theme(random.choice(theme_others))
+                viz.commit_theme()
+
+        self.notify(f"shuffle — {viz.mode_name} · {viz.palette.name}", timeout=2)
+
+    # ── presets ──────────────────────────────────────────────────────────────
+    # A named snapshot of mode + theme + the four settings-panel numbers.
+    # Loading previews mode and theme exactly like the `t`/`v` pickers do —
+    # arrow through, see it, escape puts back what you had. fps/bands/
+    # sensitivity/gate apply immediately as you arrow instead, same as the `c`
+    # panel already does for those four; there's no existing "undo" concept
+    # for them anywhere in the app, so a preset preview doesn't invent one.
+
+    def action_save_preset(self) -> None:
+        def done(name: str | None) -> None:
+            if not name:
+                return
+            viz = self.viz
+            s = self.settings
+            self._presets[name] = {
+                "mode": viz.mode_name,
+                "theme": viz.theme_name,
+                "fps": viz._target_fps,
+                "bands": s.bands,
+                "sensitivity": s.sensitivity,
+                "gate": s.gate,
+            }
+            presets_module.save(self._presets)
+            self.notify(f"preset saved — {name}", timeout=2)
+
+        self._open_overlay(NamePrompt("save preset as…", placeholder="name"), done)
+
+    def action_load_preset(self) -> None:
+        if not self._presets:
+            self.notify("no presets saved yet — press L to save the current look", timeout=3)
+            return
+
+        viz = self.viz
+
+        def preview(name: str) -> None:
+            p = self._presets.get(name)
+            if p is None:
+                return
+            viz.preview_mode(p["mode"])
+            viz.preview_theme(p["theme"])
+            viz._retime(p["fps"], requested=True)
+            viz.set_bands(p["bands"])
+            viz.set_sensitivity(p["sensitivity"])
+            viz.set_gate(p["gate"])
+
+        def done(name: str | None) -> None:
+            if name is None:
+                viz.cancel_mode_preview()
+                viz.cancel_theme_preview()
+            else:
+                viz.commit_mode()
+                viz.commit_theme()
+                self.notify(f"preset — {name}", timeout=2)
+
+        self._open_overlay(
+            Picker("presets", list(self._presets), current=None, on_preview=preview),
+            done,
+        )
 
     def action_reload(self) -> None:
         """Re-read themes and plugins from disk without restarting.
@@ -208,7 +453,8 @@ class Spektr(App):
     def action_show_status(self) -> None:
         viz = self.viz
         status = viz.status
-        self.sub_title = status
+        self._capture_status = status
+        self._update_subtitle()
 
         if viz.on_mic:
             severity = "error"
@@ -218,6 +464,24 @@ class Spektr(App):
             severity = "warning"
 
         self.notify(f"{status}\n{viz.level}", severity=severity, timeout=7)
+
+    # ── now playing ──────────────────────────────────────────────────────────
+    # spektr taps raw audio — it has no idea what's making the sound, only
+    # that something is. Track metadata comes from the OS media session
+    # instead (see nowplaying.py), polled on a timer rather than pushed,
+    # because neither SMTC nor MPRIS offers spektr a change notification
+    # worth wiring up for a header line.
+
+    async def _poll_now_playing(self) -> None:
+        track = await nowplaying.current()
+        self._now_playing = str(track) if track else None
+        self._update_subtitle()
+
+    def _update_subtitle(self) -> None:
+        # now playing wins when there is one — it's the more interesting fact
+        # once music is actually going: capture status is diagnostic, this is
+        # content
+        self.sub_title = self._now_playing or self._capture_status
 
     def action_settings(self) -> None:
         """The live settings panel.
@@ -230,47 +494,78 @@ class Spektr(App):
         s = self.settings
 
         def show_bands(v):
-            return "fit the terminal" if v == 0 else f"{v}" + ("  (resolved)" if v > 32 else "")
+            return (
+                "fit the terminal"
+                if v == 0
+                else f"{v}" + ("  (resolved)" if v > 32 else "")
+            )
 
         rows = [
             Setting(
-                "fps", "frame rate", config.FPS_CHOICES,
+                "fps",
+                "frame rate",
+                config.FPS_CHOICES,
                 lambda v: f"{v} fps",
                 lambda v: viz._retime(v, requested=True),
                 "the motion is timed in seconds, so this changes smoothness only",
             ),
             Setting(
-                "bands", "bands", config.BAND_CHOICES,
+                "bands",
+                "bands",
+                config.BAND_CHOICES,
                 show_bands,
                 viz.set_bands,
                 "above 32 the analyser resolves more, below it modes draw fewer",
             ),
             Setting(
-                "sensitivity", "sensitivity",
+                "sensitivity",
+                "sensitivity",
                 (0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0),
                 lambda v: f"x{v:g}",
                 viz.set_sensitivity,
                 "trim on top of the automatic gain",
             ),
             Setting(
-                "gate", "noise gate",
+                "gate",
+                "noise gate",
                 (1e-5, 3e-5, 8e-5, 2e-4, 5e-4, 1e-3),
                 lambda v: f"{v:.0e}",
                 viz.set_gate,
                 "below this, input counts as silence",
             ),
             Setting(
-                "chrome", "header + footer", (True, False),
+                "chrome",
+                "header + footer",
+                (True, False),
                 lambda v: "shown" if v else "hidden",
                 self._set_chrome,
                 "same as f",
             ),
+            # No fixed choices to step through and nothing to read out of
+            # values — the audio source is whatever the capture thread
+            # currently holds, which changes on its own schedule as the new
+            # device settles. step/live are exactly the escape hatch Setting
+            # documents itself: right reuses next_source's cycle, left
+            # reuses default_source's reset, and the row polls the live
+            # status (see SettingsPanel.on_mount) rather than reading a
+            # snapshot taken when the key was pressed.
+            Setting(
+                "source",
+                "source",
+                [],
+                live=lambda: viz.status,
+                step=lambda delta: viz.restart_capture() if delta > 0 else viz.reset_capture(),
+                note="→ next candidate · ← back to the system default",
+            ),
         ]
         values = {
-            "fps": viz._target_fps, "bands": s.bands, "sensitivity": s.sensitivity,
-            "gate": s.gate, "chrome": s.chrome,
+            "fps": viz._target_fps,
+            "bands": s.bands,
+            "sensitivity": s.sensitivity,
+            "gate": s.gate,
+            "chrome": s.chrome,
         }
-        self.push_screen(SettingsPanel(rows, values))
+        self._open_overlay(SettingsPanel(rows, values), lambda *a: None)
 
     def action_show_perf(self) -> None:
         self.notify(f"{self.viz.perf}\n{self.viz.level}", timeout=4)

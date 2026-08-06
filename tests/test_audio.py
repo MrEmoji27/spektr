@@ -73,7 +73,7 @@ def settle(an: Analyser, ring: RingBuffer, signal: np.ndarray, rounds: int = 250
     return an.frame.bands
 
 
-def test_ring_roundtrip() -> list[str]:
+def check_ring_roundtrip() -> list[str]:
     bad = []
     ring = RingBuffer(1024)
     for i in range(10):
@@ -95,7 +95,7 @@ def test_ring_roundtrip() -> list[str]:
     return bad
 
 
-def test_band_plan() -> list[str]:
+def check_band_plan() -> list[str]:
     """Every bar must read its own bins.
 
     This is the bug the cava port exists to fix. The old layout spread 32 bands
@@ -136,7 +136,7 @@ def test_band_plan() -> list[str]:
     return bad
 
 
-def test_bands() -> list[str]:
+def check_bands() -> list[str]:
     bad = []
     ring = RingBuffer(SR)
     an = Analyser(ring, lambda: SR)
@@ -154,7 +154,7 @@ def test_bands() -> list[str]:
     return bad
 
 
-def test_treble_reaches_full_height() -> list[str]:
+def check_treble_reaches_full_height() -> list[str]:
     """The eq tilt earns its place here.
 
     Spectra fall off with frequency, so without cava's ``f^0.85`` boost the top
@@ -176,7 +176,7 @@ def test_treble_reaches_full_height() -> list[str]:
     return bad
 
 
-def test_autosens_converges() -> list[str]:
+def check_autosens_converges() -> list[str]:
     """A quiet source and a loud one must both end up using the display.
 
     The old auto-gain normalised on frame RMS, which meant a kick raised the
@@ -200,7 +200,7 @@ def test_autosens_converges() -> list[str]:
     return bad
 
 
-def test_band_count_is_settable() -> list[str]:
+def check_band_count_is_settable() -> list[str]:
     """One control, two mechanisms — and the boundary has to hold.
 
     Asking for fewer bars than the analyser resolves is a drawing question:
@@ -248,7 +248,7 @@ def test_band_count_is_settable() -> list[str]:
     return bad
 
 
-def test_shutdown_filter_is_narrow() -> list[str]:
+def check_shutdown_filter_is_narrow() -> list[str]:
     """The exit-noise filter must drop soundcard's destructor noise only.
 
     soundcard's ``_COMLibrary.__del__`` raises during interpreter shutdown and
@@ -299,7 +299,7 @@ def test_shutdown_filter_is_narrow() -> list[str]:
     return bad
 
 
-def test_gate() -> list[str]:
+def check_gate() -> list[str]:
     ring = RingBuffer(SR)
     an = Analyser(ring, lambda: SR)
     ring.push(tone(1000.0, FEED, amp=1e-7))
@@ -315,7 +315,7 @@ def test_gate() -> list[str]:
     return []
 
 
-def test_analysis_rate() -> list[str]:
+def check_analysis_rate() -> list[str]:
     """The reason this rewrite exists: analysis must outpace the frame rate."""
     ring = RingBuffer(SR)
     an = Analyser(ring, lambda: SR)
@@ -340,7 +340,7 @@ def test_analysis_rate() -> list[str]:
     return []
 
 
-def test_framerate_independence() -> list[str]:
+def check_framerate_independence() -> list[str]:
     """Same input, different frame rates — the spring must land in the same
     place. The old code's per-frame damping multiply failed this badly."""
     target = np.full(N_BANDS, 0.75)
@@ -359,7 +359,7 @@ def test_framerate_independence() -> list[str]:
     return []
 
 
-def test_peak_hold_seconds() -> list[str]:
+def check_peak_hold_seconds() -> list[str]:
     """Peak hold is in seconds, so it must decay identically at any fps."""
     results = {}
     for fps in (15, 60):
@@ -376,7 +376,7 @@ def test_peak_hold_seconds() -> list[str]:
     return []
 
 
-def test_resample() -> list[str]:
+def check_resample() -> list[str]:
     bad = []
     src = np.linspace(0.0, 1.0, N_BANDS)
     for n in (8, 10, 16, 32, 48):
@@ -388,7 +388,7 @@ def test_resample() -> list[str]:
     return bad
 
 
-def test_never_picks_mic() -> list[str]:
+def check_never_picks_mic() -> list[str]:
     """The regression that shipped: with nothing playing, every loopback tap
     correctly reports silence while the microphone picks up the room — so
     "first source with signal wins" selected the microphone and visualised the
@@ -432,7 +432,7 @@ def test_never_picks_mic() -> list[str]:
     return bad
 
 
-def test_takes_the_default_output_and_stays() -> list[str]:
+def check_takes_the_default_output_and_stays() -> list[str]:
     """cava's rule: ask the system which device is playing, take it, hold it.
 
     The previous behaviour auditioned every tap for 2.5 seconds of signal and
@@ -534,7 +534,7 @@ def _fake_sounddevice(version, loopback_ok, devices, hostapis, bad_device=None):
     return fake
 
 
-def test_enumeration_failures_are_explained() -> list[str]:
+def check_enumeration_failures_are_explained() -> list[str]:
     """Reported in the field: only Stereo Mix and a mic were offered, no loopback
     at all, and nothing said why. Two separate causes, both silent before —
     soundcard missing (it is what provides loopback), and one bad endpoint
@@ -658,7 +658,7 @@ def _fake_soundcard(live_name, endpoints):
     return sc
 
 
-def test_enumerates_off_the_capture_thread() -> list[str]:
+def check_enumerates_off_the_capture_thread() -> list[str]:
     """Device discovery must happen where it is known to work.
 
     On a real machine, ``soundcard`` returned three WASAPI loopback endpoints
@@ -716,7 +716,7 @@ def test_enumerates_off_the_capture_thread() -> list[str]:
     return bad
 
 
-def test_soundcard_loopback_backend() -> list[str]:
+def check_soundcard_loopback_backend() -> list[str]:
     """The real fix for "barely any reaction" on Windows.
 
     PortAudio has no WASAPI loopback flag, so sounddevice cannot capture system
@@ -801,7 +801,7 @@ def test_soundcard_loopback_backend() -> list[str]:
     return bad
 
 
-def test_com_is_initialised_per_thread() -> list[str]:
+def check_com_is_initialised_per_thread() -> list[str]:
     """Reported in the field as `cannot open: Error 0x800401f0`.
 
     COM apartments are per-thread. soundcard initialises COM once at import, on
@@ -868,7 +868,7 @@ def test_com_is_initialised_per_thread() -> list[str]:
     return bad
 
 
-def test_knee_suppresses_floor() -> list[str]:
+def check_knee_suppresses_floor() -> list[str]:
     """A signal barely above the gate must not be drawn at full height."""
     SR = 48000
     ring = RingBuffer(SR)
@@ -905,26 +905,130 @@ def test_knee_suppresses_floor() -> list[str]:
 
 
 TESTS = [
-    ("ring buffer", test_ring_roundtrip),
-    ("never auto-selects the microphone", test_never_picks_mic),
-    ("takes the default output and stays", test_takes_the_default_output_and_stays),
-    ("enumeration failures are explained", test_enumeration_failures_are_explained),
-    ("enumerates off the capture thread", test_enumerates_off_the_capture_thread),
-    ("soundcard loopback backend", test_soundcard_loopback_backend),
-    ("COM initialised per thread", test_com_is_initialised_per_thread),
-    ("soft knee suppresses the noise floor", test_knee_suppresses_floor),
-    ("band plan (cava distribution)", test_band_plan),
-    ("band mapping", test_bands),
-    ("treble reaches full height", test_treble_reaches_full_height),
-    ("autosens converges", test_autosens_converges),
-    ("band count is settable", test_band_count_is_settable),
-    ("shutdown filter stays narrow", test_shutdown_filter_is_narrow),
-    ("noise gate", test_gate),
-    ("band resampling", test_resample),
-    ("analysis rate", test_analysis_rate),
-    ("frame-rate independence", test_framerate_independence),
-    ("peak hold in seconds", test_peak_hold_seconds),
+    ("ring buffer", check_ring_roundtrip),
+    ("never auto-selects the microphone", check_never_picks_mic),
+    ("takes the default output and stays", check_takes_the_default_output_and_stays),
+    ("enumeration failures are explained", check_enumeration_failures_are_explained),
+    ("enumerates off the capture thread", check_enumerates_off_the_capture_thread),
+    ("soundcard loopback backend", check_soundcard_loopback_backend),
+    ("COM initialised per thread", check_com_is_initialised_per_thread),
+    ("soft knee suppresses the noise floor", check_knee_suppresses_floor),
+    ("band plan (cava distribution)", check_band_plan),
+    ("band mapping", check_bands),
+    ("treble reaches full height", check_treble_reaches_full_height),
+    ("autosens converges", check_autosens_converges),
+    ("band count is settable", check_band_count_is_settable),
+    ("shutdown filter stays narrow", check_shutdown_filter_is_narrow),
+    ("noise gate", check_gate),
+    ("band resampling", check_resample),
+    ("analysis rate", check_analysis_rate),
+    ("frame-rate independence", check_framerate_independence),
+    ("peak hold in seconds", check_peak_hold_seconds),
 ]
+
+
+# ── pytest entry points ───────────────────────────────────────────────────────
+#
+# Same issue as test_audit.py had: a bare ``def test_x(): return bad`` never
+# fails under pytest, only trips a deprecation warning — so this whole file
+# was reporting green under ``pytest tests/`` regardless of what the checks
+# above actually found. Only running it directly (the loop below) ever turned
+# a finding into a nonzero exit. These wrappers make pytest catch the same
+# failures; the checks' own logic is untouched.
+
+def test_ring_roundtrip() -> None:
+    bad = check_ring_roundtrip()
+    assert not bad, "\n".join(bad)
+
+
+def test_never_picks_mic() -> None:
+    bad = check_never_picks_mic()
+    assert not bad, "\n".join(bad)
+
+
+def test_takes_the_default_output_and_stays() -> None:
+    bad = check_takes_the_default_output_and_stays()
+    assert not bad, "\n".join(bad)
+
+
+def test_enumeration_failures_are_explained() -> None:
+    bad = check_enumeration_failures_are_explained()
+    assert not bad, "\n".join(bad)
+
+
+def test_enumerates_off_the_capture_thread() -> None:
+    bad = check_enumerates_off_the_capture_thread()
+    assert not bad, "\n".join(bad)
+
+
+def test_soundcard_loopback_backend() -> None:
+    bad = check_soundcard_loopback_backend()
+    assert not bad, "\n".join(bad)
+
+
+def test_com_is_initialised_per_thread() -> None:
+    bad = check_com_is_initialised_per_thread()
+    assert not bad, "\n".join(bad)
+
+
+def test_knee_suppresses_floor() -> None:
+    bad = check_knee_suppresses_floor()
+    assert not bad, "\n".join(bad)
+
+
+def test_band_plan() -> None:
+    bad = check_band_plan()
+    assert not bad, "\n".join(bad)
+
+
+def test_bands() -> None:
+    bad = check_bands()
+    assert not bad, "\n".join(bad)
+
+
+def test_treble_reaches_full_height() -> None:
+    bad = check_treble_reaches_full_height()
+    assert not bad, "\n".join(bad)
+
+
+def test_autosens_converges() -> None:
+    bad = check_autosens_converges()
+    assert not bad, "\n".join(bad)
+
+
+def test_band_count_is_settable() -> None:
+    bad = check_band_count_is_settable()
+    assert not bad, "\n".join(bad)
+
+
+def test_shutdown_filter_is_narrow() -> None:
+    bad = check_shutdown_filter_is_narrow()
+    assert not bad, "\n".join(bad)
+
+
+def test_gate() -> None:
+    bad = check_gate()
+    assert not bad, "\n".join(bad)
+
+
+def test_resample() -> None:
+    bad = check_resample()
+    assert not bad, "\n".join(bad)
+
+
+def test_analysis_rate() -> None:
+    bad = check_analysis_rate()
+    assert not bad, "\n".join(bad)
+
+
+def test_framerate_independence() -> None:
+    bad = check_framerate_independence()
+    assert not bad, "\n".join(bad)
+
+
+def test_peak_hold_seconds() -> None:
+    bad = check_peak_hold_seconds()
+    assert not bad, "\n".join(bad)
 
 
 if __name__ == "__main__":

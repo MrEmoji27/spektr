@@ -50,6 +50,7 @@ from .render import (
     blocks_from_levels,
     cell_max,
     cell_mean,
+    frac,
     noise,
     pack_braille,
 )
@@ -69,6 +70,7 @@ __all__ = [
     "cell_max",
     "cell_mean",
     "noise",
+    "frac",
     "BRAILLE_BASE",
     # block characters
     "blocks_from_levels",

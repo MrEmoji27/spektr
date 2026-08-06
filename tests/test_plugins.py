@@ -108,7 +108,7 @@ def make_ctx(w=60, h=20):
     )
 
 
-def run() -> list[str]:
+def check_plugin_system() -> list[str]:
     bad: list[str] = []
     tmp = Path(tempfile.mkdtemp(prefix="spektr-test-"))
     original = palette.config_dir
@@ -233,9 +233,23 @@ def run() -> list[str]:
     return bad
 
 
+# ── pytest entry point ────────────────────────────────────────────────────────
+#
+# Before this, the checker was named ``run()`` — not ``test_*`` — so ``pytest
+# tests/`` collected zero tests from this file. Not a warning, not a silent
+# pass: nothing. This is the plugin trust/quarantine boundary, the one part of
+# the app the README calls out as security-sensitive ("plugins are Python and
+# run with your privileges"), and it had no pytest coverage at all. CI never
+# noticed because it runs this file directly as a script instead — but anyone
+# running the standard ``pytest`` workflow got nothing here.
+def test_plugin_system() -> None:
+    bad = check_plugin_system()
+    assert not bad, "\n".join(bad)
+
+
 if __name__ == "__main__":
     print("  plugin system…")
-    problems = run()
+    problems = check_plugin_system()
     for p in problems:
         print(f"    FAIL {p}")
     print("\nall good" if not problems else f"\n{len(problems)} failures")

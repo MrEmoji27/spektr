@@ -8,8 +8,8 @@ import numpy as np
 
 from ..analysis import resample_bands
 from ..palette import RAMP_STEPS
-from ..render import SHADES, SPACE
-from . import Ctx, empty, mode
+from ..render import SHADES, SPACE, cell_max, pack_braille
+from . import Ctx, empty, mode, spread
 
 _UPPER_HALF = ord("▀")
 _FULL = ord("█")
@@ -49,6 +49,19 @@ def plasma(ctx: Ctx):
     """Drawn with ``▀`` so each cell carries two colours — foreground for the
     top half, background for the bottom. That doubles the vertical resolution
     for free, which matters a lot for a smooth gradient field.
+
+    That trick is also the expensive part. Two colours per cell means
+    make_strips run-length-encodes on the (fg, bg) *pair*, not a single index,
+    and this field crossed enough ramp buckets per column that most rows were
+    forty-odd tiny segments instead of a handful of long ones — 10-11 ms of
+    make_strips alone at 400x100, the actual bottleneck, confirmed by profiling
+    that isolated it from this function's own ~2 ms. The fix isn't giving up
+    the two-colour trick; it's that the swirl frequencies (6/5/4/14 cycles
+    across the field) were higher than the terminal's own resolution could
+    usefully show — a colour changing several times a *column* reads as noise,
+    not gradient, on top of costing real time to encode. Halved, it reads as
+    the calmer, larger-scale drift the blurb already promised ("solid colour
+    field") and make_strips drops to ~5 ms, which is the whole win.
     """
     w, h = ctx.w, ctx.h
     if w < 2 or h < 2:
@@ -72,10 +85,10 @@ def plasma(ctx: Ctx):
     highs = ctx.range(0.70, 1.00)
 
     v = (
-        np.sin((x * 6.0 + t * 0.7) * (1.0 + lows * 1.4))
-        + np.sin((y * 5.0 - t * 0.5) * (1.0 + mids * 1.2))
-        + np.sin(((x + y) * 4.0 + t * 0.9))
-        + np.sin(np.sqrt((x - 0.5) ** 2 * 2.2 + (y - 0.5) ** 2) * 14.0 - t * 2.2 * (0.4 + highs * 2.0))
+        np.sin((x * 3.0 + t * 0.7) * (1.0 + lows * 1.4))
+        + np.sin((y * 2.5 - t * 0.5) * (1.0 + mids * 1.2))
+        + np.sin(((x + y) * 2.0 + t * 0.9))
+        + np.sin(np.sqrt((x - 0.5) ** 2 * 2.2 + (y - 0.5) ** 2) * 7.0 - t * 2.2 * (0.4 + highs * 2.0))
     )
     field = (v + 4.0) / 8.0
     field = np.clip(field * (0.35 + ctx.energy * 1.5), 0.0, 1.0)
@@ -83,6 +96,39 @@ def plasma(ctx: Ctx):
     idx = ctx.ramp(field)
     codes = np.full((h, w), _UPPER_HALF, dtype=np.int32)
     return codes, idx[0::2], idx[1::2]
+
+
+@mode("VFD", group="fields", blurb="vacuum-fluorescent bargraph with phosphor afterglow")
+def vfd(ctx: Ctx):
+    """The other Japanese hi-fi display technology, next to Kenwood's LEDs.
+
+    A vacuum-fluorescent display doesn't turn off instantly — the phosphor
+    keeps glowing for a beat after the drive current cuts, so a fast
+    transient leaves a fading trail above where the bar now sits instead of a
+    hard edge. Reproduced literally: each frame draws a crisp new bar into a
+    dot-resolution persistence buffer that decays exponentially, and dots
+    stay lit — at fading brightness — until the decay carries them below the
+    draw threshold.
+    """
+    w, h = ctx.w, ctx.h
+    dr, dc = ctx.dot_rows, ctx.dot_cols
+    if dr < 4 or dc < 4:
+        return empty(w, h)
+
+    buf = ctx.scratch("vfd", lambda: np.zeros((dr, dc), dtype=np.float32))
+
+    level = spread(ctx.display_bands(), dc)
+    rows = np.arange(dr - 1, -1, -1, dtype=np.float32) / dr    # row 0 (top) -> ~1
+    bar = (level[None, :] > rows[:, None]).astype(np.float32)
+
+    decay = float(np.exp(-max(ctx.dt, 0.0) / 0.12))
+    buf *= decay
+    np.maximum(buf, bar, out=buf)
+
+    dots = buf > 0.04
+    codes = pack_braille(dots)
+    cidx = ctx.ramp(cell_max(np.where(dots, buf, 0.0)))
+    return codes, cidx
 
 
 def _vu_level(ctx: Ctx) -> np.ndarray:

@@ -43,8 +43,8 @@ SELF_ANIMATING = {
     "Matrix", "Spectro", "Plasma", "Gonio",
     # scroll (ECG), standing-wave phase (Strings), ring breathing and angular
     # spin (Arcs), travelling particles (Bubbles), curtain billow (Auroras),
-    # window flicker (Skyline)
-    "ECG", "Strings", "Arcs", "Bubbles", "Auroras", "Skyline",
+    # window flicker (Skyline), continuous sweep rotation (Sonar)
+    "ECG", "Strings", "Arcs", "Bubbles", "Auroras", "Skyline", "Sonar",
 }
 
 #: Modes driven by the waveform rather than the band levels.
@@ -67,7 +67,7 @@ def ctx_for(w, h, frame, state, t, bands=None, silent=False, stereo=None):
 
 # ── 1. modes must not write into the buffers they're handed ──────────────────
 
-def test_no_mutation() -> list[str]:
+def check_no_mutation() -> list[str]:
     """``ctx.bands`` is the live spring buffer, shared with every other mode
     and with the next frame. A mode writing into it corrupts the animation
     globally and the symptom would appear somewhere else entirely."""
@@ -120,7 +120,7 @@ def _changes_over(m, frames: int, freeze_audio: bool = False) -> bool:
     )
 
 
-def test_animates() -> list[str]:
+def check_animates() -> list[str]:
     """Two separate properties, which an earlier version of this file conflated.
 
     Every mode must move when the *spectrum* moves. Only the self-animating
@@ -145,7 +145,7 @@ def test_animates() -> list[str]:
 
 # ── 3. modes must respond to the audio ───────────────────────────────────────
 
-def test_audio_reactive() -> list[str]:
+def check_audio_reactive() -> list[str]:
     """Loud and quiet must not render identically.
 
     Waveform-driven modes are fed a quiet and a loud *waveform* rather than
@@ -187,7 +187,7 @@ def test_audio_reactive() -> list[str]:
 
 # ── 4. no NaN, no inf, no surrogates ─────────────────────────────────────────
 
-def test_output_sanity() -> list[str]:
+def check_output_sanity() -> list[str]:
     """Codepoints in the UTF-16 surrogate range cannot be decoded, so they
     would crash the strip builder rather than draw something odd."""
     bad = []
@@ -211,7 +211,7 @@ def test_output_sanity() -> list[str]:
     return bad
 
 
-def test_surrogates_survive_strips() -> list[str]:
+def check_surrogates_survive_strips() -> list[str]:
     """A plugin returning a surrogate must not take the renderer down."""
     from spektr.plugins import validate
 
@@ -233,7 +233,7 @@ def test_surrogates_survive_strips() -> list[str]:
 
 # ── 5. state must not leak across resizes ────────────────────────────────────
 
-def test_scratch_does_not_leak() -> list[str]:
+def check_scratch_does_not_leak() -> list[str]:
     """Modes cache geometry keyed on size. Resizing repeatedly must not grow
     the cache without bound — on a tiled window manager that's every drag."""
     bad = []
@@ -250,7 +250,7 @@ def test_scratch_does_not_leak() -> list[str]:
 
 # ── 6. band resampling must conserve level ───────────────────────────────────
 
-def test_resample_conserves() -> list[str]:
+def check_resample_conserves() -> list[str]:
     bad = []
     for n_out in (8, 10, 12, 16, 24, 31, 32, 40, 64):
         flat = np.full(N_BANDS, 0.5)
@@ -268,14 +268,16 @@ def test_resample_conserves() -> list[str]:
 
 # ── 7. palette ramps must actually be ramps ──────────────────────────────────
 
-def test_palette_ramps() -> list[str]:
+def check_palette_ramps() -> list[str]:
     """Ramps must be smooth and hit their anchors.
 
     Not *brighter* at the top — an earlier version asserted that and failed 20
     of 30 themes, wrongly. A spectrum ramp travels through hue, not luminance:
     classic runs green → amber → red, and red is genuinely darker than green.
     What actually matters is that the gradient has no visible seam and that the
-    ends are the colours the theme asked for.
+    ends are the colours the theme asked for. Animated ramps are closed loops:
+    they have no ends, and the wrap back to the start must be as smooth as the
+    rest of the ramp.
     """
     from spektr.palette import hex_to_rgb
 
@@ -288,13 +290,28 @@ def test_palette_ramps() -> list[str]:
 
         rgb = np.array([hex_to_rgb(c) for c in p.hexes], dtype=np.float64)
 
-        # ends must match the theme's declared anchors
-        for label, want, got in (("low", theme.low, p.hexes[0]), ("high", theme.high, p.hexes[-1])):
+        # smoothness: no single step may jump more than a few times the median.
+        # An animated ramp is a closed loop, so the step that wraps from the last
+        # colour back to the first is part of the ramp too — a seam there is
+        # exactly the bug the loop exists to remove.
+        steps = np.abs(np.diff(rgb, axis=0)).sum(axis=1)
+        if theme.animated:
+            steps = np.append(steps, float(np.abs(rgb[0] - rgb[-1]).sum()))
+
+        # ends must match the theme's declared anchors. A loop has no ends — it
+        # starts on the low colour and wraps back to it — so only the start is
+        # pinned; the high anchor is a riding point on the loop, not a terminus.
+        if theme.animated:
+            end_checks = (("low", theme.low, p.hexes[0]),)
+        else:
+            end_checks = (
+                ("low", theme.low, p.hexes[0]),
+                ("high", theme.high, p.hexes[-1]),
+            )
+        for label, want, got in end_checks:
             if max(abs(a - b) for a, b in zip(hex_to_rgb(want), hex_to_rgb(got))) > 2:
                 bad.append(f"{name}: ramp {label} end is {got}, theme declares {want}")
 
-        # smoothness: no single step may jump more than a few times the median
-        steps = np.abs(np.diff(rgb, axis=0)).sum(axis=1)
         median = float(np.median(steps))
         if median > 0 and steps.max() > median * 6:
             worst = int(np.argmax(steps))
@@ -302,8 +319,20 @@ def test_palette_ramps() -> list[str]:
                 f"{name}: seam at step {worst} — jumps {steps.max():.0f} against a median of {median:.0f}"
             )
 
-        # a banded ramp would repeat colours
-        if len(set(p.hexes)) < RAMP_STEPS // 2:
+        # a banded ramp would repeat colours. Smoothstep easing goes to zero
+        # velocity at every anchor by construction, so a run of identical
+        # 8-bit-rounded steps right at the mid anchor is normal — everforest,
+        # gruvbox-light and tokyo-night all sit at 14-16 consecutive steps
+        # there and look fine; only a genuinely degenerate ramp (near-flat
+        # start to finish) should trip this. RAMP_STEPS // 2 was tuned back
+        # when RAMP_STEPS was 64; raising resolution to 256 for a smoother
+        # animated spread (see AudioVisualizer._animate_ramp) shrank the same
+        # anchor plateau's relative share of the ramp not at all — it's still
+        # ~16 steps — while doubling what "half the steps" demands, and
+        # everforest's low-contrast palette no longer had enough *other*
+        # distinct steps to clear it. // 3 keeps the check meaningful without
+        # that resolution-coupling.
+        if len(set(p.hexes)) < RAMP_STEPS // 3:
             bad.append(f"{name}: only {len(set(p.hexes))} distinct colours in {RAMP_STEPS} steps")
 
         idx = p.indices(np.array([-1.0, 0.0, 0.5, 1.0, 2.0]))
@@ -316,7 +345,7 @@ def test_palette_ramps() -> list[str]:
 
 # ── 8. ring buffer under concurrent access ───────────────────────────────────
 
-def test_ring_concurrency() -> list[str]:
+def check_ring_concurrency() -> list[str]:
     """The audio callback writes while the analyser reads. Verify no torn
     reads and no lost frames under real contention."""
     ring = RingBuffer(4096)
@@ -363,7 +392,7 @@ def test_ring_concurrency() -> list[str]:
 
 # ── 9. analyser must not drift or leak ───────────────────────────────────────
 
-def test_analyser_stability() -> list[str]:
+def check_analyser_stability() -> list[str]:
     """Long run at real time: sequence numbers must advance steadily and the
     published frame must always be internally consistent."""
     SR = 48000
@@ -405,7 +434,7 @@ def test_analyser_stability() -> list[str]:
 
 # ── 10. gate behaviour ───────────────────────────────────────────────────────
 
-def test_gate_hysteresis() -> list[str]:
+def check_gate_hysteresis() -> list[str]:
     """The gate holds open briefly after sound stops, so a quiet passage
     doesn't make the display flicker off between notes."""
     SR = 48000
@@ -439,19 +468,133 @@ def test_gate_hysteresis() -> list[str]:
     return bad
 
 
+# ── 11. theme visibility ──────────────────────────────────────────────────────
+
+def check_theme_visibility() -> list[str]:
+    """A theme's colours must actually be visible against its own background.
+
+    Nothing here asserts *how* a theme should look — that's taste, and themes
+    range from vantablack's near-monochrome greys to rainbow's full hue wheel
+    on purpose, both deliberately. What isn't taste: a ramp anchor close
+    enough to the background that it renders as flat background instead of a
+    colour. ``infrared`` shipped with exactly that bug — a low anchor of
+    #3a0000 on a #0d0000 background, a perceptual RGB distance of 0.18
+    against every other theme's 0.27 or higher — and nothing caught it,
+    because no check ever compared a theme's colours to its own bg. This one
+    does, plus the WCAG AA text-contrast floor for fg-on-bg, which every
+    built-in theme already happened to clear.
+    """
+    from spektr.palette import _luminance, hex_to_rgb
+
+    def dist(a, b) -> float:
+        x = np.array(hex_to_rgb(a), dtype=np.float64) / 255.0
+        y = np.array(hex_to_rgb(b), dtype=np.float64) / 255.0
+        return float(np.sqrt(((x - y) ** 2).sum()))
+
+    def contrast(a, b) -> float:
+        la, lb = _luminance(a), _luminance(b)
+        hi, lo = max(la, lb), min(la, lb)
+        return (hi + 0.05) / (lo + 0.05)
+
+    bad = []
+    for name, theme in all_themes().items():
+        for label, colour in (("low", theme.low), ("mid", theme.mid), ("high", theme.high)):
+            d = dist(colour, theme.bg)
+            if d < 0.18:
+                bad.append(
+                    f"{name}: {label} anchor {colour} is only {d:.2f} from bg {theme.bg} — "
+                    "nearly invisible"
+                )
+        fg_bg = contrast(theme.fg, theme.bg)
+        if fg_bg < 4.5:
+            bad.append(f"{name}: fg/bg contrast is {fg_bg:.2f}, below WCAG AA's 4.5")
+    return bad
+
+
 TESTS = [
-    ("modes don't mutate shared buffers", test_no_mutation),
-    ("modes animate", test_animates),
-    ("modes react to audio", test_audio_reactive),
-    ("output sanity (no NaN/surrogates)", test_output_sanity),
-    ("surrogates survive the strip builder", test_surrogates_survive_strips),
-    ("no scratch leak across resizes", test_scratch_does_not_leak),
-    ("band resampling conserves level", test_resample_conserves),
-    ("palette ramps are smooth", test_palette_ramps),
-    ("ring buffer under contention", test_ring_concurrency),
-    ("analyser stability over 1 s", test_analyser_stability),
-    ("gate hysteresis", test_gate_hysteresis),
+    ("modes don't mutate shared buffers", check_no_mutation),
+    ("modes animate", check_animates),
+    ("modes react to audio", check_audio_reactive),
+    ("output sanity (no NaN/surrogates)", check_output_sanity),
+    ("surrogates survive the strip builder", check_surrogates_survive_strips),
+    ("no scratch leak across resizes", check_scratch_does_not_leak),
+    ("band resampling conserves level", check_resample_conserves),
+    ("palette ramps are smooth", check_palette_ramps),
+    ("ring buffer under contention", check_ring_concurrency),
+    ("analyser stability over 1 s", check_analyser_stability),
+    ("gate hysteresis", check_gate_hysteresis),
+    ("themes are visible against their own background", check_theme_visibility),
 ]
+
+
+# ── pytest entry points ───────────────────────────────────────────────────────
+#
+# A bare ``def test_x(): return bad`` does not fail under pytest — a non-None
+# return only trips a PytestReturnNotNoneWarning, not a failure — so every
+# check above was reporting green under ``pytest tests/`` regardless of what
+# it actually found. Only running this file directly (the loop below) ever
+# turned a finding into a nonzero exit. These thin wrappers are what make
+# ``pytest`` itself catch the same problems; the checks' own logic is
+# untouched.
+
+def test_no_mutation() -> None:
+    bad = check_no_mutation()
+    assert not bad, "\n".join(bad)
+
+
+def test_animates() -> None:
+    bad = check_animates()
+    assert not bad, "\n".join(bad)
+
+
+def test_audio_reactive() -> None:
+    bad = check_audio_reactive()
+    assert not bad, "\n".join(bad)
+
+
+def test_output_sanity() -> None:
+    bad = check_output_sanity()
+    assert not bad, "\n".join(bad)
+
+
+def test_surrogates_survive_strips() -> None:
+    bad = check_surrogates_survive_strips()
+    assert not bad, "\n".join(bad)
+
+
+def test_scratch_does_not_leak() -> None:
+    bad = check_scratch_does_not_leak()
+    assert not bad, "\n".join(bad)
+
+
+def test_resample_conserves() -> None:
+    bad = check_resample_conserves()
+    assert not bad, "\n".join(bad)
+
+
+def test_palette_ramps() -> None:
+    bad = check_palette_ramps()
+    assert not bad, "\n".join(bad)
+
+
+def test_ring_concurrency() -> None:
+    bad = check_ring_concurrency()
+    assert not bad, "\n".join(bad)
+
+
+def test_analyser_stability() -> None:
+    bad = check_analyser_stability()
+    assert not bad, "\n".join(bad)
+
+
+def test_gate_hysteresis() -> None:
+    bad = check_gate_hysteresis()
+    assert not bad, "\n".join(bad)
+
+
+def test_theme_visibility() -> None:
+    bad = check_theme_visibility()
+    assert not bad, "\n".join(bad)
 
 
 if __name__ == "__main__":

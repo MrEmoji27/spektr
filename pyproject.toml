@@ -1,7 +1,7 @@
 [project]
 name = "spektr"
-version = "0.2.0"
-description = "A terminal spectrum analyser for system audio — twenty-seven render modes and forty themes, drawn with braille."
+version = "0.2.1"
+description = "A terminal spectrum analyser for system audio — twenty-nine render modes and forty-seven themes, drawn with braille."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
@@ -27,6 +27,24 @@ dependencies = [
   # version — soundcard talks to WASAPI directly and can. It is the primary
   # capture path on Windows and also handles PulseAudio monitors on Linux.
   "soundcard>=0.4.2",
+  # Now-playing header text: none of these is required for spektr to run —
+  # nowplaying.py treats an ImportError exactly like "nothing playing" — but
+  # installing them by default is what makes the feature work without an
+  # extra manual step on the two platforms it actually applies to.
+  #
+  # The monolithic `winsdk` package was tried first and dropped: its latest
+  # release (1.0.0b10) ships wheels for cp38-cp312 only, so on 3.13 pip falls
+  # back to a source build that needs a CMake + C++ toolchain most machines
+  # don't have — meaning the dependency silently never installed, and the
+  # feature silently never worked. `winrt-*` is the split-per-namespace
+  # sibling project, published with 3.13 wheels already. It needs two
+  # packages, not one: the Foundation namespace is a runtime dependency of
+  # Media.Control that its own package metadata doesn't declare, so pip
+  # won't pull it in on its own — confirmed by hitting exactly that
+  # ModuleNotFoundError with only Media.Control installed.
+  "winrt-Windows.Media.Control>=3.2.1; sys_platform == 'win32'",
+  "winrt-Windows.Foundation>=3.2.1; sys_platform == 'win32'",
+  "dbus-next>=0.2.3; sys_platform == 'linux'",
 ]
 
 [project.scripts]

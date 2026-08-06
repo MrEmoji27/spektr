@@ -1,9 +1,12 @@
 """Theme registry and colour ramps.
 
 A theme is six colours. Three of them (low/mid/high) are the spectrum anchors
-that get blended into a 64-step ramp; the other three (bg/fg/accent) dress the
-UI. Built-ins live in a dict — no file IO on startup — and user themes are read
-from ``~/.config/spektr/themes/*.toml`` at first use.
+that get blended into a ``RAMP_STEPS``-step ramp; the other three (bg/fg/accent)
+dress the UI. A theme may declare an explicit ``ramp`` of extra anchors — the blend then
+walks them in order instead of just low→mid→high, for palettes like rainbow
+that want more than three riding points. Built-ins live in a dict — no file IO
+on startup — and user themes are read from ``~/.config/spektr/themes/*.toml``
+at first use.
 
 Blending happens in linear light rather than straight sRGB. Interpolating hex
 values directly darkens the midpoint of a gradient noticeably (mixing #00ff41
@@ -18,13 +21,28 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+from rich.color import Color
 from rich.style import Style
 
+#: Distinct colour steps in the ramp. Tried 256, to give an animated theme's
+#: per-column spread more buckets for a smoother sweep — measured instead:
+#: make_strips run-length-encodes each row, so its cost tracks how often
+#: adjacent cells land in *different* buckets, not raw cell count. A coarser
+#: ramp is what let a continuous field (Plasma, Scatter, Tunnel, Pulse,
+#: Radial — anything colouring by a smooth per-cell value rather than a
+#: per-row/per-band one) alias neighbouring cells into the same bucket and
+#: merge into one Segment; at 256 they mostly didn't, and make_strips cost on
+#: a smooth field at 400x100 went from 12.8 ms to 22.2 ms — those modes blew
+#: the 16.7 ms/frame budget on every theme, not just the animated one. Back
+#: at 64. The per-column spread still got smoother (see
+#: AudioVisualizer._animate_ramp): rounding the column shift instead of
+#: flooring it was the fix that mattered, not the bucket count.
 RAMP_STEPS = 64
 _GAMMA = 2.2
 
 
 # ── colour helpers ───────────────────────────────────────────────────────────
+
 
 def hex_to_rgb(value) -> tuple[int, int, int]:
     text = str(value).strip().lstrip("#")
@@ -63,6 +81,7 @@ def _luminance(colour) -> float:
 
 # ── theme model ──────────────────────────────────────────────────────────────
 
+
 @dataclass(frozen=True)
 class Theme:
     name: str
@@ -72,10 +91,17 @@ class Theme:
     bg: str = "#000000"
     fg: str = "#ffffff"
     accent: str = ""
+    #: an animated theme drifts its colour ramp over time + position, so the
+    #: spectrum flows across the bands instead of sitting still.
+    animated: bool = False
+    #: optional extra ramp anchors, walked in order after low→mid→high. Used
+    #: by rainbow, which needs a yellow and a blue riding point that a three
+    #: stop ramp can never reach without turning to mud.
+    ramp: tuple[str, ...] | None = None
 
 
-def _t(name, low, mid, high, bg, fg, accent="") -> tuple[str, Theme]:
-    return name, Theme(name, low, mid, high, bg, fg, accent)
+def _t(name, low, mid, high, bg, fg, accent="", animated=False, ramp=None) -> tuple[str, Theme]:
+    return name, Theme(name, low, mid, high, bg, fg, accent, animated, ramp)
 
 
 BUILTIN: dict[str, Theme] = dict(
@@ -83,47 +109,269 @@ BUILTIN: dict[str, Theme] = dict(
         # the original — winamp's green/amber/red
         _t("classic", "#00ff41", "#ffb000", "#ff3300", "#000000", "#e0e0e0", "#ffb000"),
         _t("gruvbox", "#b8bb26", "#fabd2f", "#fb4934", "#282828", "#ebdbb2", "#83a598"),
-        _t("catppuccin", "#a6e3a1", "#f9e2af", "#f38ba8", "#1e1e2e", "#cdd6f4", "#cba6f7"),
-        _t("catppuccin-latte", "#40a02b", "#df8e1d", "#d20f39", "#eff1f5", "#4c4f69", "#8839ef"),
+        _t(
+            "catppuccin",
+            "#a6e3a1",
+            "#f9e2af",
+            "#f38ba8",
+            "#1e1e2e",
+            "#cdd6f4",
+            "#cba6f7",
+        ),
+        _t(
+            "catppuccin-latte",
+            "#40a02b",
+            "#df8e1d",
+            "#d20f39",
+            "#eff1f5",
+            "#4c4f69",
+            "#8839ef",
+        ),
         _t("dracula", "#50fa7b", "#f1fa8c", "#ff5555", "#282a36", "#f8f8f2", "#bd93f9"),
         _t("nord", "#a3be8c", "#ebcb8b", "#bf616a", "#2e3440", "#d8dee9", "#88c0d0"),
-        _t("tokyo-night", "#9ece6a", "#e0af68", "#f7768e", "#1a1b26", "#c0caf5", "#7aa2f7"),
-        _t("rose-pine", "#9ccfd8", "#f6c177", "#eb6f92", "#191724", "#e0def4", "#c4a7e7"),
-        _t("everforest", "#a7c080", "#dbbc7f", "#e67e80", "#2d353b", "#d3c6aa", "#7fbbb3"),
-        _t("kanagawa", "#98bb6c", "#e6c384", "#e46876", "#1f1f28", "#dcd7ba", "#7e9cd8"),
-        _t("ayu-mirage", "#bae67e", "#ffcc66", "#f28779", "#1f2430", "#cbccc6", "#73d0ff"),
+        _t(
+            "tokyo-night",
+            "#9ece6a",
+            "#e0af68",
+            "#f7768e",
+            "#1a1b26",
+            "#c0caf5",
+            "#7aa2f7",
+        ),
+        _t(
+            "rose-pine",
+            "#9ccfd8",
+            "#f6c177",
+            "#eb6f92",
+            "#191724",
+            "#e0def4",
+            "#c4a7e7",
+        ),
+        _t(
+            "everforest",
+            "#a7c080",
+            "#dbbc7f",
+            "#e67e80",
+            "#2d353b",
+            "#d3c6aa",
+            "#7fbbb3",
+        ),
+        _t(
+            "kanagawa", "#98bb6c", "#e6c384", "#e46876", "#1f1f28", "#dcd7ba", "#7e9cd8"
+        ),
+        _t(
+            "ayu-mirage",
+            "#bae67e",
+            "#ffcc66",
+            "#f28779",
+            "#1f2430",
+            "#cbccc6",
+            "#73d0ff",
+        ),
         _t("monokai", "#a6e22e", "#e6db74", "#f92672", "#272822", "#f8f8f2", "#66d9ef"),
-        _t("solarized", "#859900", "#b58900", "#dc322f", "#002b36", "#839496", "#268bd2"),
-        _t("nightfox", "#81b29a", "#dbc074", "#c94f6d", "#192330", "#cdcecf", "#719cff"),
-        _t("oxocarbon", "#3ddbd9", "#33b1ff", "#be95ff", "#161616", "#f2f4f8", "#ee5396"),
+        _t(
+            "solarized",
+            "#859900",
+            "#b58900",
+            "#dc322f",
+            "#002b36",
+            "#839496",
+            "#268bd2",
+        ),
+        _t(
+            "nightfox", "#81b29a", "#dbc074", "#c94f6d", "#192330", "#cdcecf", "#719cff"
+        ),
+        _t(
+            "oxocarbon",
+            "#3ddbd9",
+            "#33b1ff",
+            "#be95ff",
+            "#161616",
+            "#f2f4f8",
+            "#ee5396",
+        ),
         _t("miasma", "#78834b", "#bb7744", "#e0a363", "#222222", "#c2c2b0", "#8f6f5f"),
-        _t("osaka-jade", "#43a58a", "#8ec07c", "#e06c75", "#111c18", "#c1c8c4", "#549e6a"),
-        _t("ristretto", "#adda78", "#f9cc6c", "#fd6883", "#2c2525", "#e6d9db", "#f38d70"),
-        _t("flexoki-light", "#66800b", "#ad8301", "#af3029", "#fffcf0", "#100f0f", "#205ea6"),
+        _t(
+            "osaka-jade",
+            "#43a58a",
+            "#8ec07c",
+            "#e06c75",
+            "#111c18",
+            "#c1c8c4",
+            "#549e6a",
+        ),
+        _t(
+            "ristretto",
+            "#adda78",
+            "#f9cc6c",
+            "#fd6883",
+            "#2c2525",
+            "#e6d9db",
+            "#f38d70",
+        ),
+        _t(
+            "flexoki-light",
+            "#66800b",
+            "#ad8301",
+            "#af3029",
+            "#fffcf0",
+            "#100f0f",
+            "#205ea6",
+        ),
         # ── moods rather than editor ports ──
-        _t("hackerman", "#005f11", "#00cc33", "#00ff41", "#000000", "#00ff41", "#00ff41"),
+        _t(
+            "hackerman",
+            "#005f11",
+            "#00cc33",
+            "#00ff41",
+            "#000000",
+            "#00ff41",
+            "#00ff41",
+        ),
         _t("ember", "#6b2d00", "#ff7a18", "#ffd166", "#17110d", "#f0e0d0", "#ff7a18"),
-        _t("ethereal", "#6affc2", "#7ab8ff", "#d3a4ff", "#0f1020", "#e8e8ff", "#9d7aff"),
-        _t("synthwave", "#03edf9", "#ff7edb", "#fede5d", "#241b2f", "#f4eee4", "#ff7edb"),
-        _t("blade-runner", "#00e5ff", "#b14aed", "#ff2e88", "#0b0c17", "#d6deeb", "#00e5ff"),
-        _t("nostromo", "#4a2600", "#ff8c00", "#ffd08a", "#0d0700", "#ffb454", "#ff8c00"),
+        _t(
+            "ethereal", "#6affc2", "#7ab8ff", "#d3a4ff", "#0f1020", "#e8e8ff", "#9d7aff"
+        ),
+        _t(
+            "synthwave",
+            "#03edf9",
+            "#ff7edb",
+            "#fede5d",
+            "#241b2f",
+            "#f4eee4",
+            "#ff7edb",
+        ),
+        _t(
+            "blade-runner",
+            "#00e5ff",
+            "#b14aed",
+            "#ff2e88",
+            "#0b0c17",
+            "#d6deeb",
+            "#00e5ff",
+        ),
+        _t(
+            "nostromo", "#4a2600", "#ff8c00", "#ffd08a", "#0d0700", "#ffb454", "#ff8c00"
+        ),
         _t("plasma", "#0d0887", "#cc4778", "#f0f921", "#0a0612", "#f0e8ff", "#cc4778"),
         _t("viridis", "#440154", "#21918c", "#fde725", "#0b0a12", "#e8f0e8", "#21918c"),
         _t("ice", "#0a2a5e", "#3aa0ff", "#e8f6ff", "#050b16", "#cfe6ff", "#3aa0ff"),
-        _t("matte-black", "#4a4a4a", "#8a8a8a", "#d5d5d5", "#121212", "#bcbcbc", "#eaeaea"),
-        _t("vantablack", "#333333", "#888888", "#ffffff", "#000000", "#ffffff", "#ffffff"),
+        _t(
+            "matte-black",
+            "#4a4a4a",
+            "#8a8a8a",
+            "#d5d5d5",
+            "#121212",
+            "#bcbcbc",
+            "#eaeaea",
+        ),
+        _t(
+            "vantablack",
+            "#333333",
+            "#888888",
+            "#ffffff",
+            "#000000",
+            "#ffffff",
+            "#ffffff",
+        ),
         # ── more editor ports ──
-        _t("nightfly", "#a1cd5e", "#e3d18a", "#fc514e", "#011627", "#c3ccdc", "#82aaff"),
-        _t("material", "#c3e88d", "#ffcb6b", "#f07178", "#263238", "#eeffff", "#82aaff"),
+        _t(
+            "nightfly", "#a1cd5e", "#e3d18a", "#fc514e", "#011627", "#c3ccdc", "#82aaff"
+        ),
+        _t(
+            "material", "#c3e88d", "#ffcb6b", "#f07178", "#263238", "#eeffff", "#82aaff"
+        ),
         _t("gotham", "#2aa889", "#edb443", "#d26937", "#0c1014", "#98d1ce", "#195466"),
         _t("oceanic", "#99c794", "#fac863", "#ec5f67", "#1b2b34", "#d8dee9", "#6699cc"),
-        _t("gruvbox-light", "#79740e", "#b57614", "#9d0006", "#fbf1c7", "#3c3836", "#076678"),
-        _t("tokyo-night-day", "#587539", "#8f5e15", "#f52a65", "#e1e2e7", "#3760bf", "#2e7de9"),
+        _t(
+            "gruvbox-light",
+            "#79740e",
+            "#b57614",
+            "#9d0006",
+            "#fbf1c7",
+            "#3c3836",
+            "#076678",
+        ),
+        _t(
+            "tokyo-night-day",
+            "#587539",
+            "#8f5e15",
+            "#f52a65",
+            "#e1e2e7",
+            "#3760bf",
+            "#2e7de9",
+        ),
         # ── more moods ──
-        _t("vaporwave", "#00f0c0", "#ff77e9", "#ff2e88", "#1a0b2e", "#f2e6ff", "#b967ff"),
-        _t("infrared", "#3a0000", "#c22800", "#ffd000", "#0d0000", "#ffb4a2", "#ff4800"),
-        _t("deep-sea", "#0a3d62", "#12cbc4", "#a5f3ff", "#04141f", "#b8e0e6", "#12cbc4"),
+        _t(
+            "vaporwave",
+            "#00f0c0",
+            "#ff77e9",
+            "#ff2e88",
+            "#1a0b2e",
+            "#f2e6ff",
+            "#b967ff",
+        ),
+        # low was #3a0000 on a #0d0000 bg — a perceptual RGB distance of 0.18,
+        # against every other theme's 0.27+ (see test_theme_visibility). The
+        # cold end of a thermal gradient was rendering as flat background, not
+        # a colour, which defeats a theme whose entire point is that the cold
+        # parts are still visible. Deepened the low anchor and darkened bg to
+        # match, rather than lightening bg — a thermal reading should still
+        # start near black.
+        _t(
+            "infrared", "#4d0000", "#c22800", "#ffd000", "#050000", "#ffb4a2", "#ff4800"
+        ),
+        _t(
+            "deep-sea", "#0a3d62", "#12cbc4", "#a5f3ff", "#04141f", "#b8e0e6", "#12cbc4"
+        ),
         _t("magma", "#2c115f", "#b73779", "#fcfdbf", "#0b0417", "#f5e3ff", "#fe9f6d"),
+        # ── new, not ports or palette-family reshuffles ──
+        # amber phosphor — the other CRT colour. classic already covers green
+        # phosphor (hackerman is its monochrome extreme); this is the IBM 5151
+        # amber monitor's actual single hue, dark rust to a near-white-hot
+        # glow, rather than green with amber merely borrowed for the mid stop.
+        _t("phosphor-amber", "#3d1f00", "#b36b00", "#ffcc33", "#0a0600", "#ffb000", "#ff9500"),
+        _t(
+            "sakura",
+            "#7a2848",
+            "#f7a8c4",
+            "#fff0f5",
+            "#1a1014",
+            "#f7d9e3",
+            "#e191b3",
+        ),
+        # hazard yellow-green rather than hackerman's pure green — the same
+        # family everything else in "moods" avoids doubling up on gets a
+        # second, deliberately different entry because the two read nothing
+        # alike once the mid/high stops turn it sickly and saturated instead
+        # of clean.
+        _t("toxic", "#1f4d00", "#7fff00", "#e6ff33", "#050800", "#ccff66", "#aaff00"),
+        _t("copper", "#3d1f0f", "#b87333", "#ffd699", "#0a0603", "#e8c9a3", "#cd7f32"),
+        # bright and cold rather than moody-dark like ice/deep-sea — those two
+        # are a night ocean; this is open sky and glacier, meant to read as
+        # the brightest theme in the set next to something like vantablack at
+        # the other end.
+        _t("polar", "#3fa9dc", "#8ee8d4", "#eafcff", "#061826", "#eafcff", "#9fe8ff"),
+        _t("bubblegum", "#7bf0ff", "#c07bff", "#ff5ec4", "#150a1f", "#ffe3fb", "#ff9de2"),
+        # red -> yellow -> green -> blue -> violet -> magenta, and back to red:
+        # a closed loop around the colour wheel. Three anchors can't do this —
+        # the red→green seam dries to olive and the green→violet one washes
+        # through grey instead of blue — and an animating rainbow needs the loop
+        # closed with magenta too, or the wrap from the last colour back to the
+        # first reads as a hard tear sweeping across the bands. ``animated``
+        # makes the palette rotate around this loop over time (see
+        # Palette.set_phase).
+        _t(
+            "rainbow",
+            "#ff0033",
+            "#22e022",
+            "#7a3aff",
+            "#0d0d1a",
+            "#ffffff",
+            "#ff9500",
+            animated=True,
+            ramp=("#ff0033", "#ffd400", "#22e022", "#0088ff", "#7a3aff", "#ff2bc8"),
+        ),
     ]
 )
 
@@ -132,6 +380,7 @@ AUTO = "auto"
 
 
 # ── user themes ──────────────────────────────────────────────────────────────
+
 
 def config_dir() -> Path:
     if os.name == "nt":
@@ -194,6 +443,7 @@ def all_themes() -> dict[str, Theme]:
 
 # ── the live palette ─────────────────────────────────────────────────────────
 
+
 class Palette:
     """The active theme, plus everything derived from it, prebuilt.
 
@@ -203,8 +453,16 @@ class Palette:
     """
 
     __slots__ = (
-        "theme", "name", "hexes", "colors", "styles", "bg_styles", "rgb",
-        "note", "pair_styles",
+        "theme",
+        "name",
+        "hexes",
+        "colors",
+        "styles",
+        "bg_styles",
+        "rgb",
+        "note",
+        "pair_styles",
+        "_phase",
     )
 
     def __init__(self, theme: Theme | None = None):
@@ -213,34 +471,70 @@ class Palette:
     def set(self, theme: Theme) -> None:
         self.theme = theme
         self.name = theme.name
-        self._build()
+        self.note = f"{theme.name} — {theme.low} → {theme.high}"
+        self._phase = 0.0
+        self._build(0.0)
 
-    def _build(self) -> None:
+    def set_phase(self, phase: float) -> None:
+        """Rotate an animated theme's colour loop to ``phase`` (in cycles).
+
+        A no-op for static themes. Called once a frame for animated themes, so
+        the ramp — and every style derived from it — is rebuilt at the current
+        point on the loop. That is what makes the flow smooth: the colours move
+        by a fraction of a step each frame instead of jumping a whole step at a
+        time.
+        """
+        if not self.theme.animated:
+            return
+        self._phase = phase % 1.0
+        self._build(self._phase)
+
+    def _build(self, phase: float = 0.0) -> None:
         th = self.theme
-        anchors = [hex_to_rgb(th.low), hex_to_rgb(th.mid), hex_to_rgb(th.high)]
-        lin = _to_linear(np.array(anchors, dtype=np.float64))
+        anchors = th.ramp or (th.low, th.mid, th.high)
+        n = len(anchors)
+        lin = _to_linear(np.array([hex_to_rgb(c) for c in anchors], dtype=np.float64))
 
-        t = np.linspace(0.0, 1.0, RAMP_STEPS)
-        # piecewise low->mid->high, smoothstepped so the anchors don't crease
-        seg = np.where(t < 0.5, t * 2.0, (t - 0.5) * 2.0)
-        seg = seg * seg * (3.0 - 2.0 * seg)
-        first = t < 0.5
-        a = np.where(first[:, None], lin[0][None, :], lin[1][None, :])
-        b = np.where(first[:, None], lin[1][None, :], lin[2][None, :])
-        out = a + (b - a) * seg[:, None]
+        if th.animated:
+            # A closed loop rather than an open ramp. RAMP_STEPS samples are
+            # taken around the colour wheel — at i/RAMP_STEPS, endpoint excluded
+            # — and ``phase`` rotates the wheel, so index 0 and index 63 sit one
+            # step apart on the loop and the wrap the animation relies on is
+            # seamless. Blending in linear light keeps the midtones clean as the
+            # loop turns.
+            t = (np.arange(RAMP_STEPS, dtype=np.float64) / RAMP_STEPS + phase) % 1.0
+            pos = t * n
+            i = np.floor(pos).astype(np.int64)
+            seg = pos - i
+            seg = seg * seg * (3.0 - 2.0 * seg)
+            j = (i + 1) % n
+            out = lin[i] + (lin[j] - lin[i]) * seg[:, None]
+        else:
+            t = np.linspace(0.0, 1.0, RAMP_STEPS)
+            # piecewise low->mid->high (or the declared ramp, in order), smooth-
+            # stepped so the anchors don't crease. For the classic three-stop ramp
+            # this reduces to the same two segments as before; extra anchors just
+            # add more riding points between them.
+            pos = t * (n - 1)
+            i = np.clip(np.floor(pos).astype(np.int64), 0, n - 2)
+            seg = pos - i
+            seg = seg * seg * (3.0 - 2.0 * seg)
+            out = lin[i] + (lin[i + 1] - lin[i]) * seg[:, None]
 
         self.rgb = _to_srgb(out)
-        self.hexes = [rgb_to_hex(c) for c in self.rgb]
-        self.colors = [_C(h) for h in self.hexes]
+        rgb_int = np.clip(np.rint(self.rgb), 0, 255).astype(np.int64)
+        self.hexes = [f"#{r:02x}{g:02x}{b:02x}" for r, g, b in rgb_int]
+        self.colors = [Color.from_rgb(int(r), int(g), int(b)) for r, g, b in rgb_int]
         self.styles = [Style.from_color(color=c) for c in self.colors]
         self.bg_styles = [Style.from_color(bgcolor=c) for c in self.colors]
-        # Combined fg-on-bg styles, filled on demand and dropped when the theme
+        # Combined fg-on-bg styles, filled on demand and dropped when the ramp
         # changes. Building all RAMP_STEPS**2 of them up front would be 4096
         # Style objects per theme swap to serve the handful of pairs a frame
         # actually uses; caching here instead of in make_strips is the point,
-        # because that cache was rebuilt sixty times a second.
+        # because that cache was rebuilt sixty times a second. For an animated
+        # theme the ramp moves every frame, so the cache is dropped with it —
+        # the indices it keys on now name different colours.
         self.pair_styles = {}
-        self.note = f"{th.name} — {th.low} → {th.high}"
 
     # ── lookups ──
     def pair_style(self, key: int) -> Style:
@@ -260,13 +554,10 @@ class Palette:
 
     def indices(self, norm: np.ndarray) -> np.ndarray:
         """Vectorised float field -> ramp index array (int32)."""
-        return np.clip(
-            (norm * (RAMP_STEPS - 1)).astype(np.int32), 0, RAMP_STEPS - 1
-        )
+        return np.clip((norm * (RAMP_STEPS - 1)).astype(np.int32), 0, RAMP_STEPS - 1)
 
     def style(self, norm: float) -> Style:
         return self.styles[self.index(norm)]
-
 
 
 def _C(hex_value: str):
@@ -276,6 +567,7 @@ def _C(hex_value: str):
 
 
 # ── deriving a ramp from a Textual theme ─────────────────────────────────────
+
 
 def theme_from_textual(app) -> Theme | None:
     """Build a spektr theme out of whatever Textual theme the app is wearing.
