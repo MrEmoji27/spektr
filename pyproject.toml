@@ -1,7 +1,7 @@
 [project]
 name = "spektr"
 version = "0.2.1"
-description = "A terminal spectrum analyser for system audio — twenty-nine render modes and forty-seven themes, drawn with braille."
+description = "A terminal spectrum analyser for system audio — forty-seven render modes and forty-nine themes, drawn with braille."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
@@ -59,3 +59,49 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["spektr*"]
+
+# ── ruff ──────────────────────────────────────────────────────────────────────
+# Make "empty ruff run" reproducible. Without a repo config, ruff picks up
+# whatever ~/.config/ruff enables, so the same files lint differently per
+# machine. CI does not gate on ruff today, but a stable baseline is what makes
+# it *possible* to gate on later.
+[tool.ruff]
+target-version = "py310"        # requires-python >= 3.10
+line-length = 100               # the codebase deliberately runs ~100-wide, not 88
+extend-exclude = ["build", "dist", ".venv", ".venv-build", ".ruff_cache"]
+
+[tool.ruff.lint]
+# F is pyflakes (undefined names / unused imports — real bugs); I keeps imports
+# sorted; RUF023 sorts `__slots__`. RUF046 (redundant `int()`), RUF022
+# (`__all__` sort) and RUF100 (unused `noqa`) are deliberately left out:
+#   - RUF046 is unsafe to auto-fix and a false positive here — round() on a
+#     numpy scalar stays a numpy float, so `int(round(...))` in palette.py is
+#     genuinely needed to keep a Python int.
+#   - RUF022 would flatten api.py's `__all__`, which is intentionally grouped
+#     by category behind comments.
+#   - RUF100 strips `# noqa:` comments the moment the referenced rule isn't
+#     active — but several of them (e.g. `# noqa: BLE001` on deliberate broad
+#     catches) exist as *documentation of intent*, and deleting them on a rule
+#     toggle destroys that. Ruff's auto-fix dropped 30+ of them; they were
+#     restored by hand and the rule isn't worth re-enabling.
+#
+# Deliberately NOT enabled: BLE/S — this is a terminal audio app and catching a
+# broad Exception on purpose (read-only home, missing backend package, a
+# transient audio error) is a deliberate resilience choice, not a bug — plus
+# PLR/RET/SIM/PERF (opinionated style), RUF012 (Textual `BINDINGS` are
+# intentionally mutable class attributes), and UP (aggressive typing churn on
+# a codebase that already targets 3.10+ with `from __future__ import
+# annotations`). E is left unselected too: the code runs ~100-col, and the one
+# E402 it would raise (`api.py` sets API_VERSION before the imports) is
+# intentional.
+select = [
+    "F", "I",
+    "RUF023",
+]
+
+# modes/__init__.py imports the mode modules in deliberate *menu order* (each
+# registers itself as a side-effect) — I001 wants them collapsed and sorted
+# alphabetically, which would fight the documented ordering. Everything else
+# in the file still satisfies I001.
+[tool.ruff.lint.per-file-ignores]
+"spektr/modes/__init__.py" = ["I001"]

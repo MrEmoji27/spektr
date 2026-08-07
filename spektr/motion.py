@@ -33,7 +33,7 @@ class Spring:
     little life on transients, above makes it sluggish.
     """
 
-    __slots__ = ("x", "v", "_wa", "_wr", "_za", "_zr")
+    __slots__ = ("_wa", "_wr", "_za", "_zr", "v", "x")
 
     def __init__(
         self,
@@ -79,7 +79,7 @@ class Spring:
 class Peaks:
     """Peak markers with hold and fall measured in seconds."""
 
-    __slots__ = ("value", "_until", "_hold", "_fall", "_t")
+    __slots__ = ("_fall", "_hold", "_t", "_until", "value")
 
     def __init__(self, n: int, hold: float = 0.35, fall: float = 0.55):
         self.value = np.zeros(n, dtype=np.float64)
@@ -112,7 +112,7 @@ class Trace:
     smoothed differently at different frame rates just like the bars did.
     """
 
-    __slots__ = ("value", "_tau")
+    __slots__ = ("_tau", "value")
 
     def __init__(self, tau: float = 0.03):
         self.value: np.ndarray | None = None

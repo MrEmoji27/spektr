@@ -17,4 +17,4 @@ from .widget import AudioVisualizer
 #: kept so old code doing ``from spektr.visualizer import VIS_MODES`` still runs
 VIS_MODES = _mode_names()
 
-__all__ = ["AudioVisualizer", "VIS_MODES", "N_BANDS"]
+__all__ = ["N_BANDS", "VIS_MODES", "AudioVisualizer"]

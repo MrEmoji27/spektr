@@ -8,6 +8,8 @@ instead, which is the same maths with none of the interpreter overhead.
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
 from ..render import cell_max, pack_braille
@@ -105,28 +107,49 @@ def ecg(ctx: Ctx):
     src = np.asarray(src, dtype=np.float32)
 
     # ~55% of the width per second, so a full sweep takes just under two
-    # seconds at any terminal size
-    step = int(min(dc, max(1, round(dc * 0.55 * ctx.dt))))
+    # seconds at any terminal size.
+    #
+    # The fractional remainder is carried in scratch rather than rounded away
+    # each frame. Rounding made the scroll rate wrong in two different
+    # directions depending on how ``dc * 0.55 * dt`` landed: at a narrow
+    # terminal it quantised to alternating 1- and 2-column steps, so the trace
+    # advanced at two visibly different speeds from one frame to the next, and
+    # the old ``max(1, ...)`` floor forced a whole column even when the frame
+    # was worth a fraction of one — measured at +74% too fast at 60 columns and
+    # 120 fps, against -13% too slow at 60 fps. Accumulating instead lets a
+    # frame legitimately advance zero columns, which is what keeps the average
+    # exact at any width and frame rate.
+    acc = ctx.scratch("ecg_acc", lambda: {"v": 0.0, "elapsed": 0.0})
+    acc["v"] += dc * 0.55 * max(ctx.dt, 0.0)
+    acc["elapsed"] += max(ctx.dt, 0.0)
+    step = int(min(dc, acc["v"]))
+    acc["v"] -= step
 
-    # Only the newest slice of the buffer is new: the analyser publishes a
-    # ~43 ms window and the render loop reads it every ~17 ms, so consuming the
-    # whole thing every frame would smear each column across the same three
-    # frames of audio and flatten the trace. Take the tail worth ``dt``.
-    take = int(np.clip(src.size * (ctx.dt / 0.043), 8, src.size)) if src.size else 0
-    seg = src[-take:] if take else src
+    if step:
+        # Only the newest slice of the buffer is new: the analyser publishes a
+        # ~43 ms window and the render loop reads it every ~17 ms, so consuming
+        # the whole thing every frame would smear each column across the same
+        # three frames of audio and flatten the trace. Take the tail worth the
+        # time actually elapsed since the last committed column — not this one
+        # frame's dt, which would silently drop the audio from any frame that
+        # advanced zero columns.
+        span = acc["elapsed"]
+        acc["elapsed"] = 0.0
+        take = int(np.clip(src.size * (span / 0.043), 8, src.size)) if src.size else 0
+        seg = src[-take:] if take else src
 
-    if seg.size >= step * 2:
-        starts = (np.arange(step, dtype=np.int64) * seg.size) // step
-        hi = np.maximum.reduceat(seg, starts)
-        lo = np.minimum.reduceat(seg, starts)
-    else:
-        v = float(seg[-1]) if seg.size else 0.0
-        hi = np.full(step, v, dtype=np.float32)
-        lo = hi
+        if seg.size >= step * 2:
+            starts = (np.arange(step, dtype=np.int64) * seg.size) // step
+            hi = np.maximum.reduceat(seg, starts)
+            lo = np.minimum.reduceat(seg, starts)
+        else:
+            v = float(seg[-1]) if seg.size else 0.0
+            hi = np.full(step, v, dtype=np.float32)
+            lo = hi
 
-    hist[:, :-step] = hist[:, step:]
-    hist[0, -step:] = hi
-    hist[1, -step:] = lo
+        hist[:, :-step] = hist[:, step:]
+        hist[0, -step:] = hi
+        hist[1, -step:] = lo
 
     # Filled between the per-column minimum and maximum rather than drawn as a
     # single line. That is how every audio editor draws a waveform, and it is
@@ -196,6 +219,73 @@ def strings(ctx: Ctx):
 
     codes = pack_braille(dots)
     cidx = ctx.ramp(cell_max(np.clip(heat, 0.0, 1.0)))
+    return codes, cidx
+
+
+@mode("Helix", group="stereo", blurb="two strands rotating around a shared axis, split by true L/R phase")
+def helix(ctx: Ctx):
+    """A corkscrew, not a flat trace.
+
+    ``Gonio`` plots L against R as a static Lissajous shape and ``Strings``
+    plucks one line per band; this is the only stereo mode with actual
+    rotation — two sine strands spinning around a shared axis, one per
+    channel, with a pseudo-3D depth cue (the strand curling away dims)
+    instead of a flat line. The strands' phase offset is a real measurement,
+    not a fixed 90°: it's the Pearson correlation between L and R turned into
+    an angle — 0 when the channels are identical, which correctly collapses
+    the two strands onto one, through pi when they're fully inverted, which
+    is as far apart as the strands ever swing.
+    """
+    dr, dc = ctx.dot_rows, ctx.dot_cols
+    if dr < 10 or dc < 20:
+        return empty(ctx.w, ctx.h)
+
+    pts = ctx.stereo
+    if pts.size:
+        left = np.clip(pts[:, 0], -1.0, 1.0).astype(np.float64)
+        right = np.clip(pts[:, 1], -1.0, 1.0).astype(np.float64)
+        energy = float((left * left + right * right).mean()) * 0.5
+        corr = float((left * right).mean())
+        c = 0.0 if energy < 1e-8 else float(np.clip(corr / energy, -1.0, 1.0))
+        measured = math.acos(c)
+    else:
+        measured = 0.0
+
+    st = ctx.scratch("helix", lambda: {"phase": 0.0})
+    st["phase"] += (measured - st["phase"]) * min(1.0, ctx.dt / 0.25)
+
+    amp_l = 0.15 + 0.75 * float(ctx.bands_l.mean())
+    amp_r = 0.15 + 0.75 * float(ctx.bands_r.mean())
+
+    treble = ctx.range(0.6, 1.0)
+    pitch = (2.6 + treble * 1.4) * 2 * math.pi / dc
+    spin = ctx.t * 2.1
+
+    cols = np.arange(dc, dtype=np.float64)
+    theta = cols * pitch + spin
+    centre = (dr - 1) / 2.0
+    max_amp = centre * 0.92
+
+    field = np.zeros((dr, dc), dtype=np.float64)
+    rows = np.arange(dr, dtype=np.int32)[:, None]
+
+    for theta_off, amp, base_bright in ((0.0, amp_l, 1.0), (st["phase"], amp_r, 0.85)):
+        t = theta + theta_off
+        depth = (np.cos(t) + 1.0) * 0.5      # 0 = curling away, 1 = facing the viewer
+        y = centre - np.sin(t) * amp * max_amp
+        yi = np.clip(np.rint(y).astype(np.int32), 0, dr - 1)
+        prev = np.empty_like(yi)
+        prev[0] = yi[0]
+        prev[1:] = yi[:-1]
+        lo = np.minimum(yi, prev)[None, :]
+        hi = np.maximum(yi, prev)[None, :]
+        on = (rows >= lo) & (rows <= hi)
+        bright = (0.25 + 0.75 * depth) * base_bright
+        np.maximum(field, np.where(on, bright[None, :], 0.0), out=field)
+
+    dots = field > 0.05
+    codes = pack_braille(dots)
+    cidx = ctx.ramp(cell_max(field))
     return codes, cidx
 
 

@@ -353,6 +353,25 @@ BUILTIN: dict[str, Theme] = dict(
         # the other end.
         _t("polar", "#3fa9dc", "#8ee8d4", "#eafcff", "#061826", "#eafcff", "#9fe8ff"),
         _t("bubblegum", "#7bf0ff", "#c07bff", "#ff5ec4", "#150a1f", "#ffe3fb", "#ff9de2"),
+        # Pink already appears four times, and not once as *the* colour: sakura
+        # is deliberately pale and desaturated, while bubblegum, vaporwave and
+        # blade-runner all only arrive at pink after starting from cyan or
+        # teal, so the ramp spends most of its length not being pink at all.
+        # This one never leaves the hue: dark magenta-plum through CSS
+        # deeppink (#ff1493, the canonical hot pink) to a pale highlight, so
+        # every band from quietest to loudest reads as the same colour getting
+        # hotter. Staying monochromatic is also what keeps it smooth — a ramp
+        # that crosses hues has to pass through whatever sits between them,
+        # which is where bubblegum's cyan->purple leg goes momentarily grey.
+        _t("hot-pink", "#6b0f47", "#ff1493", "#ffb3dd", "#14060f", "#ffd9ee", "#ff69b4"),
+        # The set had no red that stays red. infrared and ember are both heat
+        # ramps that climb out of red into orange and then yellow, and
+        # classic only touches red at its very top stop. A gemstone is the
+        # opposite idea: dark garnet in the shadows, true ruby (#9b111e) at
+        # the middle, and the bright crimson "fire" a cut stone throws at its
+        # facets as the peak — deep and saturated across the whole range
+        # rather than brightening by shifting hue toward yellow.
+        _t("ruby", "#5c0714", "#9b111e", "#ff2b4d", "#0d0206", "#ffd3da", "#e0115f"),
         # red -> yellow -> green -> blue -> violet -> magenta, and back to red:
         # a closed loop around the colour wheel. Three anchors can't do this —
         # the red→green seam dries to olive and the green→violet one washes
@@ -453,16 +472,16 @@ class Palette:
     """
 
     __slots__ = (
-        "theme",
-        "name",
-        "hexes",
-        "colors",
-        "styles",
+        "_phase",
         "bg_styles",
-        "rgb",
+        "colors",
+        "hexes",
+        "name",
         "note",
         "pair_styles",
-        "_phase",
+        "rgb",
+        "styles",
+        "theme",
     )
 
     def __init__(self, theme: Theme | None = None):

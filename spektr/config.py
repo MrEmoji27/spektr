@@ -13,7 +13,6 @@ from dataclasses import asdict, dataclass, fields
 
 from . import palette
 
-
 #: Band counts offered in the settings panel. 0 means "fit the terminal",
 #: which is what every mode did unconditionally before this was settable.
 BAND_CHOICES = (0, 8, 12, 16, 24, 32, 48, 64)
@@ -42,6 +41,11 @@ class Settings:
     #: restarts like everything else here — if you left it on, you wanted it
     #: on, not a surprise burst of quiet the next time you open a terminal.
     shuffle: bool = False
+    #: Flipbook's selected reel and effect. Empty string means "unresolved,
+    #: pick the first one" — see asciiart.restore(), which never touches disk
+    #: itself, only records these names for the mode to resolve on first use.
+    ascii_reel: str = ""
+    ascii_fx: str = "warp"
 
     def clamp(self) -> "Settings":
         """Force every field back into range, replacing junk with the default.
@@ -61,6 +65,8 @@ class Settings:
         self.theme = self.theme if isinstance(self.theme, str) and self.theme else "classic"
         self.chrome = bool(self.chrome)
         self.shuffle = bool(self.shuffle)
+        self.ascii_reel = self.ascii_reel if isinstance(self.ascii_reel, str) else ""
+        self.ascii_fx = self.ascii_fx if self.ascii_fx in ("warp", "dissolve", "lit") else "warp"
         return self
 
 

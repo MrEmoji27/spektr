@@ -64,7 +64,7 @@ def load_soundcard():
     import soundcard as sc
 
     try:
-        from soundcard import mediafoundation as _mf   # Windows only
+        from soundcard import mediafoundation as _mf  # Windows only
 
         if not hasattr(_mf._COMLibrary, "com_loaded"):
             _mf._COMLibrary.com_loaded = False
@@ -288,7 +288,7 @@ class _LoopbackStream:
 class RingBuffer:
     """Fixed-size circular buffer of interleaved stereo frames."""
 
-    __slots__ = ("_buf", "_cap", "_w", "_written", "_lock")
+    __slots__ = ("_buf", "_cap", "_lock", "_w", "_written")
 
     def __init__(self, capacity: int):
         self._cap = int(capacity)

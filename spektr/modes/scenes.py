@@ -35,13 +35,35 @@ def retro(ctx: Ctx):
 
     grid = np.zeros((dr, dc), dtype=np.int8)   # 0 empty, 1 grid, 2 wave, 3 sun
 
-    # ── sun: a half disc above the horizon, sliced by scanline gaps ──
+    # ── sun: a half disc above the horizon, cut by scanline slits ──
     sun_r = horizon * 0.85
     rd = (horizon - rows).astype(np.float64)              # distance up from horizon
     above = (rows < horizon) & (rd <= sun_r)
     hw = np.sqrt(np.maximum(sun_r * sun_r - rd * rd, 0.0))
-    slice_w = max(1.0, sun_r * 0.15)
-    banded = (rd < sun_r * 0.5) & (((rd // slice_w).astype(np.int64)) % 2 == 1)
+
+    # Slits, not a 50/50 chop. This used to band on ``(rd // slice_w) % 2``,
+    # a duty cycle whose gap is as tall as the lit stripe — and with
+    # ``slice_w`` landing around 4 dots, that gap is exactly one full braille
+    # row, so it rendered as a blank *text line* straight through the sun,
+    # splitting it into disconnected slabs rather than scoring it with
+    # scanlines. Keeping the slit to a small fraction of the period is what
+    # stops a gap from ever swallowing a whole cell row; widening it toward
+    # the horizon is the motif this is quoting, where the stripes open up as
+    # the disc sinks.
+    band_zone = sun_r * 0.62
+    period = max(3.0, sun_r * 0.17)
+    sink = np.clip(1.0 - rd / max(band_zone, 1e-6), 0.0, 1.0)
+    # A *fraction* of the period, and never wider than 3 dots. Both bounds
+    # matter and each caught a real blank row: sized absolutely, the slit
+    # swallowed 87% of the period once ``period`` hit its 3.0 floor on a
+    # short terminal, and left uncapped it grows with ``sun_r`` until it
+    # spans a whole cell again on a tall one. At most 3 dot rows means any
+    # four consecutive — that is, any braille row — keeps at least one lit,
+    # so no size can produce an empty line through the disc.
+    slit = np.clip(period * (0.22 + sink * 0.28), 0.8, 3.0)
+    into_period = rd - np.floor(rd / period) * period
+    banded = (rd < band_zone) & (into_period < slit)
+
     sun = above & (np.abs(cols - cx) <= hw) & ~banded
     grid[sun] = 3
 
@@ -59,8 +81,21 @@ def retro(ctx: Ctx):
         grid[yy[ok], ix[ok]] = 1
 
     # ── scrolling horizontals, spaced by z² so they bunch toward the horizon ──
-    scroll = math.fmod(ctx.t * 0.48, 1.0)
-    z = np.mod((np.arange(10) + scroll) / 10.0, 1.0)
+    # Speed is integrated into a phase rather than taken as ``t * speed``.
+    # That form is fine only while the speed is constant, which is what this
+    # used to be — a fixed rate that ignored the audio entirely, so the one
+    # thing carrying a sense of travel never responded to the music. Making
+    # the multiplier audio-driven *and* leaving it against ``ctx.t`` would
+    # have been worse than either: the phase is time times speed, so a change
+    # in speed retroactively rewrites the whole history and the grid teleports
+    # rather than accelerating — measured at a 130-turn jump for an ordinary
+    # loudness change a couple of minutes into a session, against the 0.02
+    # turns a frame of honest motion is worth. Accumulating sidesteps that
+    # completely: past phase is banked and only the increment changes.
+    sc = ctx.scratch("retro_scroll", lambda: {"v": 0.0})
+    sc["v"] = (sc["v"] + (0.30 + ctx.energy * 1.5) * max(ctx.dt, 0.0)) % 1.0
+    scroll = sc["v"]
+    z = frac((np.arange(10) + scroll) / 10.0)
     ys = horizon + 1 + (z * z * max(1, floor_r - 2)).astype(np.int32)
     ys = ys[(ys > horizon) & (ys < dr)]
     grid[ys, :] = 1
@@ -79,10 +114,17 @@ def retro(ctx: Ctx):
     dots = grid != 0
     codes = pack_braille(dots)
 
-    # colour: grid cool, sun mid, wave hot
+    # colour: grid cool, sun graded, wave hot
     heat = np.zeros((dr, dc), dtype=np.float64)
     heat[grid == 1] = 0.12
-    heat[grid == 3] = 0.55
+    # The sun was a single flat value, which is the one thing a sunset can't
+    # be — the disc is the only large area on screen, so a constant index
+    # across all of it reads as a cut-out shape rather than as light. Graded
+    # along the radius instead, deepening toward the horizon. It stays under
+    # the wave's 1.0 at every point so the spectrum still reads on top of it
+    # rather than dissolving into the disc.
+    sun_heat = 0.34 + 0.38 * np.clip(1.0 - rd / max(sun_r, 1e-6), 0.0, 1.0)
+    heat = np.where(grid == 3, np.broadcast_to(sun_heat, heat.shape), heat)
     heat[grid == 2] = 1.0
     cidx = ctx.ramp(cell_max(heat))
     return codes, cidx
@@ -219,8 +261,97 @@ def skyline(ctx: Ctx):
     return codes, cidx
 
 
+@mode("Keys", group="scenes", blurb="a lit keyboard; struck bands scroll away as falling notes")
+def keys(ctx: Ctx):
+    """A piano roll, not another bar chart.
+
+    Every band gets a key at the bottom instead of a bar height: pressing one
+    lights it and starts a note sustained for as long as the band stays
+    loud, and the note scrolls up and away exactly once, the way a struck
+    note leaves the playhead in a DAW roll. ``Ladder``/``Bars`` redraw a
+    height every frame from the current level; this only draws something new
+    when a band actually crosses into "struck," and what it drew keeps
+    existing after the level drops.
+    """
+    w, h = ctx.w, ctx.h
+    if w < 16 or h < 8:
+        return empty(w, h)
+
+    n = min(ctx.n_display, max(4, w // 3))
+    col_band, active = band_columns(w, n)
+    lv = ctx.display_bands(n)
+    roll_h = h - 2   # bottom two rows are the keyboard itself
+
+    def spawn():
+        return {"roll": np.zeros((roll_h, n), dtype=np.float32), "held": np.zeros(n, dtype=bool)}
+
+    st = ctx.scratch("keys", spawn)
+    if st["roll"].shape[1] != n:
+        st["roll"] = np.zeros((roll_h, n), dtype=np.float32)
+        st["held"] = np.zeros(n, dtype=bool)
+    roll = st["roll"]
+
+    struck = (lv > 0.24) & ~st["held"]
+    st["held"] = lv > 0.16
+
+    # scroll everything already on the roll up by however many rows this
+    # frame's dt is worth, at a fixed pace, so playback speed doesn't drift
+    # with frame rate
+    acc = ctx.scratch("keys_acc", lambda: {"v": 0.0})
+    acc["v"] += (roll_h / 2.6) * ctx.dt
+    shift = min(int(acc["v"]), roll_h)
+    if shift:
+        acc["v"] -= shift
+        roll[: roll_h - shift] = roll[shift:]
+        roll[roll_h - shift :] = 0.0
+
+    roll *= 0.995   # notes dim slightly as they age, on top of moving away
+    strike = np.where(lv > 0.16, np.maximum(lv, np.where(struck, 1.0, 0.0)), 0.0)
+    roll[-1] = np.maximum(roll[-1], strike)
+
+    roll_wide = np.where(active[None, :], roll[:, col_band], 0.0)
+    lit = roll_wide > 0.05
+
+    codes = np.full((h, w), SPACE, dtype=np.int32)
+    cidx = np.zeros((h, w), dtype=np.int32)
+    codes[:roll_h][lit] = _FULL
+    cidx[:roll_h] = ctx.ramp(roll_wide)
+
+    key0, key1 = h - 2, h - 1
+    pressed = active & (lv[col_band] > 0.16)
+    idle = active & ~pressed
+    codes[key0, active] = _FULL
+    codes[key1, active] = _FULL
+    cidx[key0, idle] = ctx.palette.index(0.28)
+    cidx[key1, idle] = ctx.palette.index(0.20)
+    press_heat = ctx.ramp(np.clip(lv[col_band], 0.0, 1.0))
+    cidx[key0, pressed] = press_heat[pressed]
+    cidx[key1, pressed] = press_heat[pressed]
+    return codes, cidx
+
+
 @mode("Tunnel", group="scenes", blurb="flying down a pipe, ribbed by the beat")
 def tunnel(ctx: Ctx):
+    """Ribs travel down the pipe at an audio-reactive speed.
+
+    That speed varying is exactly the case ``ctx.t * speed`` gets wrong: since
+    phase is time times speed, changing speed retroactively rewrites the whole
+    history the multiplication represents, not just the rate going forward —
+    an ordinary loudness change teleports the ribs by however many turns of
+    ``depth * 0.55`` separate the old and new phase at the *current* ``t``,
+    which grows without bound the longer the session has been running. Traced
+    and measured during the Retro sun-scroll fix earlier this session: at
+    t=120s an energy change could jump the ring phase by ~130 turns in one
+    frame, and under a gentle energy wobble 53% of frames moved more than a
+    quarter rib-spacing. A ``ctx.dt``-accumulated phase in scratch is exactly
+    the fix Retro's scroll and ECG's/Spectro's column step already use — the
+    same bug wearing scenes.py's clothes instead of fields.py's or scope.py's.
+
+    ``turn * spin`` a few lines down is not this bug: that spin rate is a
+    constant (0.024), not a function of the music, so ``ctx.t * constant`` is
+    an ordinary, correct phase — it's only multiplying time by a *varying*
+    rate that's unsafe.
+    """
     dr, dc = ctx.dot_rows, ctx.dot_cols
     if dr < 8 or dc < 8:
         return empty(ctx.w, ctx.h)
@@ -233,7 +364,9 @@ def tunnel(ctx: Ctx):
     depth = max_r / np.maximum(dist, 0.9)
 
     speed = 0.6 + ctx.energy * 2.4
-    rings = frac(depth * 0.55 - ctx.t * speed)
+    phase = ctx.scratch("tunnel_phase", lambda: {"v": 0.0})
+    phase["v"] += speed * max(ctx.dt, 0.0)
+    rings = frac(depth * 0.55 - phase["v"])
     ribs = rings < (0.10 + 0.22 * nrg)
 
     spokes = frac(turn * 16.0 + depth * 0.03)
@@ -354,4 +487,186 @@ def matrix(ctx: Ctx):
     cols = np.flatnonzero(ok)
     if cols.size:
         cidx[headrow[cols], cols] = RAMP_STEPS - 1
+    return codes, cidx
+
+
+_BOOT_INTRO = [
+    "SPEKTR-BIOS (C) 1985 SPEKTR SYSTEMS",
+    "CPU: Z80-COMPATIBLE   CLOCK: 3.58MHZ",
+    "MEMORY TEST ................. 065536K OK",
+    "DETECTING DRIVES ............ A: B: OK",
+    "LOADING SPEKTR.SYS",
+    "LOADING AUDIO.DRV ........... OK",
+    "INIT DISPLAY ADAPTER ........ OK",
+    "",
+    "SPEKTR OS v0.2  READY",
+    "",
+]
+
+#: Endless idle chatter once the intro's played out — ``{n}``/``{n2}`` are
+#: filled with random digits per line, so the same template doesn't repeat
+#: verbatim.
+_BOOT_LOOP = [
+    "PROC {n:04d} .................. OK",
+    "IRQ {n:02d} ACK",
+    "READ SECTOR {n:05d} ......... OK",
+    "CACHE FLUSH BANK {n:02d}",
+    "LOAD AVG 0.{n:02d}",
+    "CHECKSUM {n:04X}H OK",
+    "CHANNEL {n} SYNC",
+    "BAND {n} PEAK {n2:03d}",
+    "> RUN VISUALIZER.EXE",
+]
+
+_GLITCH_GLYPHS = np.array([ord(c) for c in "#%&@$?!/\\░▒▓█"], dtype=np.int32)
+
+
+def _boot_advance_line(st: dict, w: int) -> None:
+    """Pick the next line to type: drain the intro queue, then loop forever."""
+    if st["queue"]:
+        text = st["queue"].pop(0)
+    else:
+        tpl = _BOOT_LOOP[int(st["rng"].integers(0, len(_BOOT_LOOP)))]
+        text = tpl.format(
+            n=int(st["rng"].integers(0, 10000)), n2=int(st["rng"].integers(0, 999))
+        )
+    text = text[:w]
+    target = np.array([ord(c) for c in text], dtype=np.int32) if text else np.zeros(0, dtype=np.int32)
+    st["target"] = target
+    st["pos"] = 0
+    if target.size:
+        st["reveal_t"][: target.size] = -99.0
+
+
+def _boot_spawn(w: int) -> dict:
+    st = {
+        "rng": np.random.default_rng(53),
+        "queue": list(_BOOT_INTRO),
+        "committed": [],       # list of int32 arrays, oldest first
+        "committed_t": [],     # matching commit timestamps
+        "target": np.zeros(0, dtype=np.int32),
+        "reveal_t": np.full(w, -99.0, dtype=np.float64),
+        "pos": 0,
+        "acc": 0.0,
+        "last_reboot": -99.0,
+        "onset_fast": 0.0,
+        "onset_slow": 0.0,
+        "glitch_t0": -99.0,
+    }
+    _boot_advance_line(st, w)
+    return st
+
+
+@mode("Boot", group="scenes", blurb="an old PC waking up — BIOS POST, a boot log, a blinking cursor")
+def boot(ctx: Ctx):
+    """A monochrome terminal replaying the moment a machine powers on.
+
+    Text-cell resolution, not the dot grid — Flipbook is the other mode that
+    draws real glyphs rather than braille, for the same reason: sub-cell
+    packing would mangle character shapes. Everything here is either an
+    accumulator or a function of elapsed wall time (``ctx.t - event_time``),
+    never ``ctx.t * speed`` — that pattern is what made Spectro and ECG lag
+    then jump earlier this session, and a boot log stuttering mid-scroll
+    would be the same bug wearing a different mode.
+
+    The typewriter reveals characters at an audio-reactive rate (louder =
+    faster typing, a bass hit bursts a few extra characters through); once
+    a line is fully typed it's committed and scrolls up, and the next line
+    comes off a short fixed BIOS intro, then an endless pool of idle status
+    lines. A hard onset occasionally "power-cycles" the machine — clears the
+    log and replays the intro — throttled to at most once every 12 real
+    seconds so it reads as a rare dramatic beat, not a flicker.
+    """
+    w, h = ctx.w, ctx.h
+    if w < 24 or h < 8:
+        return empty(w, h)
+
+    st = ctx.scratch("boot_term", lambda: _boot_spawn(w))
+    rng = st["rng"]
+    t = ctx.t
+    dt = max(ctx.dt, 0.0)
+
+    bass = ctx.range(0.0, 0.15)
+    st["onset_fast"] += (bass - st["onset_fast"]) * min(1.0, dt / 0.03)
+    st["onset_slow"] += (bass - st["onset_slow"]) * min(1.0, dt / 0.4)
+    onset = st["onset_fast"] - st["onset_slow"]
+    hit = onset > 0.12
+    flash = 0.0
+    if onset > 0.30 and (t - st["last_reboot"]) > 12.0:
+        st["queue"] = list(_BOOT_INTRO)
+        st["committed"] = []
+        st["committed_t"] = []
+        _boot_advance_line(st, w)
+        st["last_reboot"] = t
+        flash = 1.0
+
+    cps = 14.0 + ctx.energy * 46.0
+    st["acc"] += cps * dt + (6.0 if hit else 0.0)
+
+    for _ in range(64):
+        target = st["target"]
+        if st["pos"] < target.size:
+            if st["acc"] < 1.0:
+                break
+            st["acc"] -= 1.0
+            st["reveal_t"][st["pos"]] = t
+            st["pos"] += 1
+            if st["pos"] < target.size:
+                continue
+        st["committed"].append(target)
+        st["committed_t"].append(t)
+        cap = h + 2
+        if len(st["committed"]) > cap:
+            drop = len(st["committed"]) - cap
+            del st["committed"][:drop]
+            del st["committed_t"][:drop]
+        _boot_advance_line(st, w)
+        if target.size > 0 and st["acc"] < 1.0:
+            break
+
+    codes = np.full((h, w), SPACE, dtype=np.int32)
+    bright = np.zeros((h, w), dtype=np.float64)
+
+    visible = st["committed"][-(h - 1):]
+    visible_t = st["committed_t"][-(h - 1):]
+    for i, (row_codes, ct) in enumerate(zip(visible, visible_t)):
+        L = row_codes.size
+        if L:
+            codes[i, :L] = row_codes
+            bright[i, :L] = 0.5 + 0.42 * math.exp(-(t - ct) / 0.8)
+
+    typing_row = len(visible)
+    target, pos = st["target"], st["pos"]
+    if typing_row < h and pos > 0:
+        codes[typing_row, :pos] = target[:pos]
+        glow = np.exp(-(t - st["reveal_t"][:pos]) / 0.5)
+        bright[typing_row, :pos] = 0.5 + 0.45 * glow
+    if typing_row < h and pos < w and (t * 2.2) % 1.0 < 0.5:
+        codes[typing_row, pos] = _FULL
+        bright[typing_row, pos] = 1.0
+
+    bright[0::2] *= 0.90
+
+    rows_idx = np.arange(h, dtype=np.float64)
+    band_pos = (t * (h / 1.3)) % h
+    band_dist = np.abs(rows_idx - band_pos)
+    band_dist = np.minimum(band_dist, h - band_dist)
+    band_boost = np.clip(1.0 - band_dist, 0.0, 1.0) * 0.12
+    bright += band_boost[:, None] * (codes != SPACE)
+
+    treble = ctx.range(0.6, 1.0)
+    if treble > 0.55 and (t - st["glitch_t0"]) > 0.15:
+        st["glitch_t0"] = t
+    glitch_env = math.exp(-(t - st["glitch_t0"]) / 0.12)
+    if glitch_env > 0.05:
+        mask = rng.random((h, w)) < (glitch_env * 0.10)
+        n_hit = int(mask.sum())
+        if n_hit:
+            codes[mask] = _GLITCH_GLYPHS[rng.integers(0, len(_GLITCH_GLYPHS), n_hit)]
+            bright[mask] = np.maximum(bright[mask], glitch_env)
+
+    if flash > 0.0:
+        bright[:] = np.maximum(bright, 1.0)
+
+    cidx = ctx.ramp(np.clip(bright, 0.0, 1.0))
     return codes, cidx

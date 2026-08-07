@@ -137,7 +137,7 @@ class BandPlan:
     those are sequential by nature. It runs once per sample rate.
     """
 
-    __slots__ = ("bass_size", "mid_size", "lower", "upper", "eq", "cutoff", "bass_bar", "rate")
+    __slots__ = ("bass_bar", "bass_size", "cutoff", "eq", "lower", "mid_size", "rate", "upper")
 
     def __init__(self, rate: int, bars: int = N_BANDS,
                  low: float = LOW_CUT_HZ, high: float = HIGH_CUT_HZ,

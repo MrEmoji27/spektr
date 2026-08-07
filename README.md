@@ -7,8 +7,8 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-00c853)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20·%20Linux%20·%20macOS-546e7a)](#how-it-captures-audio)
-[![Modes](https://img.shields.io/badge/render%20modes-29-ff6d00)](#modes)
-[![Themes](https://img.shields.io/badge/themes-47-7c4dff)](#themes)
+[![Modes](https://img.shields.io/badge/render%20modes-40-ff6d00)](#modes)
+[![Themes](https://img.shields.io/badge/themes-49-7c4dff)](#themes)
 [![Built with Textual](https://img.shields.io/badge/built%20with-Textual-5e35b1)](https://textual.textualize.io/)
 
 </div>
@@ -21,7 +21,7 @@ spektr draws it: overlapped FFTs across 32 log-spaced bands (settable) from 50 H
 out the way cava does it, rendered with braille sub-characters so the picture moves at
 four times the vertical resolution of a text cell.
 
-**Twenty-nine render modes. Forty-seven themes. Locked 60 fps.**
+**Forty render modes. Forty-seven themes. Locked 60 fps.**
 
 ## Install
 
@@ -107,23 +107,52 @@ Listed in the order the picker cycles them.
 | **Gonio** | stereo phase scope with a phosphor trail | **Needle** | analogue VU — one sweeping needle, one red zone |
 | **Scatter** | density sparkle, thicker where it's loud | **VU** | big L/R LED meters with peak hold |
 | **Flame** | fire, licking upward from each band | **Arcs** | hollow rings, one per band, pushed out by level |
-| **Pulse** | radial pulse with shockwaves | | |
+| **Pulse** | radial pulse with shockwaves | **Orbit** | one dot per band, actually revolving around a centre |
+| **Fireworks** | beat-triggered launches, bursts, and fall | **Dune** | sand piles up by band, avalanching past a threshold |
+| **Colony** | a growing culture — spots, worms and mazes, set by the music | **Keys** | a lit keyboard; struck bands scroll away as notes |
+| **Boot** | an old PC waking up — BIOS POST, a boot log, a blinking cursor | **Readout** | scrolling numeric ticker, band levels as plain digits |
+| **Helix** | two strands rotating, split by true L/R phase | **Chladni** | nodal interference pattern, plate modes set by pitch |
+| **Flipbook** | your own ASCII animation, played by the music | **Maelstrom** | a real fluid sim, stirred by the music |
+| **Vinyl** | a record whose grooves light up as a radial spectrum | **Rain** | rain on the glass, falling harder when it's loud |
+| **Ember** | a coal bed burning by band, sparks off the hot spots | **Fairylights** | a string of bulbs, one per band, lighting to the music |
+| **Cassette** | a tape deck; the strand carries the waveform | **Steam** | a mug whose steam rises band by band |
+| **Murmuration** | a flock wheeling and scattering with the beat | | |
 
-A thirtieth entry, **None**, is registered as the off switch — it draws nothing.
-That is why the test output counts 30 modes against the twenty-nine listed here.
+Vinyl, Rain, Ember, Fairylights, Cassette, and Steam are the lofi group — a
+shared *look* (warm objects, soft edges, nothing strobing) rather than a
+shared reactivity budget. Each one maps real band data into its geometry,
+so what the music changes is what the object is doing, not just how bright
+the picture is.
+
+A forty-eighth entry, **None**, is registered as the off switch — it draws nothing.
+That is why the test output counts 48 modes against the forty-seven listed here.
 
 Still frames of a few of them, straight from the render path: **[docs/gallery.md](docs/gallery.md)**.
 
+### Flipbook: playing your own ASCII art
+
+Drop a folder of numbered frames — `001.txt`, `002.txt`, … — into
+`~/.config/spektr/ascii/` (`%APPDATA%\spektr\ascii\` on Windows) and pick **Flipbook**
+from the `v` picker. A bare `.txt` at the top level works too, as a one-frame still.
+Two built-in reels ship so the mode works with nothing added.
+
+Open Settings (`c`) while Flipbook is active for two extra rows: which reel is
+playing, and which of three effects drives it — `warp` (a coherent field breathes
+the art), `dissolve` (it comes apart in quiet passages and snaps back on a hit),
+or `lit` (the geometry stays put; the spectrum lights it in horizontal bands).
+Playback speed and effect intensity both track the music. Press `r` to pick up
+edited or newly added frames without restarting.
+
 ## Themes
 
-Forty-seven built in, previewed live from the `t` picker: `classic`, `gruvbox`, `catppuccin`
+Forty-nine built in, previewed live from the `t` picker: `classic`, `gruvbox`, `catppuccin`
 (+`-latte`), `dracula`, `nord`, `tokyo-night` (+`-day`), `rose-pine`, `everforest`,
 `kanagawa`, `ayu-mirage`, `monokai`, `solarized`, `nightfox`, `oxocarbon`, `miasma`,
 `osaka-jade`, `ristretto`, `flexoki-light`, `nightfly`, `material`, `gotham`, `oceanic`,
 `gruvbox-light`, `hackerman`, `ember`, `ethereal`, `synthwave`, `blade-runner`,
 `nostromo`, `plasma`, `viridis`, `ice`, `vaporwave`, `infrared`, `deep-sea`, `magma`,
 `matte-black`, `vantablack`, `rainbow`, `phosphor-amber`, `sakura`, `toxic`, `copper`,
-`polar`, `bubblegum` — plus `auto`, which derives a ramp from whatever Textual theme your
+`polar`, `bubblegum`, `hot-pink`, `ruby` — plus `auto`, which derives a ramp from whatever Textual theme your
 terminal is wearing.
 
 `rainbow` is animated — its colour loop drifts continuously across the bands instead of
@@ -176,7 +205,7 @@ def nightrider(ctx):
 ```
 
 You return codepoints and *heat* — never colours — so every plugin works with all
-forty-seven themes for free.
+forty-nine themes for free.
 
 > [!WARNING]
 > **Plugins are Python and run with your privileges.** spektr can't sandbox them, and

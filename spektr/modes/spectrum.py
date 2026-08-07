@@ -110,6 +110,58 @@ def mirror(ctx: Ctx):
     return codes, cidx
 
 
+@mode("Readout", blurb="scrolling numeric ticker, band levels as plain digits")
+def readout(ctx: Ctx):
+    """Every level as text, not as a shape.
+
+    Every other mode in this file is a block height in disguise — fractional
+    blocks, chunky bricks, LED segments, a mirrored pair. This is the only
+    one with no bar at all: the numbers scroll past like a ticker tape, and
+    the only shape on screen at any instant is whatever the digits say.
+    """
+    w, h = ctx.w, ctx.h
+    if w < 20 or h < 2:
+        return empty(w, h)
+
+    n = min(24, max(4, ctx.n_display))
+    lv = ctx.display_bands(n)
+
+    # one "lap" of the tape: each band as a fixed-width "NN:LL " field, so the
+    # character-to-band mapping is exact regardless of what the numbers say
+    fields = [f"{i:02d}:{min(99, int(round(float(l) * 99))):02d} " for i, l in enumerate(lv)]
+    unit = "".join(fields)
+    unit_len = len(unit)
+    if unit_len == 0:
+        return empty(w, h)
+    band_of_char = np.concatenate(
+        [np.full(len(f), i, dtype=np.int32) for i, f in enumerate(fields)]
+    )
+
+    # repeated enough times to cover one row plus the largest scroll offset
+    reps = w // unit_len + 4
+    tape = unit * reps
+    tape_band = np.tile(band_of_char, reps)
+    tape_len = len(tape)
+
+    acc = ctx.scratch("readout", lambda: {"v": 0.0})
+    speed = unit_len * (0.55 + ctx.energy * 1.1)   # characters/second
+    acc["v"] = (acc["v"] + speed * ctx.dt) % tape_len
+    base = int(acc["v"])
+
+    lut = np.array([ord(c) for c in tape], dtype=np.int32)
+    heat_lut = ctx.ramp(lv[tape_band])
+
+    rows = np.arange(h)[:, None]
+    cols = np.arange(w)[None, :]
+    # each row starts at a different phase into the same tape, so it reads as
+    # a wall of independent readouts rather than one line repeated downward
+    idx = (base + rows * 7 + cols) % tape_len
+
+    codes = lut[idx]
+    cidx = heat_lut[idx]
+    return codes, cidx
+
+
 @mode("Stereo", group="stereo", blurb="per-band L/R meters, mirrored from centre")
 def stereo(ctx: Ctx):
     """cliamp's stereo meters, done as a mirrored pair.

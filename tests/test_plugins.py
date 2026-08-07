@@ -19,7 +19,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 from spektr import modes as registry  # noqa: E402
-from spektr import palette, plugins   # noqa: E402
+from spektr import palette, plugins  # noqa: E402
 
 GOOD = '''
 """A well-behaved plugin."""

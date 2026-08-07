@@ -11,6 +11,11 @@ from ..palette import RAMP_STEPS
 from ..render import SHADES, SPACE, cell_max, pack_braille
 from . import Ctx, empty, mode, spread
 
+#: Spectro's scroll rate, in columns per second. Paced in seconds rather than
+#: per frame so the time axis means the same thing at any frame rate — see the
+#: mode's docstring.
+SPECTRO_COLS_PER_SEC = 60.0
+
 _UPPER_HALF = ord("▀")
 _FULL = ord("█")
 _TICK = ord("┃")
@@ -26,16 +31,44 @@ def spectrogram(ctx: Ctx):
     Frequency runs bottom-to-top and time scrolls right-to-left, which is the
     convention every other spectrogram uses; getting it backwards makes the
     display unreadable to anyone who has seen one before.
+
+    The scroll is paced in **columns per second**, not columns per frame.
+    Shifting a fixed one column per frame — which this did originally — makes
+    the time axis mean whatever the current frame rate happens to be: measured
+    at a 4x spread, with one second of audio occupying 30 columns at 30 fps
+    against 120 at 120 fps. That also breaks the promise the settings panel
+    makes about frame rate ("the motion is timed in seconds, so this changes
+    smoothness only"), and it interacts badly with the adaptive pacer in
+    widget.py, which retimes fps by +/-6 at runtime: the waterfall visibly
+    slowed down and sped back up as the pacer moved, with nothing in the audio
+    changing. The fractional remainder is carried in scratch rather than
+    rounded away, so a rate that isn't a whole number of columns per frame
+    still averages out exactly instead of drifting.
     """
     w, h = ctx.w, ctx.h
     if w < 4 or h < 3:
         return empty(w, h)
 
     hist = ctx.scratch("spectro", lambda: np.zeros((h, w), dtype=np.float32))
+    acc = ctx.scratch("spectro_acc", lambda: {"v": 0.0})
 
     column = resample_bands(ctx.bands, h)[::-1]     # low frequencies at the bottom
-    hist[:, :-1] = hist[:, 1:]
-    hist[:, -1] = column
+
+    acc["v"] += SPECTRO_COLS_PER_SEC * max(ctx.dt, 0.0)
+    step = int(min(w, acc["v"]))
+    if step:
+        acc["v"] -= step
+        hist[:, :-step] = hist[:, step:]
+        # every column this frame covers gets the same reading — the analyser
+        # only published one, so inventing detail between them would be a lie
+        hist[:, -step:] = column[:, None]
+    else:
+        # Above the scroll rate — several frames can share one column. Peak-hold
+        # into the column still being written rather than skipping the reading:
+        # dropping it would lose any transient that happened to land on one of
+        # those frames, which on a spectrogram is the one thing you were looking
+        # for. Same peak-preserving reasoning as ECG's decimation.
+        np.maximum(hist[:, -1], column, out=hist[:, -1])
 
     lut = np.array([ord(c) for c in SHADES], dtype=np.int32)
     step = np.clip((hist * (len(SHADES) - 1) * 1.35).astype(np.int32), 0, len(SHADES) - 1)
@@ -94,6 +127,99 @@ def plasma(ctx: Ctx):
     field = np.clip(field * (0.35 + ctx.energy * 1.5), 0.0, 1.0)
 
     idx = ctx.ramp(field)
+    codes = np.full((h, w), _UPPER_HALF, dtype=np.int32)
+    return codes, idx[0::2], idx[1::2]
+
+
+@mode("Chladni", group="fields", blurb="nodal interference pattern, plate modes set by the dominant pitch")
+def chladni(ctx: Ctx):
+    """A vibrating-plate figure, not a warped colour field.
+
+    Plasma is a smooth continuous field; this is the opposite kind of
+    pattern — an interference figure with hard nodal lines, the shape sand
+    takes on a real Chladni plate, where it collects at the nodes (zero
+    motion) and gets shaken off everywhere else. The two integer mode
+    numbers that decide the figure's shape track the spectrum's centre of
+    mass, so a bass-heavy passage gives a coarse few-line figure and a
+    bright treble-heavy one gives a dense, many-celled figure — the same way
+    sweeping a real plate's drive frequency snaps it between resonant
+    figures. Loudness sharpens the lines rather than moving them, the way a
+    harder-driven plate throws sand into tighter bands.
+
+    Two things here exist only to keep make_strips cheap, the same lesson
+    Plasma's docstring already tells: this uses the same two-colour ``▀``
+    trick, and unlike Plasma's smooth field, ``nodal`` is a sharp,
+    non-monotonic difference-of-products — measured at ~50 distinct ramp
+    values per row at 400x100, versus Plasma's handful, because the
+    interference pattern has many local extrema even at low mode numbers.
+    ``m``/``n`` are capped lower than a "real" Chladni figure would use
+    (halving them only cut cost by ~15%, so frequency wasn't the main
+    driver), and ``nodal`` is quantised to 10 buckets before ramping so
+    neighbouring pixels collapse into the same colour index more often. That
+    combination measured worst-case ~7ms at 400x100, down from ~9-14ms and
+    frequently over the 11ms slow-mode threshold — which read as exactly the
+    "pops up, lags, then catches up" pattern it was reported as, since
+    crossing that threshold makes the widget reuse every other frame.
+    """
+    w, h = ctx.w, ctx.h
+    if w < 4 or h < 4:
+        return empty(w, h)
+
+    rows2 = h * 2
+
+    def geo():
+        y = np.arange(rows2, dtype=np.float64)[:, None] / max(1, rows2 - 1)
+        x = np.arange(w, dtype=np.float64)[None, :] / max(1, w - 1)
+        return y, x
+
+    y, x = ctx.scratch("chladni_geo", geo)
+
+    bands8 = ctx.display_bands(8).astype(np.float64)
+    total = float(bands8.sum())
+    centroid = float((bands8 * np.arange(8)).sum() / total / 7.0) if total > 1e-9 else 0.0
+    highs = ctx.range(0.6, 1.0)
+
+    st = ctx.scratch("chladni_ease", lambda: {"c": 0.3, "e": 0.5})
+    st["c"] += (centroid - st["c"]) * min(1.0, ctx.dt / 0.35)
+    st["e"] += (highs - st["e"]) * min(1.0, ctx.dt / 0.35)
+
+    # Mode numbers are continuous, not snapped to integers. Integer modes are
+    # the physically real ones, but stepping between them makes the whole
+    # figure change shape between one frame and the next — a hard cut, on a
+    # mode whose appeal is watching the pattern reorganise. Sweeping through
+    # the fractional values in between morphs one figure into the next, and
+    # the interference pattern stays a plausible plate figure throughout.
+    m = 2.0 + st["c"] * 4.4    # 2.0 .. 6.4
+    n = 3.2 + st["e"] * 4.4    # 3.2 .. 7.6
+
+    # a slow spin keeps a held tone's figure visibly alive rather than frozen
+    ang = ctx.t * 0.06
+    cs, sn = math.cos(ang), math.sin(ang)
+    xr = (x - 0.5) * cs - (y - 0.5) * sn + 0.5
+    yr = (x - 0.5) * sn + (y - 0.5) * cs + 0.5
+
+    z = np.sin(m * math.pi * xr) * np.sin(n * math.pi * yr) - np.sin(
+        n * math.pi * xr
+    ) * np.sin(m * math.pi * yr)
+
+    sharpness = 1.4 + ctx.energy * 3.2
+    nodal = np.clip(1.0 - np.abs(z) * sharpness, 0.0, 1.0) ** 2
+
+    # Quantised before ramping, for the ``make_strips`` reason in the
+    # docstring above. Twelve buckets rather than ten: the figure is smooth
+    # curves and the extra steps visibly soften the banding across a broad
+    # nodal region, at no measurable cost.
+    #
+    # Deliberately *not* dithered into a sand texture, which is the obvious
+    # thing to try given what a Chladni plate physically is. It was tried:
+    # at terminal resolution a nodal band is only a few cells across, so
+    # thresholding the field against a noise mask leaves isolated speckle
+    # with no curve left to read — and restricting the dither to the fringe
+    # while keeping the ridge solid still broke the thin parts of the
+    # figure, which is most of it. The clean field is the better picture.
+    nodal = np.round(nodal * 12.0) * (1.0 / 12.0)
+
+    idx = ctx.ramp(nodal)
     codes = np.full((h, w), _UPPER_HALF, dtype=np.int32)
     return codes, idx[0::2], idx[1::2]
 

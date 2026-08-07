@@ -22,11 +22,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-import spektr.modes as M                      # noqa: E402
-from spektr.analysis import N_BANDS           # noqa: E402
-from spektr.modes import Ctx                  # noqa: E402
-from spektr.palette import BUILTIN, Palette   # noqa: E402
-from spektr.render import make_strips         # noqa: E402
+import spektr.modes as M  # noqa: E402
+from spektr.analysis import N_BANDS  # noqa: E402
+from spektr.modes import Ctx  # noqa: E402
+from spektr.palette import BUILTIN, Palette  # noqa: E402
+from spektr.render import make_strips  # noqa: E402
 
 SIZES = [(40, 10), (80, 24), (120, 16), (200, 50), (240, 60)]
 BUDGET_MS = 1000.0 / 60.0

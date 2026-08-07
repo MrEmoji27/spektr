@@ -24,12 +24,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-import spektr.modes as M                                        # noqa: E402
-from spektr.analysis import N_BANDS, Analyser, resample_bands   # noqa: E402
-from spektr.capture import RingBuffer                           # noqa: E402
-from spektr.modes import Ctx                                    # noqa: E402
+import spektr.modes as M  # noqa: E402
+from spektr.analysis import N_BANDS, Analyser, resample_bands  # noqa: E402
+from spektr.capture import RingBuffer  # noqa: E402
+from spektr.modes import Ctx  # noqa: E402
 from spektr.palette import BUILTIN, RAMP_STEPS, Palette, all_themes  # noqa: E402
-from spektr.render import make_strips                           # noqa: E402
+from spektr.render import SPACE, make_strips  # noqa: E402
 
 PAL = Palette(BUILTIN["gruvbox"])
 
@@ -45,13 +45,33 @@ SELF_ANIMATING = {
     # spin (Arcs), travelling particles (Bubbles), curtain billow (Auroras),
     # window flicker (Skyline), continuous sweep rotation (Sonar)
     "ECG", "Strings", "Arcs", "Bubbles", "Auroras", "Skyline", "Sonar",
+    # continuous ticker scroll (Readout), continuous spin (Helix, Chladni),
+    # continuous orbital motion (Orbit), continuous scroll (Keys), a real
+    # playback clock (Flipbook), a persisted simulation that keeps evolving
+    # on its own (Maelstrom), state that accumulates over time by design
+    # (Dune), and physics that keeps running after a trigger — a launched
+    # firework doesn't stop just because the spectrum did (Fireworks) — plus
+    # a boot log that keeps typing, scrolling, and blinking its cursor on its
+    # own clock (Boot), a cellular automaton stepping generations on its own
+    # clock (Colony), a flock whose agents keep moving under their own
+    # inter-agent forces even at a constant spectrum (Murmuration), and the
+    # lofi set, each animating on its own even in silence by design: a
+    # record keeps spinning after the needle drops
+    # (Vinyl), rain keeps falling at a small base rate so the loop never
+    # looks paused (Rain), embers keep drifting and cooling on their own
+    # timers once spawned (Ember), bulbs each twinkle on their own fixed
+    # clock (Fairylights), reels keep turning and the counter keeps ticking
+    # (Cassette), and steam keeps curling and rising off the cup (Steam)
+    "Readout", "Helix", "Chladni", "Orbit", "Keys", "Flipbook", "Maelstrom",
+    "Dune", "Fireworks", "Boot", "Colony", "Murmuration", "Vinyl", "Rain",
+    "Ember", "Fairylights", "Cassette", "Steam",
 }
 
 #: Modes driven by the waveform rather than the band levels.
 WAVEFORM_DRIVEN = {"Wave", "Scope", "Gonio", "ECG"}
 
 
-def ctx_for(w, h, frame, state, t, bands=None, silent=False, stereo=None):
+def ctx_for(w, h, frame, state, t, bands=None, silent=False, stereo=None, dt=1 / 60):
     if bands is None:
         bands = np.clip(np.abs(np.sin(np.linspace(0, 3, N_BANDS) + t * 2)) * 0.8, 0, 1)
     wave = np.sin(np.linspace(0, 40, 512) + t * 10) * 0.7
@@ -60,7 +80,7 @@ def ctx_for(w, h, frame, state, t, bands=None, silent=False, stereo=None):
     return Ctx(
         w=w, h=h, bands=bands, peaks=np.clip(bands * 1.05, 0, 1),
         bands_l=bands * 0.9, bands_r=bands, wave=wave, stereo=stereo,
-        frame=frame, t=t, dt=1 / 60, energy=float(bands.mean()),
+        frame=frame, t=t, dt=dt, energy=float(bands.mean()),
         silent=silent, palette=PAL, state=state,
     )
 
@@ -245,6 +265,68 @@ def check_scratch_does_not_leak() -> list[str]:
             m.fn(ctx_for(w, h, i, state, i / 30))
         if len(state) > 4:
             bad.append(f"{m.name} kept {len(state)} scratch entries after 40 resizes")
+    return bad
+
+
+# ── 5b. scrolling modes must scroll in seconds, not in frames ────────────────
+
+#: Modes that scroll their own history buffer on a clock. Their content has to
+#: travel the same distance per *second* at any frame rate — see the check.
+SCROLL_PACED = ("Spectro", "ECG")
+
+
+def check_scroll_is_frame_rate_independent() -> list[str]:
+    """A scrolling mode's time axis must not mean "however fast we happen to render".
+
+    Both of these regressed this way and it was visible, not theoretical.
+    ``Spectro`` shifted a fixed one column per frame, so one second of audio
+    occupied 30 columns at 30 fps against 120 at 120 fps. ``ECG`` rounded its
+    per-frame column step, which at a narrow terminal alternated between 1 and
+    2 columns from frame to frame and, with its old ``max(1, ...)`` floor, ran
+    +74% fast at 60 columns / 120 fps.
+
+    Both are worse than a fixed offset, because widget.py's adaptive pacer
+    retimes fps by +/-6 at runtime: the picture visibly slowed down and sped
+    back up with nothing in the audio changing. It also breaks what the
+    settings panel promises about the frame-rate row ("the motion is timed in
+    seconds, so this changes smoothness only").
+
+    Driven by a single impulse followed by silence, so the measurement is where
+    that impulse ended up — no RNG involved, unlike the modes whose particles
+    respawn randomly and legitimately differ frame-to-frame at different rates.
+    """
+    bad = []
+    w, h = 120, 30
+    seconds = 1.0
+
+    def impulse_col(m, fps):
+        state: dict = {}
+        dt = 1.0 / fps
+        codes = None
+        for i in range(int(seconds * fps)):
+            loud = i == 0
+            bands = np.full(N_BANDS, 0.9 if loud else 0.0)
+            codes = m.fn(ctx_for(w, h, i, state, i * dt, bands=bands, silent=not loud, dt=dt))[0]
+        lit = (codes != SPACE) & (codes != 0x2800)   # 0x2800 is blank braille
+        cols = np.flatnonzero(lit.any(axis=0))
+        return int(cols.min()) if cols.size else None
+
+    for name in SCROLL_PACED:
+        m = M.get(name)
+        if m is None:
+            bad.append(f"{name} is missing — update SCROLL_PACED")
+            continue
+        seen = {fps: impulse_col(m, fps) for fps in (30, 60, 120)}
+        if any(v is None for v in seen.values()):
+            bad.append(f"{name}: impulse vanished entirely at {seen} — nothing to measure")
+            continue
+        spread = max(seen.values()) - min(seen.values())
+        # a couple of columns of slack for integer rounding at each rate
+        if spread > 3:
+            bad.append(
+                f"{name} scrolls at a frame-rate-dependent speed: "
+                f"impulse at column {seen} after {seconds}s — should match within 3"
+            )
     return bad
 
 
@@ -518,6 +600,7 @@ TESTS = [
     ("output sanity (no NaN/surrogates)", check_output_sanity),
     ("surrogates survive the strip builder", check_surrogates_survive_strips),
     ("no scratch leak across resizes", check_scratch_does_not_leak),
+    ("scrolling modes scroll in seconds, not frames", check_scroll_is_frame_rate_independent),
     ("band resampling conserves level", check_resample_conserves),
     ("palette ramps are smooth", check_palette_ramps),
     ("ring buffer under contention", check_ring_concurrency),
@@ -564,6 +647,11 @@ def test_surrogates_survive_strips() -> None:
 
 def test_scratch_does_not_leak() -> None:
     bad = check_scratch_does_not_leak()
+    assert not bad, "\n".join(bad)
+
+
+def test_scroll_is_frame_rate_independent() -> None:
+    bad = check_scroll_is_frame_rate_independent()
     assert not bad, "\n".join(bad)
 
 

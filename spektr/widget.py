@@ -111,7 +111,7 @@ class AudioVisualizer(Widget):
         )
         try:
             self.watch(self.app, "theme", self._on_app_theme, init=False)
-        except Exception:
+        except Exception:  # noqa: BLE001 — not mounted yet, on_mount will redo it
             pass
 
         self.capture.start()
@@ -262,7 +262,7 @@ class AudioVisualizer(Widget):
         try:
             self.screen.styles.background = colour
             self.app.screen.styles.background = colour
-        except Exception:  # noqa: BLE001 — not mounted yet, on_mount will redo it
+        except Exception:
             pass
 
     def preview_theme(self, name: str) -> str:

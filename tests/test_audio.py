@@ -28,8 +28,8 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 from spektr.analysis import HOP, N_BANDS, Analyser, BandPlan, resample_bands  # noqa: E402
-from spektr.capture import Capture, RingBuffer, Source              # noqa: E402
-from spektr.motion import Peaks, Spring                             # noqa: E402
+from spektr.capture import Capture, RingBuffer, Source  # noqa: E402
+from spektr.motion import Peaks, Spring  # noqa: E402
 
 SR = 48000
 

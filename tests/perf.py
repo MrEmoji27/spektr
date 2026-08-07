@@ -29,16 +29,16 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 try:
-    import resource                                 # POSIX only
+    import resource  # POSIX only
 except ModuleNotFoundError:                         # Windows
     resource = None
 
-import spektr.modes as M                                   # noqa: E402
+import spektr.modes as M  # noqa: E402
 from spektr.analysis import HOP, N_BANDS, Analyser, BandPlan  # noqa: E402
-from spektr.capture import RingBuffer                      # noqa: E402
-from spektr.modes import Ctx                               # noqa: E402
-from spektr.palette import BUILTIN, Palette                 # noqa: E402
-from spektr.render import make_strips                       # noqa: E402
+from spektr.capture import RingBuffer  # noqa: E402
+from spektr.modes import Ctx  # noqa: E402
+from spektr.palette import BUILTIN, Palette  # noqa: E402
+from spektr.render import make_strips  # noqa: E402
 
 PAL = Palette(BUILTIN["gruvbox"])
 SR = 48000
