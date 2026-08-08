@@ -86,6 +86,12 @@ jobs:
           files: |
             dist/spektr.exe
             dist/installer/*.exe
+          # Appends, like the Linux job. Without this the download notes below
+          # replace the release body wholesale, so the actual "what changed in
+          # this version" notes survive only if nobody writes them until after
+          # this job finishes -- which is backwards. The release owns its notes;
+          # a build job only adds a section about the file it just uploaded.
+          append_body: true
           body: |
             **Windows — no Python needed.**
 
