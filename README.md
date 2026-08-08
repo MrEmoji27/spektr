@@ -330,10 +330,14 @@ measured RMS and peak for each, which settles it:
 
 Three details do most of the work.
 
-**Analysis runs on its own clock.** The windows advance by a 512-sample hop — about 94
-analyses per second at 48 kHz. Sampling the FFT from the frame timer instead (23
-blocks/sec read by a 30–60 fps loop) produces beat-rate aliasing that no amount of easing
-can hide, because the target sequence itself is stepped.
+**Analysis runs on its own clock.** The windows advance by a 256-sample hop — about 188
+analyses per second at 48 kHz, for roughly 7% of one core. Sampling the FFT from the frame
+timer instead (23 blocks/sec read by a 30–60 fps loop) produces beat-rate aliasing that no
+amount of easing can hide, because the target sequence itself is stepped. The hop is half
+what it needs to be for frequency resolution — that is set by the window, not the stride —
+and the redundant overlap is bought deliberately: it keeps new spectra arriving faster than
+any display refreshes, and it puts six analyses inside the ~30 ms envelope every onset
+detector uses instead of three, so transients land sooner and more sharply.
 
 **The bands come from [cava](https://github.com/karlstav/cava)'s distribution.** Two
 windows, not one: 8192 samples for everything below 100 Hz, where frequency resolution

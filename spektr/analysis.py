@@ -56,7 +56,24 @@ import numpy as np
 from .capture import RingBuffer
 
 N_BANDS = 32          # internal resolution; modes downsample for chunky looks
-HOP = 512             # analysis stride — ~94 analyses/sec at 48 kHz
+#: Analysis stride — ~188 analyses/sec at 48 kHz.
+#:
+#: This was 512, i.e. ~94/sec, which put a hard ceiling on how much of the
+#: audio the picture could actually resolve: above that frame rate consecutive
+#: frames read the same spectrum, and the waveform modes (Scope, Gonio, ECG,
+#: Cassette) draw a genuinely identical trace because they only step when
+#: ``frame.seq`` changes.
+#:
+#: Halving it costs no frequency resolution — that is set by the *window*
+#: (``bass_size``/``mid_size``), not the hop, so the extra work is redundant
+#: overlap and nothing else. What it buys beyond frame headroom is onset
+#: precision: every hit detector in the codebase runs a ~30 ms fast envelope
+#: (``ctx.dt / 0.03``), which contained about three analyses at 94 Hz and now
+#: contains six, so transients land sooner and more sharply.
+#:
+#: Cost is linear in the rate: measured at 0.447 ms per analysis, 4.2% of one
+#: core at 94 Hz and ~8.4% at 188 Hz.
+HOP = 256
 WAVE_POINTS = 512     # downsampled scope trace
 
 #: cava's defaults, and they are the right ones. Below 50 Hz you are looking at
@@ -347,7 +364,11 @@ class Analyser:
         while self._running:
             written = self._ring.written
             if written - last_written < HOP:
-                time.sleep(0.002)
+                # Poll finer than the hop period, which at HOP=256/48 kHz is
+                # 5.3 ms. The old 2 ms sleep was a fifth of a 10.7 ms period
+                # and is over a third of this one — enough quantisation to
+                # show up as jitter in the analysis interval.
+                time.sleep(0.001)
                 continue
             # if we fell behind, jump to now rather than grinding through backlog
             last_written = written
