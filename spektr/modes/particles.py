@@ -567,56 +567,154 @@ def sonar(ctx: Ctx):
     return codes, cidx
 
 
-@mode("Orbit", group="particles", blurb="one dot per band, actually revolving")
+@mode("Orbit", group="particles", blurb="bodies on real elliptical orbits; loud bands swing out")
 def orbit(ctx: Ctx):
-    """Bodies in continuous motion, not a shape sampled from angle.
+    """Kepler, not a wheel of dots.
 
-    ``Radial`` maps the spectrum onto a static ring and ``Sonar`` sweeps one
-    beam over it, but neither has anything that actually travels frame to
-    frame. Here every band is a body with real angular velocity — faster for
-    higher bands — carried in scratch and integrated by ``dt``, with a
-    phosphor-style trail so the motion reads clearly rather than teleporting.
+    The first version put each band at a radius equal to its level and gave it
+    a constant angular speed. Two things went wrong with that, and they are the
+    same thing twice: with a flat-ish spectrum every body sits at the *same*
+    radius, so sixteen of them pile into one ring, and a constant angular rate
+    means each one traces a perfect circle. What you got was a set of
+    concentric circular trails -- ``Radial`` with motion, which is not a reason
+    for a mode to exist.
+
+    Here each band owns a fixed **semi-major axis**, spread across the disc, so
+    the bodies keep their own lanes however the spectrum moves. What the level
+    drives is **eccentricity**: quiet bands run near-circular, loud ones stretch
+    into long ellipses that dive through the middle and swing far out. The
+    picture reacts by changing the *shape* of the paths rather than by moving
+    dots along fixed ones.
+
+    Motion is Keplerian, which is what makes it read as orbiting. The ellipse
+    in polar form about a focus at the centre is ``r = a(1-e^2) / (1 + e cos f)``,
+    and conservation of angular momentum gives ``df/dt = L / r^2`` -- so a body
+    whips through periapsis and crawls at apoapsis, all from one integration
+    with no special-casing. Taking ``L`` proportional to ``sqrt(a(1-e^2))``
+    falls out as Kepler's third law, period proportional to ``a^1.5``, so the
+    outer bands genuinely orbit slower than the inner ones instead of the mode
+    having to fake a speed gradient.
+
+    The orbits also precess: each ellipse's long axis turns at its own rate, so
+    the paths never close into a static figure and the trails weave. Precession
+    speed follows overall energy.
+
+    Brightness is speed. A body is hottest at periapsis where it is moving
+    fastest, which is free -- ``df/dt`` is already computed.
+
+    Kept from the previous version: the phosphor trail buffer, which is the one
+    part that was right, and the single vectorised ``maximum.at`` that writes
+    every body at once.
     """
     dr, dc = ctx.dot_rows, ctx.dot_cols
     if dr < 10 or dc < 10:
         return empty(ctx.w, ctx.h)
 
-    n = min(16, max(4, ctx.n_display))
-    lv = ctx.display_bands(n)
+    n = int(min(18, max(6, ctx.n_display + 4)))
+    lv = ctx.display_bands(n).astype(np.float64)
 
     cx, cy = dc / 2.0, dr / 2.0
-    x_scale = cy / max(cx, 1.0)          # braille cells are ~2x taller than wide
-    max_r = max(1.0, cy - 1.0)
+    # Braille dots are square, so a circle in dot space is a circle on screen.
+    # The orbits are still drawn wider than tall on purpose: a terminal is a
+    # wide letterbox and a height-limited circle leaves most of it empty.
+    wide = max(1.0, (dc / max(dr, 1)) * 0.82)
+    max_r = max(2.0, cy - 1.0)
 
-    st = ctx.scratch("orbit", lambda: {"angle": np.linspace(0.0, 2 * math.pi, n, endpoint=False)})
-    if len(st["angle"]) != n:
-        st["angle"] = np.linspace(0.0, 2 * math.pi, n, endpoint=False)
+    def spawn():
+        rng = np.random.default_rng(41)
+        return {
+            # Fixed lanes. Squared spacing so the inner orbits are not all
+            # crammed together, which is where the crowding used to happen.
+            # 0.32..0.98 of the disc, not 0.16..0.96. Kepler makes the period
+            # ratio the *1.5 power* of the axis ratio, so a 6x spread of lanes
+            # is a 15x spread of orbital periods and the outer bands crawl.
+            # A 3x spread keeps them all moving at watchable rates.
+            "a": max_r * (0.32 + 0.66 * (np.arange(n) / max(n - 1, 1)) ** 0.85),
+            "f": rng.uniform(0.0, 2 * math.pi, n),      # true anomaly
+            "w": rng.uniform(0.0, 2 * math.pi, n),      # argument of periapsis
+            "prec": rng.uniform(0.10, 0.42, n) * rng.choice((-1.0, 1.0), n),
+            "e": np.zeros(n),
+        }
 
-    # higher band index -> faster revolution; a loud band also speeds up
-    # rather than just sitting farther out, so energy reads as motion too
-    speed = 0.6 + (np.arange(n) / max(n - 1, 1)) * 2.2 + lv * 1.5
-    st["angle"] = (st["angle"] + speed * ctx.dt) % (2 * math.pi)
+    st = ctx.scratch("orbit", spawn)
+    if len(st["f"]) != n:
+        st = spawn()
+        ctx.state[("orbit", ctx.w, ctx.h)] = st
 
-    radius = max_r * (0.15 + 0.8 * lv)
-    dx = radius * np.cos(st["angle"])
-    dy = radius * np.sin(st["angle"])
-    px = np.clip(np.rint(cx + dx / x_scale).astype(np.int32), 0, dc - 1)
-    py = np.clip(np.rint(cy + dy).astype(np.int32), 0, dr - 1)
+    # Eccentricity eases rather than snapping: an orbit whose shape changed
+    # discontinuously would teleport its body, since r depends on e.
+    target_e = np.clip(0.06 + lv * 0.78, 0.0, 0.86)
+    st["e"] += (target_e - st["e"]) * min(1.0, ctx.dt / 0.18)
+    e = st["e"]
+    a = st["a"]
+
+    # r from the focal-polar form, then df/dt = L / r^2 with
+    # L = k * sqrt(a(1 - e^2)) -- Kepler's third law, so outer bands are slower.
+    # ``grav`` sets the timescale, and it is derived rather than guessed: with
+    # L = grav * sqrt(a(1-e^2)) the period is 2*pi*a^1.5 / grav, so
+    # grav = C * max_r^1.5 makes the period independent of terminal size, and
+    # C = 0.63 puts the innermost lane at about 1.8 s and the outermost at
+    # about 9 s. The first cut used a constant near 0.42*max_r, which works out
+    # to a ~35 s inner orbit — slower than the 0.35 s trail decay by two orders
+    # of magnitude, so nothing ever drew an arc at all.
+    grav = 0.63 * max_r ** 1.5
+    semi_latus = a * (1.0 - e * e)
+    r = semi_latus / (1.0 + e * np.cos(st["f"]))
+    rate = (np.sqrt(np.maximum(semi_latus, 1e-6)) * grav) / np.maximum(r * r, 1e-6)
+    st["f"] = (st["f"] + rate * ctx.dt) % (2 * math.pi)
+    st["w"] = (st["w"] + st["prec"] * (0.35 + ctx.energy * 1.6) * ctx.dt) % (2 * math.pi)
+
+    # recompute r at the new anomaly so position and brightness agree
+    r = semi_latus / (1.0 + e * np.cos(st["f"]))
+    ang = st["f"] + st["w"]
+    fx = cx + np.cos(ang) * r * wide
+    fy = cy + np.sin(ang) * r
 
     buf = ctx.scratch("orbit_buf", lambda: np.zeros((dr, dc), dtype=np.float32))
-    buf *= float(np.exp(-max(ctx.dt, 0.0) / 0.35))
+    buf *= float(np.exp(-max(ctx.dt, 0.0) / 0.55))
 
-    # One fixed-size body per band, all written in a single vectorised pass.
-    # A version of this grew the bodies with their level and hung spokes and a
-    # bass-driven core off the centre; it read as busier, not better — sixteen
-    # swept bands and a permanent disc in the middle bury the one thing the
-    # mode is for, which is watching bodies travel. The trail is the subject.
+    # Speed is the brightness. Normalised against each body's own mean rate so
+    # a slow outer orbit still lights up at its own periapsis rather than being
+    # permanently dim next to the inner ones.
+    mean_rate = (np.sqrt(np.maximum(semi_latus, 1e-6)) * grav) / np.maximum(a * a, 1e-6)
+    hot = np.clip(rate / np.maximum(mean_rate, 1e-6), 0.35, 2.2)
+    vals = np.clip(0.30 + 0.34 * hot + 0.30 * lv, 0.0, 1.0)
+
+    # The path between frames, not just its endpoints. A body at periapsis
+    # covers several dots per frame, so stamping only where it lands leaves a
+    # dashed arc of disconnected blobs instead of a curve -- which is what the
+    # ellipses looked like until this went in. Interpolating gives the
+    # continuous line the trail buffer was always meant to be smearing.
+    prev = st.get("prev")
+    if prev is None or len(prev[0]) != n:
+        prev = (fx.copy(), fy.copy())
+    ox, oy = prev
+    span = float(np.max(np.hypot(fx - ox, fy - oy))) if n else 0.0
+    steps = int(min(28, max(1, math.ceil(span))))
+    tt = np.linspace(0.0, 1.0, steps, dtype=np.float64)[None, :]
+    lx = np.rint(ox[:, None] + (fx - ox)[:, None] * tt).astype(np.int32)
+    ly = np.rint(oy[:, None] + (fy - oy)[:, None] * tt).astype(np.int32)
+    ok = (ly >= 0) & (ly < dr) & (lx >= 0) & (lx < dc)
+    np.maximum.at(
+        buf,
+        (ly[ok], lx[ok]),
+        np.broadcast_to(vals[:, None], lx.shape)[ok].astype(np.float32),
+    )
+    st["prev"] = (fx.copy(), fy.copy())
+
+    # The head gets the cross, so the body reads as an object on the line
+    # rather than as the brightest pixel of it.
+    px = np.clip(np.rint(fx).astype(np.int32), 0, dc - 1)
+    py = np.clip(np.rint(fy).astype(np.int32), 0, dr - 1)
     dy_off, dx_off = _BUBBLE_RINGS[1]
-    ys = py[:, None] + dy_off[None, :]
-    xs = px[:, None] + dx_off[None, :]
-    vals = np.broadcast_to((0.45 + 0.55 * lv)[:, None], ys.shape)
-    ok = (ys >= 0) & (ys < dr) & (xs >= 0) & (xs < dc)
-    np.maximum.at(buf, (ys[ok], xs[ok]), vals[ok].astype(np.float32))
+    hy = py[:, None] + dy_off[None, :]
+    hx = px[:, None] + dx_off[None, :]
+    ok = (hy >= 0) & (hy < dr) & (hx >= 0) & (hx < dc)
+    np.maximum.at(
+        buf,
+        (hy[ok], hx[ok]),
+        np.broadcast_to(np.minimum(vals + 0.25, 1.0)[:, None], hy.shape)[ok].astype(np.float32),
+    )
 
     dots = buf > 0.04
     codes = pack_braille(dots)

@@ -98,7 +98,7 @@ Listed in the order the picker cycles them.
 | **Bricks** | chunky, no partial cells | **Scatter** | density sparkle, thicker where it's loud |
 | **Radial** | the spectrum wrapped into a circle | **Arcs** | hollow rings, one per band, pushed out by level |
 | **Columns** | gapless, interpolated across the full width | **Flame** | fire, licking upward from each band |
-| **Retro** | sunset grid, with the spectrum as the horizon | **Orbit** | one dot per band, actually revolving around a centre |
+| **Retro** | sunset grid, with the spectrum as the horizon | **Orbit** | bodies on real elliptical orbits; loud bands swing out |
 | **Ladder** | segmented LED stack | **Pulse** | radial pulse with shockwaves |
 | **Auroras** | a light ribbon whose lower rim rides the spectrum | **Dune** | sand piles up by band, avalanching past a threshold |
 | **Sonar** | one sweep, not the whole spectrum — returns fade like a scope | **Fireworks** | beat-triggered launches, bursts, and fall |
