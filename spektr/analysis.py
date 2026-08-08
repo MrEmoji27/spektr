@@ -121,6 +121,33 @@ class Frame:
     #: work out why the display is twitching at nothing.
     confidence: float = 0.0
 
+    # ── rhythm ──
+    #
+    # A *count*, not a flag, and that is the whole design. The analyser runs at
+    # 187.5 Hz while the widget reads only the newest Frame per rendered frame;
+    # at 60 fps that discards two analyses in every three. A boolean ``onset``
+    # would therefore be missed most of the time it was true, and missed
+    # differently at every frame rate — the exact class of bug the dt work went
+    # in to kill. A monotonic counter cannot be missed: a reader compares it to
+    # the last value it saw and learns how many beats happened in between, no
+    # matter how long it looked away.
+    #: Monotonic count of onsets detected since start. Never resets, including
+    #: across silence — a reset would read as a burst of beats to anyone
+    #: differencing it.
+    onset_seq: int = 0
+    #: 0..1 strength of the most recently detected onset.
+    onset_strength: float = 0.0
+    #: 0..1 raw onset-detection-function value for this hop, before peak
+    #: picking. Continuous, so it is safe to read at any rate; useful for
+    #: modes that want "how percussive is right now" rather than discrete hits.
+    flux: float = 0.0
+    #: Estimated tempo. 0.0 means unknown, which is a state modes must handle —
+    #: never divide by this without checking.
+    tempo_bpm: float = 0.0
+    #: 0..1 position within the current beat, 0.0 on the beat. 0.0 whenever
+    #: :attr:`tempo_bpm` is 0.0.
+    beat_phase: float = 0.0
+
     @property
     def energy(self) -> float:
         return float(self.bands.mean())
@@ -255,12 +282,60 @@ class BandPlan:
         return "\n".join(lines)
 
 
+class OnsetDetector:
+    """Turns a per-hop spectrum into discrete beats. **Currently a stub.**
+
+    The contract is fixed and the implementation is not: this returns no
+    onsets and no tempo, so every rhythm field on :class:`Frame` reads as its
+    "nothing known" value. That is a legitimate runtime state, not only a
+    placeholder — it is also what a listener gets during silence, under a
+    sustained drone, or in the first second before tempo is established. Code
+    consuming these fields has to handle it either way, so it is worth having
+    the stub exercise that path from the start.
+
+    Deliberately a class rather than a function: onset detection is stateful
+    (it compares this hop's spectrum with the last, tracks a moving threshold,
+    and enforces a refractory gap), and hiding that state in module globals
+    would make two analysers in one process quietly share it.
+    """
+
+    #: Shortest gap between two onsets, seconds. Below roughly this, a single
+    #: drum hit's attack and body register as two events.
+    REFRACTORY_S = 0.05
+
+    def __init__(self) -> None:
+        self.seq = 0
+        self.strength = 0.0
+        self.flux = 0.0
+        self.tempo_bpm = 0.0
+        self.beat_phase = 0.0
+
+    def feed(self, spectrum: np.ndarray, now: float) -> None:
+        """Consume one hop's magnitude spectrum, taken at time ``now``.
+
+        ``now`` is passed rather than read here so the caller controls the
+        clock — the evaluation harness runs faster than real time and needs
+        the detector to see the timeline of the *signal*, not of the wall.
+        """
+
+    def reset_continuity(self) -> None:
+        """Called when the input goes silent.
+
+        Drops the history used for differencing without touching :attr:`seq`.
+        The first hop after a gap must not be compared against the spectrum
+        from before it — that difference is the size of the whole silence and
+        would fire a spurious onset on every un-pause. The count itself has to
+        survive, or a reader differencing it sees the gap as beats.
+        """
+
+
 class Analyser:
     """Overlapped FFT running independently of the render loop."""
 
     def __init__(self, ring: RingBuffer, samplerate_getter):
         self._ring = ring
         self._get_sr = samplerate_getter
+        self._onset = OnsetDetector()
         self._running = False
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
@@ -421,9 +496,15 @@ class Analyser:
             # different length to a live one would resize the springs on every
             # pause
             quiet = np.zeros(self._bars)
+            # The onset counter is carried through silence rather than left at
+            # its default. Publishing 0 here would look like the count going
+            # backwards, and anyone differencing it across the gap would read
+            # the recovery as a burst of beats that never played.
+            self._onset.reset_continuity()
             self._publish(Frame(
                 seq=self._seq + 1, rms=rms, silent=True,
                 bands=quiet, bands_l=quiet, bands_r=quiet,
+                onset_seq=self._onset.seq,
             ))
             return
 
@@ -514,6 +595,16 @@ class Analyser:
             axis=1,
         )
 
+        # Rhythm is derived from the mid-window magnitudes rather than from
+        # the band levels. The bands are eq-tilted, gain-scaled and about to be
+        # spring-smoothed for display; every one of those steps is there to
+        # make the picture readable and every one of them blunts an attack.
+        # An onset is a sudden change, so it wants the rawest spectrum around.
+        # Summed rather than per-channel: a beat is a beat wherever it is
+        # panned, and running the detector twice to OR the results would double
+        # its cost for no extra information.
+        self._onset.feed(spec_mid_l + spec_mid_r, now)
+
         self._publish(
             Frame(
                 seq=self._seq + 1,
@@ -525,6 +616,11 @@ class Analyser:
                 rms=rms,
                 silent=False,
                 confidence=knee,
+                onset_seq=self._onset.seq,
+                onset_strength=self._onset.strength,
+                flux=self._onset.flux,
+                tempo_bpm=self._onset.tempo_bpm,
+                beat_phase=self._onset.beat_phase,
             )
         )
 
