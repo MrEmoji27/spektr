@@ -1,7 +1,7 @@
 [project]
 name = "spektr-audio"
-version = "0.2.1"
-description = "A terminal spectrum analyser for system audio — forty-seven render modes and forty-nine themes, drawn with braille."
+version = "0.3.0"
+description = "A terminal spectrum analyser for system audio — forty-four render modes and forty-nine themes, drawn with braille."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"

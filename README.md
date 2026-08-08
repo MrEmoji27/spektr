@@ -1,11 +1,11 @@
 <div align="center">
 
-<img src="assets/spektr.png" width="96" alt="spektr icon" />
+<img src="https://raw.githubusercontent.com/MrEmoji27/spektr/main/assets/spektr.png" width="96" alt="spektr icon" />
 
 **spektr** — a terminal spectrum analyser for whatever your speakers are doing.
 
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![License](https://img.shields.io/badge/license-MIT-00c853)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-00c853)](https://github.com/MrEmoji27/spektr/blob/main/LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20·%20Linux%20·%20macOS-546e7a)](#how-it-captures-audio)
 [![Modes](https://img.shields.io/badge/render%20modes-44-ff6d00)](#modes)
 [![Themes](https://img.shields.io/badge/themes-49-7c4dff)](#themes)
@@ -125,7 +125,7 @@ the picture is.
 A forty-fifth entry, **None**, is registered as the off switch — it draws nothing.
 That is why the test output counts 45 modes against the forty-four listed here.
 
-Still frames of a few of them, straight from the render path: **[docs/gallery.md](docs/gallery.md)**.
+Still frames of a few of them, straight from the render path: **[docs/gallery.md](https://github.com/MrEmoji27/spektr/blob/main/docs/gallery.md)**.
 
 ### Flipbook: playing your own ASCII art
 
@@ -226,7 +226,7 @@ reused, and its output is shape-checked so a mistake names the plugin instead of
 crashing somewhere unrelated. `spektr plugins doctor` explains anything that didn't
 load; `--no-plugins` starts clean.
 
-Full guide, including the whole of `ctx` and the drawing toolkit: **[docs/plugins.md](docs/plugins.md)**.
+Full guide, including the whole of `ctx` and the drawing toolkit: **[docs/plugins.md](https://github.com/MrEmoji27/spektr/blob/main/docs/plugins.md)**.
 
 ## Keys
 
@@ -385,7 +385,7 @@ python tests/test_plugins.py # discovery, trust, loading, quarantine
 python tests/perf.py all     # analyser cost, strip scaling, memory, headroom
 ```
 
-Building the Windows exe and installer: **[packaging/README.md](packaging/README.md)** —
+Building the Windows exe and installer: **[packaging/README.md](https://github.com/MrEmoji27/spektr/blob/main/packaging/README.md)** —
 one PowerShell command, or a tagged push and let CI do it.
 
 `bench.py` prints build and strip time for every mode at 120×16, 200×50, 240×60
@@ -429,4 +429,4 @@ good ideas get cited here, where they belong.
 
 ## License
 
-MIT © zemo — see [LICENSE](LICENSE).
+MIT © zemo — see [LICENSE](https://github.com/MrEmoji27/spektr/blob/main/LICENSE).

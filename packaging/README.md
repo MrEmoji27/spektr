@@ -7,7 +7,7 @@ habits and no patience can download one file and see their music.
 # portable exe  ->  dist\spektr.exe
 powershell -ExecutionPolicy Bypass -File packaging\build_exe.ps1
 
-# installer     ->  dist\installer\spektr-0.2.1-setup.exe  (needs Inno Setup 6.3+)
+# installer     ->  dist\installer\spektr-0.3.0-setup.exe  (needs Inno Setup 6.3+)
 powershell -ExecutionPolicy Bypass -File packaging\build_exe.ps1 -Installer
 ```
 
