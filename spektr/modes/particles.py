@@ -748,7 +748,39 @@ def _colony_spawn() -> dict:
     for _ in range(150):
         _colony_step(u, v, 0.024, 0.056)
 
-    return {"u": u, "v": v, "acc": 0.0, "fast": 0.0, "slow": 0.0, "hit_t": -99.0, "rng": rng}
+    return {
+        "u": u, "v": v, "acc": 0.0, "rng": rng,
+        # per-band onset envelopes and per-band sow cooldowns
+        "bfast": np.zeros(_GS_BANDS), "bslow": np.zeros(_GS_BANDS),
+        "sown": np.full(_GS_BANDS, -99.0),
+    }
+
+
+#: A *path* through the living region of the (feed, kill) plane, not a
+#: rectangle over it. The alive set for this solver is a curved sliver — swept
+#: at 2500 steps, feed 0.014 survives only up to kill 0.055 while feed 0.038
+#: survives to 0.061, and everything past that dies — so the largest rectangle
+#: that fits inside it is tiny. That is why the previous mapping moved kill
+#: over a span of 0.003 and the pattern never actually changed character.
+#: Walking a polyline instead gets the whole sparse-spots -> solitons -> worms
+#: -> maze -> mitosis sweep. Every vertex *and* every segment midpoint is
+#: verified alive, at 14-41% lattice coverage: enough structure to read, never
+#: the solid screen that makes the pattern invisible, and never so full that a
+#: freshly sown stripe has nowhere to grow.
+_GS_PATH = np.array(
+    [
+        (0.0140, 0.0500),   # sparse drifting spots
+        (0.0170, 0.0525),   # solitons
+        (0.0205, 0.0550),   # worms
+        (0.0250, 0.0580),   # labyrinth
+        (0.0300, 0.0605),   # dividing spots
+        (0.0340, 0.0620),   # fine mitosis
+    ],
+    dtype=np.float64,
+)
+
+#: How many spectrum bands sow the lattice, each owning a vertical stripe.
+_GS_BANDS = 16
 
 
 def _lap(a: np.ndarray) -> np.ndarray:
@@ -780,16 +812,26 @@ def colony(ctx: Ctx):
     just two numbers, the feed and kill rates.
 
     Those two numbers are what the music drives, which is the whole point of
-    choosing this system: the spectrum's centre of mass sets ``kill`` and its
-    energy sets ``feed``, so a bass-heavy passage grows fat dividing blobs
-    and a bright one etches fine mazes. That is a change in the *kind* of
-    pattern on screen, not just its brightness or speed.
+    choosing this system, and the spectrum's centre of mass walks them along
+    ``_GS_PATH``: bass-heavy music sits at the sparse-drifting-spots end,
+    bright music at the dividing-spots end, and worms, solitons and labyrinths
+    lie between. That is a change in the *kind* of structure on screen, not
+    just its brightness or speed.
 
-    Both rates are clamped to a band that is known to produce structure.
-    Outside it the reaction has a uniform fixed point it falls into and never
-    leaves — the screen goes blank and stays blank, which as a failure mode
-    looks exactly like a crash. The lattice is also seeded with blobs rather
-    than left uniform, for the same reason: perfectly uniform is that fixed
+    It is a path and not a rectangle because the alive set is a curved sliver
+    (see ``_GS_PATH``), and the largest rectangle inside it is small enough
+    that the earlier rectangular clamp moved ``kill`` by 0.003 total — the
+    culture stayed in one regime for every piece of music ever played at it.
+    Outside the alive set the reaction falls into a uniform fixed point it
+    never leaves — the screen goes blank and stays blank, which as a failure
+    mode looks exactly like a crash.
+
+    Audio also *sows* the lattice, which is the other half of making it
+    generative: each of sixteen bands owns a vertical stripe, and a band
+    crossing into loud drops fresh culture into its own stripe. What grows is
+    then a record of where in the spectrum the music has been, not only of
+    what the parameters currently are. The lattice is seeded at startup for
+    the same reason it must never go empty: perfectly uniform is the fixed
     point, so an unseeded grid would never develop anything.
 
     Iteration count is ``ctx.dt``-accumulated and capped, so the culture
@@ -804,37 +846,47 @@ def colony(ctx: Ctx):
     rng = st["rng"]
     u, v = st["u"], st["v"]
 
-    bass = ctx.range(0.0, 0.2)
-    st["fast"] += (bass - st["fast"]) * min(1.0, ctx.dt / 0.03)
-    st["slow"] += (bass - st["slow"]) * min(1.0, ctx.dt / 0.45)
-    hit = (st["fast"] - st["slow"]) > 0.12
-
-    b8 = ctx.display_bands(8).astype(np.float64)
-    tot = float(b8.sum())
-    centroid = float((b8 * np.arange(8)).sum() / tot / 7.0) if tot > 1e-9 else 0.3
+    lv = ctx.display_bands(_GS_BANDS).astype(np.float64)
+    tot = float(lv.sum())
+    centroid = (
+        float((lv * np.arange(_GS_BANDS)).sum() / tot / (_GS_BANDS - 1)) if tot > 1e-9 else 0.3
+    )
 
     sm = ctx.scratch("colony_sm", lambda: {"c": 0.3, "e": 0.2})
     sm["c"] += (centroid - sm["c"]) * min(1.0, ctx.dt / 0.25)
     sm["e"] += (ctx.energy - sm["e"]) * min(1.0, ctx.dt / 0.25)
 
-    # Feed/kill stay inside a band measured to survive, not one taken from
-    # the textbook. Swept over this implementation, the living region is
-    # feed 0.016-0.032 against kill 0.048-0.061, and it is *not* rectangular:
-    # a high feed with a low kill dies, as does anything past kill 0.061. The
-    # first cut mapped treble straight onto kill up to 0.066 and a bright
-    # passage extinguished the culture — permanently, because an all-zero
-    # lattice is an absorbing state with nothing left to react. Both corners
-    # of this rectangle are verified alive.
-    feed = float(np.clip(0.019 + sm["e"] * 0.011, 0.019, 0.030))
-    kill = float(np.clip(0.055 + sm["c"] * 0.003, 0.055, 0.058))
+    # Walk the verified path rather than clamping to a rectangle inside it.
+    # The spectrum's centre of mass is the position along it, so bass-heavy
+    # music sits at the sparse-spots end and bright music at the mitosis end,
+    # and everything between is a different *kind* of structure rather than a
+    # different brightness. Interpolating between adjacent vertices keeps the
+    # pair on the polyline; every segment midpoint was checked alive, so no
+    # interpolated value can land in the dead region.
+    pos = float(np.clip(sm["c"], 0.0, 1.0)) * (len(_GS_PATH) - 1)
+    lo = min(int(pos), len(_GS_PATH) - 2)
+    frac = pos - lo
+    feed, kill = _GS_PATH[lo] * (1.0 - frac) + _GS_PATH[lo + 1] * frac
 
-    # a hit inoculates the culture with a fresh colony
-    if hit and (ctx.t - st["hit_t"]) > 0.25:
-        st["hit_t"] = ctx.t
-        cy = int(rng.integers(5, _GS_H - 5))
-        cx = int(rng.integers(5, _GS_W - 5))
-        u[cy - 4 : cy + 4, cx - 4 : cx + 4] = 0.50
-        v[cy - 3 : cy + 3, cx - 3 : cx + 3] = 0.28
+    # Audio doesn't only tune the medium, it *sows* it. Each band owns a
+    # vertical stripe of the lattice, and a band crossing into loud drops live
+    # culture into its own stripe — so the structures on screen grow out of
+    # where in the spectrum the music actually was, and the picture carries a
+    # history of what has been played rather than only the current parameters.
+    # This replaces a single bass-onset inoculation at a random position,
+    # which put the same blob anywhere regardless of what triggered it.
+    tc_f = min(1.0, ctx.dt / 0.03)
+    tc_s = min(1.0, ctx.dt / 0.35)
+    st["bfast"] += (lv - st["bfast"]) * tc_f
+    st["bslow"] += (lv - st["bslow"]) * tc_s
+    fire = ((st["bfast"] - st["bslow"]) > 0.10) & (lv > 0.22) & ((ctx.t - st["sown"]) > 0.30)
+    stripe = _GS_W / _GS_BANDS
+    for j in np.flatnonzero(fire):
+        st["sown"][j] = ctx.t
+        cx = int(np.clip((j + 0.5) * stripe, 4, _GS_W - 5))
+        cy = int(rng.integers(4, _GS_H - 4))
+        u[cy - 3 : cy + 3, cx - 3 : cx + 3] = 0.50
+        v[cy - 2 : cy + 2, cx - 2 : cx + 2] = 0.26
 
     # Watchdog. The clamp above is derived from a sweep, but a sweep only
     # proves the corners it sampled, and an extinguished lattice cannot
