@@ -214,11 +214,22 @@ def arcs(ctx: Ctx):
     n = int(min(12, max(4, ctx.n_display // 2)))
     lv = ctx.display_bands(n).astype(np.float32)
 
+    # Peak-hold per ring, so a kick actually *pushes the ring out* and it eases
+    # back over the following half-second. Without it the radius tracked the
+    # level frame for frame: the ring snapped to a new size and snapped back,
+    # which is not the expanding ring this mode is named for. The release rate
+    # is in units per second, so it is frame-rate independent.
+    st = ctx.scratch("arcs_peak", lambda: np.zeros(n, dtype=np.float32))
+    if st.shape[0] != n:
+        st = np.zeros(n, dtype=np.float32)
+        ctx.state[("arcs_peak", ctx.w, ctx.h)] = st
+    np.maximum(st - np.float32(1.5 * ctx.dt), lv, out=st)
+
     steps = 512
     u = np.linspace(0.0, 1.0, steps, endpoint=False, dtype=np.float32)
     lut = np.zeros(steps, dtype=np.float32)
     for j in range(n):
-        level = float(lv[j])
+        level = float(st[j])
         # a slow breath per ring so a held note still has life in it
         breath = 0.012 * math.sin(ctx.t * 1.7 + j * 0.8)
         r = 0.12 + 0.84 * level + breath

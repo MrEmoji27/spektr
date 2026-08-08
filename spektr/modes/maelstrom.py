@@ -147,17 +147,33 @@ def maelstrom(ctx: Ctx):
     hit = (st["fast"] - st["slow"]) > 0.12
 
     # ── 1. force / emit — every input is a forcing term, nothing is drawn
-    # directly. Bass is a hose straight up the middle; the spread spectrum
-    # nudges horizontal velocity along the bottom edge, so the emitter shape
-    # itself traces the spectrum; a hit drops a radial impulse burst.
+    # directly. Bass is a hose straight up the middle; the spread spectrum both
+    # nudges horizontal velocity along the bottom edge and injects dye there,
+    # so the emitter *is* the spectrum and the flow carries its print upward;
+    # a hit drops a radial impulse burst.
+    #
+    # Emission is per *second*, not per frame. These were plain per-frame
+    # additions, which is a rate in disguise: the same music injects 2.4x the
+    # force and dye at 144 fps that it does at 60, so the sim looks like a
+    # different fluid on a different display. Scaling by ``dt * 60`` keeps the
+    # tuned appearance at 60 fps exactly as it was and makes every other rate
+    # match it.
+    emit = dt * 60.0
     r = 3
     hx = _SIM_W // 2
     y0, y1 = _SIM_H - 2 - r, _SIM_H - 1
-    vy[y0:y1, hx - r : hx + r] -= 2.0 + bass * 14.0
-    dye[y0:y1, hx - r : hx + r] = np.clip(dye[y0:y1, hx - r : hx + r] + bass * 0.9, 0.0, 1.0)
+    vy[y0:y1, hx - r : hx + r] -= (2.0 + bass * 14.0) * emit
+    dye[y0:y1, hx - r : hx + r] = np.clip(
+        dye[y0:y1, hx - r : hx + r] + bass * 0.9 * emit, 0.0, 1.0
+    )
 
     spread_bands = ctx.display_bands(_SIM_W)
-    vx[_SIM_H - 2, :] += (spread_bands - spread_bands.mean()) * 6.0
+    vx[_SIM_H - 2, :] += (spread_bands - spread_bands.mean()) * 6.0 * emit
+    # A dye source shaped like the spectrum. Without it the only smoke in the
+    # sim came from the centre hose and the hit bursts, so what the individual
+    # bands did was visible in the *motion* and never in the material being
+    # moved — the fluid was reacting to a spectrum the picture never showed.
+    dye[_SIM_H - 2, :] = np.clip(dye[_SIM_H - 2, :] + spread_bands * 0.55 * emit, 0.0, 1.0)
 
     if hit:
         cy = rng.uniform(_SIM_H * 0.3, _SIM_H * 0.75)
