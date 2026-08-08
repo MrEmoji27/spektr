@@ -146,6 +146,10 @@ def chladni(ctx: Ctx):
     figures. Loudness sharpens the lines rather than moving them, the way a
     harder-driven plate throws sand into tighter bands.
 
+    This is the discrete, physical one: it holds a figure and jumps to the
+    next. See ``Chladni Extreme`` for the version that morphs continuously
+    between them and escalates as a track sustains energy.
+
     Two things here exist only to keep make_strips cheap, the same lesson
     Plasma's docstring already tells: this uses the same two-colour ``▀``
     trick, and unlike Plasma's smooth field, ``nodal`` is a sharp,
@@ -168,8 +172,13 @@ def chladni(ctx: Ctx):
     rows2 = h * 2
 
     def geo():
-        y = np.arange(rows2, dtype=np.float64)[:, None] / max(1, rows2 - 1)
-        x = np.arange(w, dtype=np.float64)[None, :] / max(1, w - 1)
+        # Cell *centres*, not corners. Sampling the exact boundary hits
+        # sin(k*pi*0) and sin(k*pi*1), both identically zero for integer modes,
+        # so the whole outer row and column come out as a perfect node and the
+        # figure gets a solid lit frame around it that reads as a UI border
+        # rather than as part of the plate.
+        y = (np.arange(rows2, dtype=np.float64)[:, None] + 0.5) / rows2
+        x = (np.arange(w, dtype=np.float64)[None, :] + 0.5) / w
         return y, x
 
     y, x = ctx.scratch("chladni_geo", geo)
@@ -179,24 +188,37 @@ def chladni(ctx: Ctx):
     centroid = float((bands8 * np.arange(8)).sum() / total / 7.0) if total > 1e-9 else 0.0
     highs = ctx.range(0.6, 1.0)
 
-    st = ctx.scratch("chladni_ease", lambda: {"c": 0.3, "e": 0.5})
+    # Seeded from the audio that is actually playing, not from a fixed 0.3/0.5.
+    # A hardcoded start means switching to this mode shows the figure sliding
+    # from someone else's default to the right one over the first half second —
+    # and with integer modes that slide is a visible snap or two through
+    # figures the music never asked for. It also made the mode read as
+    # self-animating to the audit, because a settling ease keeps changing the
+    # picture on a frozen spectrum.
+    st = ctx.scratch("chladni_ease", lambda: {"c": centroid, "e": highs})
     st["c"] += (centroid - st["c"]) * min(1.0, ctx.dt / 0.35)
     st["e"] += (highs - st["e"]) * min(1.0, ctx.dt / 0.35)
 
-    # Mode numbers are continuous, not snapped to integers. Integer modes are
-    # the physically real ones, but stepping between them makes the whole
-    # figure change shape between one frame and the next — a hard cut, on a
-    # mode whose appeal is watching the pattern reorganise. Sweeping through
-    # the fractional values in between morphs one figure into the next, and
-    # the interference pattern stays a plausible plate figure throughout.
-    m = 2.0 + st["c"] * 4.4    # 2.0 .. 6.4
-    n = 3.2 + st["e"] * 4.4    # 3.2 .. 7.6
+    # Integer mode numbers. These are the physically real ones — a plate only
+    # resonates at whole mode counts — so the figure holds a shape and *snaps*
+    # to the next one when the spectrum moves far enough, the way a real plate
+    # jumps between figures as you sweep the drive frequency. ``Chladni
+    # Extreme`` is the version that morphs continuously through the fractional
+    # values in between; this one keeps the discrete behaviour, which is the
+    # whole reason a Chladni figure looks like a resonance and not like a
+    # warped field.
+    #
+    # The figure being discrete is also why the plate has to stay alive some
+    # other way: the *sharpness* below is continuous, so loudness keeps
+    # changing the picture between snaps rather than leaving it frozen until
+    # the next one.
+    m = float(2 + round(st["c"] * 4.0))    # 2..6
+    n = float(3 + round(st["e"] * 4.0))    # 3..7
+    if n == m:                             # m == n cancels the figure to zero
+        n += 1.0
 
-    # a slow spin keeps a held tone's figure visibly alive rather than frozen
-    ang = ctx.t * 0.06
-    cs, sn = math.cos(ang), math.sin(ang)
-    xr = (x - 0.5) * cs - (y - 0.5) * sn + 0.5
-    yr = (x - 0.5) * sn + (y - 0.5) * cs + 0.5
+    xr = x
+    yr = y
 
     z = np.sin(m * math.pi * xr) * np.sin(n * math.pi * yr) - np.sin(
         n * math.pi * xr
@@ -217,6 +239,127 @@ def chladni(ctx: Ctx):
     # with no curve left to read — and restricting the dither to the fringe
     # while keeping the ridge solid still broke the thin parts of the
     # figure, which is most of it. The clean field is the better picture.
+    nodal = np.round(nodal * 12.0) * (1.0 / 12.0)
+
+    idx = ctx.ramp(nodal)
+    codes = np.full((h, w), _UPPER_HALF, dtype=np.int32)
+    return codes, idx[0::2], idx[1::2]
+
+
+@mode(
+    "Chladni Extreme",
+    group="fields",
+    blurb="a plate driven past its modes — morphs, escalates, and will not settle",
+)
+def chladni_extreme(ctx: Ctx):
+    """``Chladni``, driven far past what a real plate would survive.
+
+    Three differences, in order of how much they matter.
+
+    **The modes are continuous.** ``Chladni`` snaps between whole mode numbers
+    because that is what a plate physically does. This sweeps the fractional
+    values in between, so one figure melts into the next instead of cutting to
+    it. Physically nonsense; it is the more hypnotic picture, and keeping both
+    is why this mode exists separately rather than replacing the other.
+
+    **It escalates.** A ``charge`` builds while the track stays energetic and
+    bleeds away when it doesn't, over about eight seconds either way. Nothing
+    about the current frame's level can shortcut it — a single loud hit will
+    not buy the escalated look, and a quiet bar will not immediately lose it.
+    What charge buys, progressively: a second interference term at double the
+    mode numbers folds in, so the figure gains fine structure inside its own
+    cells; the plate spins faster; and the nodal lines tighten. Fully charged
+    it is a dense, fast, high-contrast figure that a plate at rest never
+    reaches. That is the "progressively better" part — the mode rewards a
+    track that keeps going rather than resetting every bar.
+
+    **It reacts harder.** Easing is 0.35s -> 0.12s so the figure chases the
+    spectrum instead of drifting after it, and the mode range is wider at both
+    ends.
+
+    The cost notes in ``Chladni``'s docstring still apply, with one addition:
+    the harmonic term is four more transcendentals over the field, so it is
+    computed **only when charge is actually up** rather than multiplied by
+    zero. At rest this mode costs what ``Chladni`` costs.
+    """
+    w, h = ctx.w, ctx.h
+    if w < 4 or h < 4:
+        return empty(w, h)
+
+    rows2 = h * 2
+
+    def geo():
+        y = np.arange(rows2, dtype=np.float64)[:, None] / max(1, rows2 - 1)
+        x = np.arange(w, dtype=np.float64)[None, :] / max(1, w - 1)
+        return y, x
+
+    y, x = ctx.scratch("chladni_x_geo", geo)
+
+    bands8 = ctx.display_bands(8).astype(np.float64)
+    total = float(bands8.sum())
+    centroid = float((bands8 * np.arange(8)).sum() / total / 7.0) if total > 1e-9 else 0.0
+    highs = ctx.range(0.6, 1.0)
+
+    st = ctx.scratch(
+        "chladni_x", lambda: {"c": centroid, "e": highs, "charge": 0.0, "spin": 0.0}
+    )
+    # Chases rather than drifts: a third of Chladni's time constant.
+    st["c"] += (centroid - st["c"]) * min(1.0, ctx.dt / 0.12)
+    st["e"] += (highs - st["e"]) * min(1.0, ctx.dt / 0.12)
+
+    # The escalation. Integrated in seconds, so it behaves the same at any
+    # frame rate, and slewed hard enough in both directions that it reads as
+    # the *track* building rather than as the current bar being loud.
+    drive = 1.0 if ctx.energy > 0.22 else -1.0
+    st["charge"] = min(1.0, max(0.0, st["charge"] + drive * ctx.dt / 8.0))
+    charge = st["charge"]
+
+    # Mode numbers are bounded by what the grid can actually resolve, not just
+    # by taste. A figure with k cycles across n cells needs several cells per
+    # cycle to read as a curve; past that it aliases into speckle. The first
+    # cut ran n to 10.6 and then doubled it for the harmonic below — 21 cycles
+    # over 36 dot rows, under two rows per cycle — and a fully charged plate
+    # came out as pure noise with no figure in it at all. This is the same
+    # lesson Plasma's docstring already records about its swirl frequencies.
+    lim_m = max(2.0, w / 9.0)
+    lim_n = max(2.0, rows2 / 9.0)
+    m = min(1.8 + st["c"] * 5.2 + charge * 0.8, lim_m)
+    n = min(2.6 + st["e"] * 5.2 + charge * 1.0, lim_n)
+
+    # Spin accumulates through dt rather than reading ctx.t * rate, because the
+    # rate is audio-driven: against ctx.t a change in speed retroactively
+    # rewrites the whole history and the plate teleports. Same trap Tunnel's
+    # docstring documents.
+    st["spin"] = (st["spin"] + (0.06 + charge * 0.55) * max(ctx.dt, 0.0)) % (2 * math.pi)
+    cs, sn = math.cos(st["spin"]), math.sin(st["spin"])
+    xr = (x - 0.5) * cs - (y - 0.5) * sn + 0.5
+    yr = (x - 0.5) * sn + (y - 0.5) * cs + 0.5
+
+    mpx, npx = np.sin(m * math.pi * xr), np.sin(n * math.pi * xr)
+    mpy, npy = np.sin(m * math.pi * yr), np.sin(n * math.pi * yr)
+    z = mpx * npy - npx * mpy
+
+    # Only paid for when it shows. Below this the term contributes less than
+    # one ramp bucket, so computing it would be four transcendentals over the
+    # whole field to produce a picture nobody can tell apart.
+    if charge > 0.05:
+        # 1.7x rather than 2x, and still clamped to the resolvable limit: the
+        # harmonic is meant to put fine structure *inside* the figure's cells,
+        # and it can only do that while it is still a figure itself.
+        hm = min(m * 1.7, lim_m * 1.35) * math.pi
+        hn = min(n * 1.7, lim_n * 1.35) * math.pi
+        z2 = np.sin(hm * xr) * np.sin(hn * yr) - np.sin(hn * xr) * np.sin(hm * yr)
+        # Mixed in at 0.22 rather than 0.4. Measured as the fraction of
+        # horizontally adjacent cells landing in the same ramp bucket — how
+        # followable the curves are — a fully charged plate scores 0.757 with
+        # no harmonic, 0.748 at 0.22, and 0.701 at 0.38. The last of those is
+        # a visible slide toward speckle, and it buys 0.007 of reactivity.
+        # Escalation leans on sharpness and spin instead, which cost no
+        # coherence at all.
+        z = z * (1.0 - 0.22 * charge) + z2 * (0.22 * charge)
+
+    sharpness = 1.4 + ctx.energy * 3.2 + charge * 2.4
+    nodal = np.clip(1.0 - np.abs(z) * sharpness, 0.0, 1.0) ** 2
     nodal = np.round(nodal * 12.0) * (1.0 / 12.0)
 
     idx = ctx.ramp(nodal)

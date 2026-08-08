@@ -45,7 +45,9 @@ SELF_ANIMATING = {
     # spin (Arcs), travelling particles (Bubbles), curtain billow (Auroras),
     # continuous sweep rotation (Sonar)
     "ECG", "Strings", "Arcs", "Bubbles", "Auroras", "Sonar",
-    # continuous ticker scroll (Readout), continuous spin (Helix, Chladni),
+    # continuous ticker scroll (Readout), continuous spin (Helix, and
+    # Chladni Extreme — but *not* plain Chladni, whose whole point is that it
+    # holds a discrete figure and only snaps when the spectrum moves),
     # continuous orbital motion (Orbit), continuous scroll (Keys), a real
     # playback clock (Flipbook), a persisted simulation that keeps evolving
     # on its own (Maelstrom), state that accumulates over time by design
@@ -64,7 +66,7 @@ SELF_ANIMATING = {
     # (Cassette), steam keeps curling and rising off the cup (Steam), and
     # a speaker cone that is being driven keeps rippling — the phase
     # accumulates every frame, a held note is a cone still moving (Cabinet)
-    "Readout", "Helix", "Chladni", "Orbit", "Keys", "Flipbook", "Maelstrom",
+    "Readout", "Helix", "Chladni Extreme", "Orbit", "Keys", "Flipbook", "Maelstrom",
     "Dune", "Fireworks", "Boot", "Colony", "Murmuration", "Vinyl", "Rain",
     "Ember", "Fairylights", "Cassette", "Steam", "Cabinet",
 }

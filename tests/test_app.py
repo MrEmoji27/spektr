@@ -172,10 +172,27 @@ async def main() -> int:
         else:
             await pilot.press("down")  # move to the bands row
             await pilot.press("right")  # change the value
-            # source is the last row (fps, bands, sensitivity, gate, chrome,
-            # source) — it has no choices list, only step/live, which used to
-            # be untested entirely since the row didn't exist before this.
-            for _ in range(4):
+
+            # Rows are located by label, not by counting keypresses down from
+            # the top. Counting broke the moment a row was inserted above the
+            # one being aimed at: the presses landed on "theme editor", which
+            # opens an overlay, and every later keystroke in this test went to
+            # that overlay instead — surfacing as four unrelated failures in
+            # the preset and theme-editor sections further down.
+            #
+            # The source row has no choices list, only step/live, so stepping
+            # it is the only coverage that path gets.
+            def row_index(label: str) -> int:
+                panel = app._overlay
+                rows = panel.query_one("#rows")
+                for i, option in enumerate(rows._options):
+                    if str(option.prompt).lstrip().startswith(label):
+                        return i
+                raise AssertionError(f"no {label!r} row in the settings panel")
+
+            here = 1  # the bands row, from the two presses above
+            target = row_index("source")
+            for _ in range(target - here):
                 await pilot.press("down")
             await pilot.press("right")  # next_source via step, not apply
             await pilot.pause()

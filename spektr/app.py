@@ -673,6 +673,23 @@ class Spektr(App):
                 self._set_chrome,
                 "same as f",
             ),
+            # An action row, not a value. It lives here because the editor is
+            # otherwise only reachable from a keybinding nobody has been told
+            # about — and "a keybinding you have to remember is not a
+            # discoverable setting" is the reason this whole panel exists.
+            # Deferred to after the refresh because opening the editor removes
+            # this panel, and doing that from inside its own key handler is
+            # asking for trouble.
+            Setting(
+                "theme_editor",
+                "theme editor",
+                [],
+                live=lambda: "→ build a new theme",
+                step=lambda delta: (
+                    self.call_after_refresh(self.action_new_theme) if delta > 0 else None
+                ),
+                note="four colours, applied live; unlock all six inside. also on n",
+            ),
             # No fixed choices to step through and nothing to read out of
             # values — the audio source is whatever the capture thread
             # currently holds, which changes on its own schedule as the new
@@ -691,7 +708,14 @@ class Spektr(App):
             ),
         ]
         values = {
-            "fps": viz._target_fps,
+            # The *requested* rate, not viz._target_fps, which is the resolved
+            # one: with unlimited selected that is a concrete 144, which
+            # matches the literal 144 stop in FPS_CHOICES, so the row opened
+            # reading "144 fps" and stepping away from it silently converted
+            # the preference from "unlimited" into a fixed rate. Adaptive
+            # pacing never writes settings.fps, so this stays what was asked
+            # for even while the pacer is throttling.
+            "fps": s.fps,
             "bands": s.bands,
             "sensitivity": s.sensitivity,
             "gate": s.gate,

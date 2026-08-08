@@ -364,13 +364,25 @@ def bubbles(ctx: Ctx):
             vals = np.repeat(bright[sel][:, None], dy.size, axis=1)
             np.maximum.at(field, (py[ok], px[ok]), vals[ok])
 
-    # the surface the bubbles are heading for. Dotted and shallow on purpose —
+    # The surface the bubbles are heading for. Dotted and shallow on purpose —
     # a full-amplitude line across the top reads as a waveform, which is the
     # one thing this mode should not look like.
+    #
+    # The amplitude cap is what keeps it a *line*. The surface lives inside the
+    # first braille cell, which is four dot rows tall, so an amplitude past
+    # about 1.0 scatters it across all four and it stops reading as a surface
+    # at all — just speckle along the top edge. The old ``0.4 + mids * 1.1``
+    # crossed that at mids > 0.55, which was rare while the analyser ran at 94
+    # analyses/sec and is constant at 188, where the mid envelope tracks
+    # transients twice as sharply and peaks much higher. Capped at 0.95 the
+    # ripple can only ever occupy two adjacent dot rows.
+    mids = ctx.range(0.25, 0.60)
     sx = np.arange(0, dc, 3)
-    ripple = np.sin(sx * 0.07 + ctx.t * 1.4) * (0.4 + ctx.range(0.25, 0.60) * 1.1)
+    ripple = np.sin(sx * 0.07 + ctx.t * 1.4) * min(0.95, 0.4 + mids * 1.1)
     srow = np.clip(np.rint(1.5 + ripple).astype(np.int32), 0, dr - 1)
-    field[srow, sx] = np.maximum(field[srow, sx], 0.22)
+    # Loudness goes into how brightly the surface glows rather than into how
+    # far it swings, so the reaction is one the shape survives.
+    field[srow, sx] = np.maximum(field[srow, sx], 0.22 + 0.48 * mids)
 
     np.clip(field, 0.0, 1.0, out=field)
     dots = field > 0.05
