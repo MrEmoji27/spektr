@@ -96,7 +96,7 @@ Listed in the order the picker cycles them.
 | **Bars** | the classic — bars with peak markers | **Bubbles** | bubbles from the low end, popping at the top |
 | **Bricks** | chunky, no partial cells | **Radial** | the spectrum wrapped into a circle |
 | **Columns** | gapless, interpolated across the full width | **Retro** | sunset grid, with the spectrum as the horizon |
-| **Ladder** | segmented LED stack | **Auroras** | light curtains, billowing on the treble |
+| **Ladder** | segmented LED stack | **Auroras** | a light ribbon whose lower rim rides the spectrum |
 | **Sonar** | one sweep, not the whole spectrum — returns fade like a scope | **Tunnel** | flying down a pipe, ribbed by the beat |
 | **Mirror** | grows out from the centre line | **Warp** | starfield, accelerating with the music |
 | **Stereo** | per-band L/R meters, mirrored from centre | **Matrix** | digital rain, falling faster when it's loud |

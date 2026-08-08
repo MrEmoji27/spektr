@@ -130,55 +130,85 @@ def retro(ctx: Ctx):
     return codes, cidx
 
 
-@mode("Auroras", group="scenes", blurb="light curtains, billowing on the treble")
+@mode("Auroras", group="scenes", blurb="a light ribbon whose lower rim rides the spectrum")
 def auroras(ctx: Ctx):
-    """Vertical curtains that hang from the top and billow with the highs.
+    """A ribbon of light across the sky, its lower rim riding the spectrum.
 
     The obvious implementation — one full-grid mask per curtain — costs a pass
-    over 300k dots per curtain at fullscreen. This builds the curtains once as
-    two 1-D profiles across the width (brightness and how far down they hang),
-    then *shears* them per row with a single gather. The undulation is real
-    horizontal displacement rather than a per-row recomputation, so the cost is
-    the same for two curtains or ten.
+    over 300k dots per curtain at fullscreen. This builds the whole aurora as
+    three 1-D profiles across the width (how bright, where the lower rim sits,
+    how tall the ribbon is above it), then *shears* them per row with a single
+    gather. The billow is real horizontal displacement rather than a per-row
+    recomputation, so the cost is the same for six curtains or fourteen.
 
-    ``Plasma`` is a smooth field with no structure; this has discrete curtains
-    with a soft vertical falloff and a ragged lower edge, which reads as
-    something else entirely.
+    The geometry is a ribbon, not a set of hanging panels. Panels that each ran
+    from the top of the screen down to their own depth gave a wedge silhouette
+    and left most of the width empty — measured 0.082 reactivity over 7% of the
+    screen, the least responsive mode in the app by a wide margin. A ribbon is
+    continuous across the full width, so every band contributes and the shape
+    the spectrum draws is the undulating *lower edge*, which is exactly the
+    feature that reads as an aurora.
+
+    Brightness is concentrated at that lower rim rather than at the top: a real
+    aurora is a faint diffuse column with a hot lower edge, where the electrons
+    finally reach dense air.
+
+    ``Plasma`` is a smooth field with no structure; this has a hard lower
+    boundary, vertical striations and a dithered upper fade.
     """
     dr, dc = ctx.dot_rows, ctx.dot_cols
     if dr < 12 or dc < 16:
         return empty(ctx.w, ctx.h)
 
-    n = int(np.clip(dc // 110, 2, 5))
+    # One curtain per band, not per 110 columns. The old count was
+    # ``clip(dc // 110, 2, 5)``, which is *two* curtains on an 80-column
+    # terminal — and two curtains means ``display_bands(2)``, so the entire
+    # mode was driven by the average of the bottom half of the spectrum and
+    # the average of the top half.
+    n = int(np.clip(dc // 26, 6, 14))
     lows = ctx.range(0.00, 0.20)
     treble = ctx.range(0.60, 1.00)
 
     cols = np.arange(dc, dtype=np.float32)
-    bright = np.zeros(dc, dtype=np.float32)
-    reach = np.zeros(dc, dtype=np.float32)
-
     lv = ctx.display_bands(n).astype(np.float32)
     spacing = dc / n
+
+    # Weighted blend rather than a per-curtain maximum. Taking the max leaves
+    # the gutters between curtains at zero, and a zero-width curtain has no
+    # rim position at all — there is nothing to divide by. Overlapping weights
+    # that sum to a continuous profile give one sheet whose lower edge dips and
+    # rises band by band.
+    wsum = np.full(dc, 1e-3, dtype=np.float32)
+    bsum = np.zeros(dc, dtype=np.float32)      # rim position, weighted
+    hsum = np.zeros(dc, dtype=np.float32)      # ribbon height, weighted
+    gsum = np.zeros(dc, dtype=np.float32)      # brightness, weighted
     for i in range(n):
         level = float(lv[i])
         centre = (i + 0.5) * spacing + math.sin(ctx.t * (0.21 + 0.06 * i) + i * 2.1) * spacing * 0.35
-        half = spacing * (0.10 + 0.30 * level)
         d = np.abs(cols - centre)
-        edge = np.clip(1.0 - d / max(half, 1e-3), 0.0, 1.0)
-        # squared falloff: a soft core with visible edges, not a flat band
-        np.maximum(bright, edge * edge * (0.25 + 0.75 * level), out=bright)
-        np.maximum(reach, edge * (0.30 + 0.65 * level), out=reach)
+        edge = np.clip(1.0 - d / (spacing * 0.9), 0.0, 1.0)
+        w = edge * edge + np.float32(0.02)
+        wsum += w
+        gsum += w * (0.18 + 0.82 * level)
+        bsum += w * (0.34 + 0.52 * level)      # louder pushes the rim lower
+        hsum += w * (0.26 + 0.40 * level)      # and makes the ribbon deeper
+    inv_w = 1.0 / wsum
+    bright = gsum * inv_w
+    bottom = bsum * inv_w
+    inv_h = 1.0 / np.maximum(hsum * inv_w, 1e-3)
 
     # fine vertical ribbing — the striations are what make an aurora read as an
     # aurora rather than as a smear, and in 1-D they cost nothing
-    bright *= 0.68 + 0.32 * np.sin(cols * 0.8 + ctx.t * 0.5).astype(np.float32)
+    bright *= 0.66 + 0.34 * np.sin(cols * 0.8 + ctx.t * 0.5).astype(np.float32)
 
     # Tiled three times so the shear can wrap by simple offset. A modulo over
     # the whole dot grid is one of the most expensive things you can do per
     # frame; adding dc to the index and reading from the middle copy is free.
     bright3 = np.tile(bright, 3)
-    reach3 = np.tile(reach, 3)
-    inv_reach3 = 1.0 / np.maximum(reach3, 1e-3)     # inverted once, in 1-D
+    # Pre-divided in 1-D so the per-dot ``u`` below is one multiply-subtract
+    # against two gathers, with no division over the whole grid.
+    boh3 = np.tile(bottom * inv_h, 3)
+    inv_h3 = np.tile(inv_h, 3)
 
     # per-row horizontal shear — this is the billow
     y = np.arange(dr, dtype=np.float32) / max(1, dr - 1)
@@ -189,17 +219,29 @@ def auroras(ctx: Ctx):
     )
     idx = (cols[None, :] + (shift + dc)[:, None]).astype(np.int32)
 
-    # hangs from the top: full strength at the top, gone by the curtain's reach
-    falloff = 1.0 - y[:, None] * inv_reach3[idx]
-    np.clip(falloff, 0.0, 1.0, out=falloff)
+    # Height *within* the ribbon: 0 at the lower rim, 1 at its top edge.
+    # Negative below the rim, above 1 over the top, so one pair of comparisons
+    # masks the whole shape.
+    u = boh3[idx] - y[:, None] * inv_h3[idx]
+    rim = np.clip(1.0 - u * np.float32(5.0), 0.0, 1.0)
 
     gain = np.float32(0.55 + 0.75 * lows)
     heat = bright3[idx]
-    heat *= (np.float32(0.25) + np.float32(0.75) * falloff) * gain
+    heat *= (np.float32(0.16) + np.float32(0.34) * (1.0 - u) + np.float32(0.90) * rim) * gain
+    heat *= (u >= 0.0) & (u <= 1.0)
 
-    # ragged lower edge — dithered where the curtain is fading out
-    keep = noise((dr, dc), ctx.frame) < (falloff * np.float32(1.6) + np.float32(0.15))
-    lit = (heat > 0.07) & (falloff > 0.0) & keep
+    # Ragged edges, dithered against a *fixed* grain rather than a fresh random
+    # field every frame. Per-frame noise over the whole dot grid was both the
+    # most expensive operation in the mode and a boil: the ribbon already sways,
+    # so a stationary grain for it to move through gives the texture without the
+    # whole sheet fizzing in place. Thresholding on ``heat`` rather than on
+    # vertical extent is what breaks the faint upper body into scattered dots
+    # while the rim stays solid.
+    grain = ctx.scratch(
+        "aurora_grain",
+        lambda: np.random.default_rng(31).random((dr, dc)).astype(np.float32),
+    )
+    lit = grain < heat * np.float32(1.9)
 
     codes = pack_braille(lit)
     cidx = ctx.ramp(cell_max(np.where(lit, np.clip(heat, 0.0, 1.0), 0.0)))
