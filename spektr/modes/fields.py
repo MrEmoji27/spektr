@@ -352,41 +352,79 @@ def chladni_flow(ctx: Ctx):
     return codes, idx[0::2], idx[1::2]
 
 
+def _rot_sines(k: float, cs: float, sn: float, ax: np.ndarray, by: np.ndarray):
+    """``sin(k*pi*xr)`` and ``sin(k*pi*yr)`` without a transcendental over the field.
+
+    The rotated coordinates separate. With ``ax = x - 0.5`` a row vector and
+    ``by = y - 0.5`` a column vector::
+
+        k*pi*xr = (k*pi*cs)*ax + k*pi/2  +  (-k*pi*sn)*by  =  U(x) + V(y)
+        k*pi*yr = (k*pi*sn)*ax + k*pi/2  +  ( k*pi*cs)*by  =  P(x) + Q(y)
+
+    so ``sin(U + V) = sin U cos V + cos U sin V`` turns one sine over
+    ``rows2 x w`` cells into four over ``w`` plus four over ``rows2``, and two
+    broadcast multiplies. Same identity ``Flame`` uses on its wobble, and the
+    reason this mode can afford a harmonic layered on top: at 400x100 the
+    field is 80k cells and the two vectors are 400 and 200.
+    """
+    kp = k * math.pi
+    u = kp * cs * ax + kp * 0.5
+    v = -kp * sn * by
+    pp = kp * sn * ax + kp * 0.5
+    q = kp * cs * by
+    return (
+        np.sin(u) * np.cos(v) + np.cos(u) * np.sin(v),
+        np.sin(pp) * np.cos(q) + np.cos(pp) * np.sin(q),
+    )
+
+
 @mode(
     "Chladni Extreme",
     group="fields",
-    blurb="a plate driven past its modes — morphs, escalates, and will not settle",
+    blurb="a plate driven past its modes - morphs, escalates, and snaps on the beat",
 )
 def chladni_extreme(ctx: Ctx):
     """``Chladni``, driven far past what a real plate would survive.
 
-    Three differences, in order of how much they matter.
+    Four differences from its siblings, in order of how much they matter.
+
+    **It snaps on the beat.** This is the one built for four-on-the-floor and
+    for funk. A kick drives a ``punch`` that decays over about 160 ms, and
+    while it is up the nodal lines tighten hard and the plate lurches round -
+    so a hit lands as a visible crack through the pattern rather than as a
+    slightly brighter frame. ``Chladni Flow`` has no concept of a beat at all,
+    which is the main reason to reach for this one.
+
+    Punch deliberately does not touch the mode numbers. Bumping them per kick
+    draws a *different* figure each time and the plate reads as scrambling
+    rather than as being struck; shape belongs to the spectrum and to charge,
+    and the beat gets crispness and rotation applied to whatever is there.
+
+    How hard the punch hits is gated on ``ctx.flatness``. A drum-led groove is
+    spectrally noise-like and scores high; a sustained pad scores low, so the
+    same kick energy under a pad produces a fraction of the snap. Without that
+    gate the mode reads as twitchy on anything with a bassline rather than as
+    percussive on anything with drums.
 
     **The modes are continuous.** ``Chladni`` snaps between whole mode numbers
     because that is what a plate physically does. This sweeps the fractional
-    values in between, so one figure melts into the next instead of cutting to
-    it. Physically nonsense; it is the more hypnotic picture, and keeping both
-    is why this mode exists separately rather than replacing the other.
+    values between them, so one figure melts into the next.
 
     **It escalates.** A ``charge`` builds while the track stays energetic and
-    bleeds away when it doesn't, over about eight seconds either way. Nothing
-    about the current frame's level can shortcut it — a single loud hit will
-    not buy the escalated look, and a quiet bar will not immediately lose it.
-    What charge buys, progressively: a second interference term at double the
-    mode numbers folds in, so the figure gains fine structure inside its own
-    cells; the plate spins faster; and the nodal lines tighten. Fully charged
-    it is a dense, fast, high-contrast figure that a plate at rest never
-    reaches. That is the "progressively better" part — the mode rewards a
-    track that keeps going rather than resetting every bar.
+    bleeds away when it doesn't, over about eight seconds either way - slow
+    enough that no single hit buys it and no quiet bar loses it. Charge folds
+    in a second interference term at higher mode numbers, speeds the spin and
+    tightens the lines. Punch is the bar; charge is the track.
 
-    **It reacts harder.** Easing is 0.35s -> 0.12s so the figure chases the
-    spectrum instead of drifting after it, and the mode range is wider at both
-    ends.
+    **It reacts harder.** Easing is 0.35 s -> 0.12 s, so the figure chases the
+    spectrum instead of drifting after it.
 
-    The cost notes in ``Chladni``'s docstring still apply, with one addition:
-    the harmonic term is four more transcendentals over the field, so it is
-    computed **only when charge is actually up** rather than multiplied by
-    zero. At rest this mode costs what ``Chladni`` costs.
+    Cost. Trig is the expensive part of any Chladni and it is separable under
+    rotation - see ``_rot_sines``. Mode numbers are bounded by what the grid
+    can resolve: a figure with k cycles across n cells needs several cells per
+    cycle to read as a curve, and an early cut that doubled them for the
+    harmonic rendered a fully charged plate as pure speckle. Same lesson
+    Plasma's docstring records about its swirl frequencies.
     """
     w, h = ctx.w, ctx.h
     if w < 4 or h < 4:
@@ -395,89 +433,120 @@ def chladni_extreme(ctx: Ctx):
     rows2 = h * 2
 
     def geo():
-        y = np.arange(rows2, dtype=np.float64)[:, None] / max(1, rows2 - 1)
-        x = np.arange(w, dtype=np.float64)[None, :] / max(1, w - 1)
-        return y, x
+        # Centred once: every use of the grid here is relative to the middle.
+        by = (np.arange(rows2, dtype=np.float64)[:, None] / max(1, rows2 - 1)) - 0.5
+        ax = (np.arange(w, dtype=np.float64)[None, :] / max(1, w - 1)) - 0.5
+        return by, ax
 
-    y, x = ctx.scratch("chladni_x_geo", geo)
+    by, ax = ctx.scratch("chladni_x_geo", geo)
 
     bands8 = ctx.display_bands(8).astype(np.float64)
     total = float(bands8.sum())
     centroid = float((bands8 * np.arange(8)).sum() / total / 7.0) if total > 1e-9 else 0.0
     highs = ctx.range(0.6, 1.0)
+    bass = ctx.range(0.0, 0.18)
 
     st = ctx.scratch(
-        "chladni_x", lambda: {"c": centroid, "e": highs, "charge": 0.0, "spin": 0.0}
+        "chladni_x",
+        lambda: {
+            "c": centroid, "e": highs, "charge": 0.0, "spin": 0.0,
+            "fast": bass, "slow": bass, "punch": 0.0, "hit_t": -99.0,
+            "level": ctx.energy,
+        },
     )
     # Chases rather than drifts: a third of Chladni's time constant.
     st["c"] += (centroid - st["c"]) * min(1.0, ctx.dt / 0.12)
     st["e"] += (highs - st["e"]) * min(1.0, ctx.dt / 0.12)
 
-    # The escalation. Integrated in seconds, so it behaves the same at any
-    # frame rate, and slewed hard enough in both directions that it reads as
-    # the *track* building rather than as the current bar being loud.
-    drive = 1.0 if ctx.energy > 0.22 else -1.0
+    # -- the beat --
+    # A 20 ms attack against a 300 ms reference. Faster than the 30 ms the rest
+    # of the codebase uses, because at 188 analyses/sec there is the resolution
+    # for it, and on this mode a kick that lands late reads as lag.
+    st["fast"] += (bass - st["fast"]) * min(1.0, ctx.dt / 0.02)
+    st["slow"] += (bass - st["slow"]) * min(1.0, ctx.dt / 0.30)
+    onset = st["fast"] - st["slow"]
+    # Percussion is spectrally flat, a pad is not. The same kick energy under a
+    # sustained chord should not throw the plate around.
+    groove = float(np.clip((ctx.flatness - 0.35) / 0.45, 0.0, 1.0))
+    if onset > 0.09 and (ctx.t - st["hit_t"]) > 0.09:
+        st["hit_t"] = ctx.t
+        st["punch"] = min(1.4, st["punch"] + (0.45 + onset * 1.6) * (0.35 + groove))
+    # Decay in seconds. 160 ms clears well before the next sixteenth at any
+    # tempo worth watching, so hits read as separate cracks rather than smear.
+    st["punch"] *= math.exp(-max(ctx.dt, 0.0) / 0.16)
+    punch = st["punch"]
+
+    # Charge is driven by a *smoothed* level, not the instantaneous one, and
+    # that is not a refinement — without it the feature is dead on exactly the
+    # music this mode is for. Energy on a four-on-the-floor track swings across
+    # any fixed threshold once per kick (measured 0.21 to 0.32 on a 128 BPM
+    # loop against a 0.22 line), so the charge was pushed down as often as up
+    # and sat at 0.00 forever. A 1.5 s envelope asks "is this track busy",
+    # which is the question, instead of "is this instant loud".
+    st["level"] += (ctx.energy - st["level"]) * min(1.0, ctx.dt / 1.5)
+    drive = 1.0 if st["level"] > 0.22 else -1.0
     st["charge"] = min(1.0, max(0.0, st["charge"] + drive * ctx.dt / 8.0))
     charge = st["charge"]
 
-    # Mode numbers are bounded by what the grid can actually resolve, not just
-    # by taste. A figure with k cycles across n cells needs several cells per
-    # cycle to read as a curve; past that it aliases into speckle. The first
-    # cut ran n to 10.6 and then doubled it for the harmonic below — 21 cycles
-    # over 36 dot rows, under two rows per cycle — and a fully charged plate
-    # came out as pure noise with no figure in it at all. This is the same
-    # lesson Plasma's docstring already records about its swirl frequencies.
     lim_m = max(2.0, w / 9.0)
     lim_n = max(2.0, rows2 / 9.0)
+    # Punch deliberately does *not* reach the mode numbers. Bumping them on
+    # every kick redraws a different figure each time, and at 0.7-0.9 of a
+    # mode that is a big enough jump that the plate reads as scrambling rather
+    # than as being struck. Shape is the spectrum's and charge's; the beat gets
+    # crispness and rotation, which land on the figure that is already there.
     m = min(1.8 + st["c"] * 5.2 + charge * 0.8, lim_m)
     n = min(2.6 + st["e"] * 5.2 + charge * 1.0, lim_n)
 
     # Spin accumulates through dt rather than reading ctx.t * rate, because the
     # rate is audio-driven: against ctx.t a change in speed retroactively
     # rewrites the whole history and the plate teleports. Same trap Tunnel's
-    # docstring documents.
-    st["spin"] = (st["spin"] + (0.06 + charge * 0.55) * max(ctx.dt, 0.0)) % (2 * math.pi)
+    # docstring documents. The punch term is what makes it lurch on the beat.
+    st["spin"] = (
+        st["spin"] + (0.06 + charge * 0.55 + punch * 1.9) * max(ctx.dt, 0.0)
+    ) % (2 * math.pi)
     cs, sn = math.cos(st["spin"]), math.sin(st["spin"])
-    xr = (x - 0.5) * cs - (y - 0.5) * sn + 0.5
-    yr = (x - 0.5) * sn + (y - 0.5) * cs + 0.5
 
-    mpx, npx = np.sin(m * math.pi * xr), np.sin(n * math.pi * xr)
-    mpy, npy = np.sin(m * math.pi * yr), np.sin(n * math.pi * yr)
-    z = mpx * npy - npx * mpy
+    mx, my = _rot_sines(m, cs, sn, ax, by)
+    nx, ny = _rot_sines(n, cs, sn, ax, by)
+    z = mx * ny - nx * my
 
     # Only paid for when it shows. Below this the term contributes less than
-    # one ramp bucket, so computing it would be four transcendentals over the
-    # whole field to produce a picture nobody can tell apart.
+    # one ramp bucket, so computing it would be more work over the whole field
+    # for a picture nobody can tell apart.
     if charge > 0.05:
         # 1.7x rather than 2x, and still clamped to the resolvable limit: the
-        # harmonic is meant to put fine structure *inside* the figure's cells,
-        # and it can only do that while it is still a figure itself.
-        hm = min(m * 1.7, lim_m * 1.35) * math.pi
-        hn = min(n * 1.7, lim_n * 1.35) * math.pi
-        z2 = np.sin(hm * xr) * np.sin(hn * yr) - np.sin(hn * xr) * np.sin(hm * yr)
+        # harmonic puts fine structure *inside* the figure's cells, and it can
+        # only do that while it is still a figure itself.
+        hm = min(m * 1.7, lim_m * 1.35)
+        hn = min(n * 1.7, lim_n * 1.35)
+        hmx, hmy = _rot_sines(hm, cs, sn, ax, by)
+        hnx, hny = _rot_sines(hn, cs, sn, ax, by)
         # Mixed in at 0.22 rather than 0.4. Measured as the fraction of
-        # horizontally adjacent cells landing in the same ramp bucket — how
-        # followable the curves are — a fully charged plate scores 0.757 with
-        # no harmonic, 0.748 at 0.22, and 0.701 at 0.38. The last of those is
-        # a visible slide toward speckle, and it buys 0.007 of reactivity.
-        # Escalation leans on sharpness and spin instead, which cost no
-        # coherence at all.
-        z = z * (1.0 - 0.22 * charge) + z2 * (0.22 * charge)
+        # horizontally adjacent cells landing in the same ramp bucket - how
+        # followable the curves are - a fully charged plate scores 0.757 with
+        # no harmonic, 0.748 at 0.22 and 0.701 at 0.38. The last is a visible
+        # slide toward speckle for 0.007 of reactivity.
+        mix = 0.22 * charge
+        z = z * (1.0 - mix) + (hmx * hny - hnx * hmy) * mix
 
-    sharpness = 1.4 + ctx.energy * 3.2 + charge * 2.4
-    # ``x ** 2`` on a float array calls the power ufunc; an in-place multiply
-    # is the same result for a fraction of the cost, and this is a full pass
-    # over the field. Same for folding the quantiser's scale into one step.
+    # Punch is worth more here than anywhere else: tightening the lines is what
+    # turns a hit into a crack across the figure rather than a flash.
+    # Charge tightens the lines, punch cracks them. Both are modest on purpose:
+    # at charge*2.4 a fully built-up plate covered 25% of the screen and every
+    # kick thinned it further, which reads as the picture dropping out rather
+    # than as being struck. At 1.0 the charged figure stays legible (33%) and
+    # the punch has somewhere to swing from -- a kick takes it to 25%, a
+    # visible snap tighter without a blackout.
+    sharpness = 1.4 + ctx.energy * 3.2 + charge * 1.0 + punch * 2.2
     nodal = np.clip(1.0 - np.abs(z) * sharpness, 0.0, 1.0)
     nodal *= nodal
-    # Eight buckets, not the twelve its two siblings use, and in place: this
-    # is the heaviest mode in the app and over half its frame is the strip
+    # Eight buckets, not the twelve its two siblings use, and done in place:
+    # this is the heaviest mode in the app and over half its frame is the strip
     # builder, which pays per colour boundary. Eight costs almost nothing
-    # visually here because escalation drives ``sharpness`` up to 7, and a
-    # sharp field is already nearly bimodal — most cells sit hard against 0
-    # or 1 rather than in the midtones the extra buckets would resolve.
-    # Measured at 400x100: 86 runs/row at twelve, 77 at eight, which is what
-    # takes it from sitting on the 16.7 ms line to under it.
+    # visually because sharpness runs to 7 and beyond, and a sharp nodal field
+    # is already nearly bimodal - most cells sit hard against 0 or 1 rather
+    # than in the midtones the extra buckets would resolve.
     nodal *= 8.0
     np.round(nodal, 0, out=nodal)
     nodal *= 1.0 / 8.0
