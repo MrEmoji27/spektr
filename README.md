@@ -49,14 +49,7 @@ four times the vertical resolution of a text cell.
 > if any are missing. The Windows `spektr.exe` in that release **will not run on Linux** —
 > it's a Windows binary; use the `spektr` file instead.
 
-**With Python 3.10+ (works on Windows, Linux and macOS):**
-
-```bash
-pip install spektr-audio
-spektr
-```
-
-Or from source:
+**With Python 3.10+ (works on Windows, Linux and macOS)** — from source:
 
 ```bash
 git clone https://github.com/MrEmoji27/spektr
@@ -64,6 +57,12 @@ cd spektr
 pip install -e .
 spektr
 ```
+
+> [!NOTE]
+> A one-line install is on the way in a later release. It won't be under the
+> name `spektr` — that belongs to an unrelated project on PyPI — so the package
+> name gets announced along with it. Until then use a prebuilt binary above, or
+> the source install here.
 
 On Windows you can also just double-click `start.bat`, which builds a private
 environment on first run and starts spektr on every run after.
