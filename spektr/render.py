@@ -214,47 +214,44 @@ def make_strips(
     # nothing on the normal path.
     text_all = codes.astype("<u4", copy=False).tobytes().decode("utf-32-le", errors="replace")
 
+    if h == 0:
+        return strips
+
+    # Whole-grid run starts: column 0 of every row, plus every cell that
+    # differs from its left neighbour. One flatnonzero over the whole grid
+    # replaces ~five numpy calls per row — at h=50 that is roughly 200 calls
+    # a frame, each paying microseconds of dispatch on arrays of only a few
+    # hundred elements. Runs are row-ordered and cannot cross a row boundary;
+    # the merge loops below enforce that by breaking at every row end.
+    chg = np.empty((h, w), dtype=bool)
+    chg[:, 0] = True
+    np.not_equal(cidx[:, 1:], cidx[:, :-1], out=chg[:, 1:])
+    if bidx is not None:
+        np.bitwise_or(chg[:, 1:], np.not_equal(bidx[:, 1:], bidx[:, :-1]), out=chg[:, 1:])
+    flat = np.flatnonzero(chg.ravel())
+    starts = flat.tolist()
+
     if bidx is None:
-        for y in range(h):
-            base = y * w
-            idx = cidx[y]
-            change = np.flatnonzero(idx[1:] != idx[:-1]) + 1
-            if change.size == 0:
-                strips.append(
-                    Strip([Segment(text_all[base : base + w], styles[int(idx[0])])], w)
-                )
-                continue
-            starts = [0, *change.tolist()]
-            pick = idx[starts].tolist()
-            # If no two adjacent runs are within tol of each other, the
-            # drift merge below is a no-op — every adjacent pair more than T
-            # apart forces a boundary immediately, by induction. Skipping the
-            # Python merge loop keeps rows of sharply distinct colours (a
-            # Chladni grid, say) exactly as cheap as before this tolerance.
-            if np.any(np.abs(np.diff(idx[starts])) <= tol):
-                # Merge runs while the colour stays within tol of the
-                # current run's start. Adjacent runs a step or two apart are
-                # perceptually identical; this is what keeps a smooth field
-                # from turning into a Segment for every other cell.
-                ms = [0]
-                mv = [pick[0]]
-                v0 = pick[0]
-                for k in range(1, len(starts)):
-                    v = pick[k]
-                    if v > v0 + tol or v < v0 - tol:
-                        ms.append(starts[k])
-                        mv.append(v)
-                        v0 = v
-                segs = [
-                    Segment(text_all[base + s : base + e], styles[c])
-                    for s, e, c in zip(ms, [*ms[1:], w], mv)
-                ]
-            else:
-                segs = [
-                    Segment(text_all[base + s : base + e], styles[c])
-                    for s, e, c in zip(starts, [*starts[1:], w], pick)
-                ]
-            strips.append(Strip(segs, w))
+        arr = cidx.ravel()[flat]
+        vals = arr.tolist()
+        # If no two adjacent runs are within tol of each other, the drift
+        # merge below is a no-op — every adjacent pair more than T apart
+        # forces a boundary immediately, by induction — and the whole Python
+        # merge pass can be skipped. Rows of sharply distinct colours (a
+        # Chladni grid, say) stay exactly as cheap as before this tolerance.
+        if np.any(np.abs(np.diff(arr)) <= tol):
+            ms, mv, ends = _rle_merge(starts, vals, w, tol)
+        else:
+            ms, mv, ends = starts, vals, _row_clamped_ends(flat, h, w)
+        row_end = w
+        segs: list[Segment] = []
+        for s, e, c in zip(ms, ends, mv):
+            if s >= row_end:
+                strips.append(Strip(segs, w))
+                segs = []
+                row_end += w
+            segs.append(Segment(text_all[s:e], styles[c]))
+        strips.append(Strip(segs, w))
         return strips
 
     # foreground + background: run-length encode on the pair.
@@ -265,51 +262,114 @@ def make_strips(
     # until the theme changes, which is when the colours actually change.
     cache = palette.pair_styles
     pair_style = palette.pair_style
-    for y in range(h):
-        base = y * w
-        fi = cidx[y]
-        bi = bidx[y]
-        change = np.flatnonzero((fi[1:] != fi[:-1]) | (bi[1:] != bi[:-1])) + 1
-        starts = [0, *change.tolist()]
-        fvals = fi[starts].tolist()
-        bvals = bi[starts].tolist()
-        # Same skip-check and drift merge as the foreground-only path, applied
-        # to both indices — a step of background colour is as invisible as a
-        # step of foreground.
-        # AND, not OR: a merge needs *both* channels inside the tolerance, so
-        # a pair that qualifies on only one of them can never merge and must
-        # not drag the row onto the Python path.
-        if np.any(
-            (np.abs(np.diff(fi[starts])) <= tol)
-            & (np.abs(np.diff(bi[starts])) <= tol)
-        ):
-            ms = [0]
-            mv = [fvals[0] * RAMP_STEPS + bvals[0]]
-            f0, b0 = fvals[0], bvals[0]
-            for k in range(1, len(starts)):
-                f, b = fvals[k], bvals[k]
-                if (
-                    f > f0 + tol
-                    or f < f0 - tol
-                    or b > b0 + tol
-                    or b < b0 - tol
-                ):
-                    ms.append(starts[k])
-                    mv.append(f * RAMP_STEPS + b)
-                    f0, b0 = f, b
-            starts = ms
-            keys = mv
-        else:
-            keys = (fi[starts].astype(np.int32) * RAMP_STEPS + bi[starts]).tolist()
-        segs = []
-        for k, s in enumerate(starts):
-            e = starts[k + 1] if k + 1 < len(starts) else w
-            st = cache.get(keys[k])
-            if st is None:
-                st = pair_style(keys[k])
-            segs.append(Segment(text_all[base + s : base + e], st))
-        strips.append(Strip(segs, w))
+    f_arr = cidx.ravel()[flat]
+    b_arr = bidx.ravel()[flat]
+    # Same skip-check and drift merge as the foreground-only path, applied to
+    # both indices — a step of background colour is as invisible as a step of
+    # foreground.
+    # AND, not OR: a merge needs *both* channels inside the tolerance, so a
+    # pair that qualifies on only one of them can never merge and must not
+    # drag the grid onto the Python path.
+    if np.any(
+        (np.abs(np.diff(f_arr)) <= tol) & (np.abs(np.diff(b_arr)) <= tol)
+    ):
+        ms, mv, ends = _rle_merge_pair(
+            starts, f_arr.tolist(), b_arr.tolist(), w, tol
+        )
+    else:
+        ms = starts
+        mv = (f_arr.astype(np.int32) * RAMP_STEPS + b_arr).tolist()
+        ends = _row_clamped_ends(flat, h, w)
+    row_end = w
+    segs = []
+    for s, e, key in zip(ms, ends, mv):
+        if s >= row_end:
+            strips.append(Strip(segs, w))
+            segs = []
+            row_end += w
+        st = cache.get(key)
+        if st is None:
+            st = pair_style(key)
+        segs.append(Segment(text_all[s:e], st))
+    strips.append(Strip(segs, w))
     return strips
+
+
+def _rle_merge(starts, vals, w, tol):
+    """Merge runs whose colour stays within ``tol`` of the current run's start.
+
+    Sequential by nature — whether a run merges depends on the value the
+    current run started with, which is what the previous merges left behind —
+    so this is one flat Python scan over the whole grid's runs rather than one
+    scan per row. ``p >= row_end`` is the row-boundary test: run starts are
+    contiguous within a row, so the first run of the next row sits exactly at
+    the previous row's end. Returns ``(starts, values, ends)`` of the merged
+    runs; each end is its successor in the same row, or the row end — merged
+    runs never cross a row boundary.
+    """
+    ms = [0]
+    mv = [vals[0]]
+    me: list[int] = []
+    v0 = vals[0]
+    row_end = w
+    for k in range(1, len(starts)):
+        p = starts[k]
+        v = vals[k]
+        if p >= row_end or v > v0 + tol or v < v0 - tol:
+            me.append(row_end if p >= row_end else p)
+            ms.append(p)
+            mv.append(v)
+            v0 = v
+            if p >= row_end:
+                row_end += w
+    me.append(row_end)
+    return ms, mv, me
+
+
+def _rle_merge_pair(starts, fvals, bvals, w, tol):
+    """Pair version of :func:`_rle_merge`.
+
+    A run merges only if *both* channels stay within ``tol`` of the current
+    run's start pair — AND, not OR: a pair that qualifies on one channel
+    alone can never merge.
+    """
+    ms = [0]
+    mv = [fvals[0] * RAMP_STEPS + bvals[0]]
+    me: list[int] = []
+    f0, b0 = fvals[0], bvals[0]
+    row_end = w
+    for k in range(1, len(starts)):
+        p = starts[k]
+        f, b = fvals[k], bvals[k]
+        if (
+            p >= row_end
+            or f > f0 + tol
+            or f < f0 - tol
+            or b > b0 + tol
+            or b < b0 - tol
+        ):
+            me.append(row_end if p >= row_end else p)
+            ms.append(p)
+            mv.append(f * RAMP_STEPS + b)
+            f0, b0 = f, b
+            if p >= row_end:
+                row_end += w
+    me.append(row_end)
+    return ms, mv, me
+
+
+def _row_clamped_ends(flat, h, w):
+    """Exclusive end of every run, clamped to its start's row end.
+
+    Only the fast path needs this: a run's end is the next run's start unless
+    that lies in a later row. The merge loops build the same list for free
+    while they scan, so it is not computed twice.
+    """
+    ends = np.empty_like(flat)
+    ends[:-1] = flat[1:]
+    ends[-1] = h * w
+    np.minimum(ends, (flat // w + 1) * w, out=ends)
+    return ends.tolist()
 
 
 def blank(w: int, h: int) -> tuple[np.ndarray, np.ndarray]:
