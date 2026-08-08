@@ -697,6 +697,143 @@ def check_shuffle_scope() -> list[str]:
     return bad
 
 
+# ── 12. rhythm fields keep their contract ────────────────────────────────────
+
+def check_rhythm_invariants() -> list[str]:
+    """The rhythm fields must read as "nothing known" until a detector says
+    otherwise.
+
+    The analyser's detector is a stub today, and the zeros it publishes are
+    the same state a listener gets during silence, under a sustained drone,
+    and in the first second before a tempo is established — so the all-zeros
+    world is a real runtime state, not a placeholder. Nothing may depend on
+    those fields carrying anything else: a ``Ctx`` built without touching
+    them must be all-zeros, the analyser's silent frames must publish the
+    nothing-known state (without resetting the onset count), and every mode
+    must survive a ``Ctx`` that carries real rhythm values, because the
+    detector will start reporting those and nothing may assume it never does.
+    """
+    bad = []
+    base = ctx_for(80, 24, 1, {}, 0.5)
+    for field in ("onset_seq", "onset_strength", "flux", "tempo_bpm", "beat_phase"):
+        if getattr(base, field) != 0:
+            bad.append(f"fresh Ctx.{field} = {getattr(base, field)!r}, want the nothing-known 0")
+
+    # every mode must tolerate a Ctx carrying real rhythm values
+    real = ctx_for(80, 24, 1, {}, 0.5)
+    real.onset_seq = 12
+    real.onset_strength = 0.8
+    real.flux = 0.42
+    real.tempo_bpm = 128.0
+    real.beat_phase = 0.25
+    for m in M.MODES:
+        if m.name == "None":
+            continue
+        try:
+            m.fn(real)
+        except Exception as exc:  # noqa: BLE001
+            bad.append(f"{m.name} crashed on a Ctx carrying rhythm values: {exc}")
+
+    # the analyser's silence path publishes nothing-known rhythm: zeros for
+    # strength/flux/tempo/phase, and the onset count carried through untouched
+    # (a reset would read as a burst of beats to anyone differencing it)
+    ring = RingBuffer(48000)
+    an = Analyser(ring, lambda: 48000)
+    n = 16384
+    t = np.arange(n) / 48000
+    loud = (np.sin(2 * math.pi * 440 * t) * 0.3).astype(np.float32)
+    ring.push(np.stack((loud, loud), axis=1))
+    an._analyse_once()
+    if an.frame.silent:
+        bad.append("rhythm: loud tone was gated")
+    else:
+        seen = an.frame.onset_seq
+        ring.clear()
+        ring.push(np.zeros((n, 2), dtype=np.float32))
+        time.sleep(0.35)          # past the gate's hold window
+        an._analyse_once()
+        if not an.frame.silent:
+            bad.append("rhythm: silence was not gated")
+        elif (an.frame.tempo_bpm, an.frame.beat_phase,
+              an.frame.flux, an.frame.onset_strength) != (0.0, 0.0, 0.0, 0.0):
+            bad.append("silent frame must publish the nothing-known rhythm state")
+        elif an.frame.onset_seq != seen:
+            bad.append(f"onset_seq {seen} -> {an.frame.onset_seq} across silence — "
+                       "the count must survive, or a pause reads as a burst of beats")
+    return bad
+
+
+# ── 13. rhythm fields plumb through the widget ────────────────────────────────
+
+def check_rhythm_plumbing() -> list[str]:
+    """The analyser's rhythm fields must reach the mode's ``Ctx`` unchanged.
+
+    ``Ctx`` is the only surface modes see, so a field that stops at the
+    widget's door is a field that never exists. This drives the real
+    ``_build`` path — a spy mode records the ``Ctx`` it is handed while the
+    widget renders a fabricated frame — and checks both directions of the
+    contract: the all-zeros "nothing known" state the stub detector
+    publishes, and real values for once the detector lands.
+    """
+    from textual.app import App
+
+    from spektr.analysis import Frame
+    from spektr.config import Settings
+    from spektr.widget import AudioVisualizer
+
+    captured: list[Ctx] = []
+
+    if M.get("Rhythm Probe") is None:
+        @M.mode("Rhythm Probe", group="spectrum")
+        def _rhythm_probe(ctx: Ctx):
+            captured.append(ctx)
+            return M.empty(ctx.w, ctx.h)
+
+    class _ProbeApp(App):
+        def compose(self):
+            yield AudioVisualizer(device=None, settings=Settings(), allow_mic=False)
+
+    bad = []
+    try:
+        import asyncio
+
+        async def run():
+            app = _ProbeApp()
+            app.notify = lambda *a, **k: None  # type: ignore[method-assign]
+            async with app.run_test(size=(80, 24)) as pilot:  # noqa: F841
+                viz = app.query_one(AudioVisualizer)
+                viz.set_mode("Rhythm Probe")
+                for label, frame in (
+                    ("nothing known", Frame()),
+                    ("real values", Frame(
+                        onset_seq=7, onset_strength=0.65, flux=0.3,
+                        tempo_bpm=128.0, beat_phase=0.5,
+                    )),
+                ):
+                    captured.clear()
+                    viz._frame_data = frame
+                    viz._build()
+                    if not captured:
+                        bad.append(f"rhythm probe mode never ran ({label})")
+                        continue
+                    got = captured[-1]
+                    for field in ("onset_seq", "onset_strength", "flux",
+                                  "tempo_bpm", "beat_phase"):
+                        if getattr(got, field) != getattr(frame, field):
+                            bad.append(
+                                f"ctx.{field} = {getattr(got, field)!r}, "
+                                f"frame.{field} = {getattr(frame, field)!r} ({label})"
+                            )
+
+        asyncio.run(run())
+    finally:
+        probe = M.get("Rhythm Probe")
+        if probe is not None:
+            M.MODES.remove(probe)
+            M._BY_NAME.pop("Rhythm Probe", None)
+    return bad
+
+
 TESTS = [
     ("modes don't mutate shared buffers", check_no_mutation),
     ("modes animate", check_animates),
@@ -713,6 +850,8 @@ TESTS = [
     ("themes are visible against their own background", check_theme_visibility),
     ("fps unlimited sentinel survives clamping", check_fps_sentinel),
     ("shuffle scope migrates and gates", check_shuffle_scope),
+    ("rhythm fields keep their contract", check_rhythm_invariants),
+    ("rhythm fields plumb through the widget", check_rhythm_plumbing),
 ]
 
 
@@ -798,6 +937,16 @@ def test_fps_sentinel() -> None:
 
 def test_shuffle_scope() -> None:
     bad = check_shuffle_scope()
+    assert not bad, "\n".join(bad)
+
+
+def test_rhythm_invariants() -> None:
+    bad = check_rhythm_invariants()
+    assert not bad, "\n".join(bad)
+
+
+def test_rhythm_plumbing() -> None:
+    bad = check_rhythm_plumbing()
     assert not bad, "\n".join(bad)
 
 

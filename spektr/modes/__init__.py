@@ -62,6 +62,30 @@ class Ctx:
     #: through :attr:`n_display`; modes should not consult it directly.
     bars: int = 0
 
+    # ── rhythm ──
+    # Passed through from the analyser verbatim. Every field here reads as its
+    # "nothing known" value (all zeros) during silence, under a sustained
+    # drone, and before a tempo is established — that is a real runtime state,
+    # not a placeholder — so modes must treat them as optional, never required.
+    #: Monotonic count of detected onsets since start. Never resets, including
+    #: across silence. Key on this *changing* (compare with the last value
+    #: seen) rather than on ``onset_strength > 0`` — a single drum hit can
+    #: fire the detector repeatedly, and a reader that keys on the counter
+    #: sees exactly one signal per hit.
+    onset_seq: int = 0
+    #: 0..1 strength of the most recently detected onset.
+    onset_strength: float = 0.0
+    #: 0..1 raw onset-detection-function value for this frame. Continuous, so
+    #: it is safe to read at any frame rate; useful for "how percussive is
+    #: right now" rather than discrete hits.
+    flux: float = 0.0
+    #: Estimated tempo in BPM. 0.0 means unknown — never divide by this
+    #: without checking.
+    tempo_bpm: float = 0.0
+    #: 0..1 position within the current beat, 0.0 on the beat. 0.0 whenever
+    #: :attr:`tempo_bpm` is 0.0.
+    beat_phase: float = 0.0
+
     # ── derived geometry ──
     @property
     def size(self) -> tuple[int, int]:

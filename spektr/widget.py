@@ -559,6 +559,11 @@ class AudioVisualizer(Widget):
             palette=self.palette,
             state=self._mode_state.setdefault(m.name, {}),
             bars=self.settings.bands,
+            onset_seq=frame.onset_seq,
+            onset_strength=frame.onset_strength,
+            flux=frame.flux,
+            tempo_bpm=frame.tempo_bpm,
+            beat_phase=frame.beat_phase,
         )
 
         from .modes import empty
