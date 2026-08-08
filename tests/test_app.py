@@ -119,10 +119,8 @@ async def main() -> int:
         ):
             await pilot.press(key)
         await pilot.pause()
-        if app.settings.shuffle != config.SHUFFLE_OFF:
-            problems.append(
-                f"shuffle left on after toggling it twice: {app.settings.shuffle!r}"
-            )
+        if app.settings.shuffle:
+            problems.append("shuffle left on after toggling it twice")
         if app._overlay is not None:
             problems.append("an overlay was left open after the keybinding sweep")
         mark("keybindings OK")

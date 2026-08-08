@@ -28,12 +28,13 @@ FPS_UNLIMITED = 0
 #: opinion about the number.
 FPS_MAX = 240
 
-#: Shuffle scopes offered in the settings panel, in cycle order. ``off`` is one
-#: of them rather than a separate switch, so the row reads as a single decision.
-SHUFFLE_OFF = "off"
-SHUFFLE_CHOICES = (SHUFFLE_OFF, "modes", "themes", "both")
+#: What shuffle cycles, in the order the settings row steps through them.
+#: Deliberately does *not* include an "off" entry — ``s`` is the on/off switch
+#: and this is the configuration, so off is a state of :attr:`Settings.shuffle`
+#: rather than a scope. Two controls for the same thing is one too many.
+SHUFFLE_SCOPES = ("modes", "themes", "both")
 
-#: What ``s`` turns shuffle *on* to, when there is no previous scope to restore.
+#: Scope used when a config names one that no longer exists.
 SHUFFLE_DEFAULT = "both"
 
 #: Frame rates offered in the settings panel. Anything in 15..240 is valid via
@@ -60,12 +61,15 @@ class Settings:
     #: Screensaver-style auto-cycling of mode and theme. Remembered across
     #: restarts like everything else here — if you left it on, you wanted it
     #: on, not a surprise burst of quiet the next time you open a terminal.
-    #: What shuffle cycles: ``off``, ``modes``, ``themes`` or ``both``. This is
-    #: the on/off switch as well as the scope — a separate boolean plus a scope
-    #: would have made "on, shuffling nothing" representable, which is a state
-    #: with no meaning. Older configs stored a bool here; :meth:`clamp` migrates
-    #: those, so ``true`` still means what it used to.
-    shuffle: str = SHUFFLE_OFF
+    #: Whether shuffle is running. Toggled by ``s``; the scope below says what
+    #: it cycles. Two fields rather than one four-state field, because they are
+    #: two separate decisions — a power switch and a preference — and folding
+    #: them together put an "off" entry in the settings row that duplicated the
+    #: key.
+    shuffle: bool = False
+    #: One of :data:`SHUFFLE_SCOPES`. Kept even while shuffle is off, so
+    #: turning it back on resumes what you last chose.
+    shuffle_scope: str = SHUFFLE_DEFAULT
     #: Flipbook's selected reel and effect. Empty string means "unresolved,
     #: pick the first one" — see asciiart.restore(), which never touches disk
     #: itself, only records these names for the mode to resolve on first use.
@@ -103,13 +107,18 @@ class Settings:
         self.mode = self.mode if isinstance(self.mode, str) and self.mode else "Bars"
         self.theme = self.theme if isinstance(self.theme, str) and self.theme else "classic"
         self.chrome = bool(self.chrome)
-        # Migrates the old boolean. `is True` / `is False` rather than a
-        # truthiness test, and checked before the membership test, because
-        # `True == 1` and a bare `in` would not catch it.
-        if self.shuffle is True:
-            self.shuffle = SHUFFLE_DEFAULT
-        elif self.shuffle is False or self.shuffle not in SHUFFLE_CHOICES:
-            self.shuffle = SHUFFLE_OFF
+        # `shuffle` has been a bool and, briefly, a four-state string. Accept
+        # both: a string means the scope came from the interim form, where
+        # "off" was one of the scopes.
+        raw = self.shuffle
+        if isinstance(raw, str):
+            self.shuffle = raw != "off"
+            if raw in SHUFFLE_SCOPES:
+                self.shuffle_scope = raw
+        else:
+            self.shuffle = bool(raw)
+        if self.shuffle_scope not in SHUFFLE_SCOPES:
+            self.shuffle_scope = SHUFFLE_DEFAULT
         self.ascii_reel = self.ascii_reel if isinstance(self.ascii_reel, str) else ""
         self.ascii_fx = self.ascii_fx if self.ascii_fx in ("warp", "dissolve", "lit") else "warp"
         return self

@@ -636,54 +636,64 @@ def check_fps_sentinel() -> list[str]:
 
 
 def check_shuffle_scope() -> list[str]:
-    """Shuffle's scope setting round-trips, migrates, and gates what moves.
+    """Shuffle's on/off and its scope stay two separate, valid things.
 
-    The field used to be a boolean and is now one of four scopes, so old config
-    files carry `true`/`false` where a string is expected. That migration is the
-    part most likely to rot: `True == 1` in Python, so a membership test alone
-    silently accepts a boolean and a truthiness test silently accepts the string
-    `"off"`.
+    `s` owns on/off; the settings row owns the scope. The field has been a bool
+    and, briefly, a four-state string, so config files in the wild carry both
+    shapes and clamp() has to accept either without inventing a scope that does
+    not exist.
     """
-    from spektr.config import (
-        SHUFFLE_CHOICES,
-        SHUFFLE_DEFAULT,
-        SHUFFLE_OFF,
-        Settings,
-    )
+    from spektr.config import SHUFFLE_DEFAULT, SHUFFLE_SCOPES, Settings
 
     bad = []
-    for raw, want in (
-        (True, SHUFFLE_DEFAULT), (False, SHUFFLE_OFF),
-        ("both", "both"), ("modes", "modes"), ("themes", "themes"),
-        (SHUFFLE_OFF, SHUFFLE_OFF),
-        ("junk", SHUFFLE_OFF), (None, SHUFFLE_OFF),
-        (1, SHUFFLE_OFF), (0, SHUFFLE_OFF), ("", SHUFFLE_OFF),
+    if "off" in SHUFFLE_SCOPES:
+        bad.append("'off' must not be a scope — `s` is the switch, this is the configuration")
+    if SHUFFLE_DEFAULT not in SHUFFLE_SCOPES:
+        bad.append(f"SHUFFLE_DEFAULT {SHUFFLE_DEFAULT!r} is not a scope")
+
+    # (raw shuffle, raw scope) -> (on?, scope)
+    for raw, raw_scope, want_on, want_scope in (
+        (True, "both", True, "both"),
+        (False, "modes", False, "modes"),          # scope survives being off
+        (True, "themes", True, "themes"),
+        # the interim four-state string form
+        ("off", SHUFFLE_DEFAULT, False, SHUFFLE_DEFAULT),
+        ("modes", SHUFFLE_DEFAULT, True, "modes"),
+        ("both", SHUFFLE_DEFAULT, True, "both"),
+        # junk in either field falls back without touching the other
+        (None, "themes", False, "themes"),
+        (True, "junk", True, SHUFFLE_DEFAULT),
+        (True, None, True, SHUFFLE_DEFAULT),
+        (1, "modes", True, "modes"),
+        (0, "modes", False, "modes"),
     ):
         st = Settings()
-        st.shuffle = raw
+        st.shuffle, st.shuffle_scope = raw, raw_scope
         st.clamp()
-        if st.shuffle != want:
-            bad.append(f"Settings.shuffle={raw!r} clamped to {st.shuffle!r}, want {want!r}")
+        if (st.shuffle, st.shuffle_scope) != (want_on, want_scope):
+            bad.append(
+                f"shuffle={raw!r} scope={raw_scope!r} clamped to "
+                f"({st.shuffle!r}, {st.shuffle_scope!r}), want ({want_on!r}, {want_scope!r})"
+            )
+        if not isinstance(st.shuffle, bool):
+            bad.append(f"shuffle={raw!r} clamped to non-bool {type(st.shuffle).__name__}")
 
-    if SHUFFLE_OFF not in SHUFFLE_CHOICES:
-        bad.append("SHUFFLE_OFF must be one of SHUFFLE_CHOICES, or the panel cannot turn it off")
-    if SHUFFLE_DEFAULT == SHUFFLE_OFF or SHUFFLE_DEFAULT not in SHUFFLE_CHOICES:
-        bad.append(f"SHUFFLE_DEFAULT {SHUFFLE_DEFAULT!r} must be a real scope")
-
-    # What each scope is allowed to move. Mirrors _shuffle_tick's gating, which
-    # is the behaviour the setting exists to control.
+    # What each scope moves. Mirrors _shuffle_tick's gating.
     every = 3
     for scope, ticks, want_mode, want_theme in (
         ("modes", 3, True, False),
         ("themes", 3, False, True),
+        ("themes", 1, False, True),      # every tick, not every third
         ("both", 3, True, True),
+        ("both", 1, True, False),
     ):
         moves_mode = scope in ("modes", "both")
         moves_theme = scope == "themes" or (scope == "both" and ticks % every == 0)
-        if moves_mode != want_mode:
-            bad.append(f"scope {scope!r}: mode movement {moves_mode}, want {want_mode}")
-        if moves_theme != want_theme:
-            bad.append(f"scope {scope!r}: theme movement {moves_theme}, want {want_theme}")
+        if (moves_mode, moves_theme) != (want_mode, want_theme):
+            bad.append(
+                f"scope {scope!r} tick {ticks}: moved (mode={moves_mode}, theme={moves_theme}), "
+                f"want (mode={want_mode}, theme={want_theme})"
+            )
     return bad
 
 
