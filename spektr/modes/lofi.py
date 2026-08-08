@@ -669,7 +669,7 @@ def cassette(ctx: Ctx):
     return codes, cidx
 
 
-_STEAM_TENDRILS = 7
+_STEAM_TENDRILS = 11
 
 
 def _steam_state() -> dict:
@@ -701,25 +701,33 @@ def steam(ctx: Ctx):
     st = ctx.scratch("steam", _steam_state)
 
     lv = ctx.display_bands(_STEAM_TENDRILS)
-    st["peak"] = np.maximum(st["peak"] - ctx.dt * 1.1, lv)
+    # Peak-hold falls faster than it used to. At 1.1/s a plume thrown by a
+    # transient took most of a second to come back down, so under any busy
+    # passage every tendril sat pinned near its maximum and the picture barely
+    # moved — the single biggest reason this measured 0.152, the weakest
+    # reactivity in the lofi set.
+    st["peak"] = np.maximum(st["peak"] - ctx.dt * 2.0, lv)
     treble = ctx.range(0.6, 1.0)
 
-    field = np.zeros((dr, dc), dtype=np.float64)
+    plume = np.zeros((dr, dc), dtype=np.float64)
 
-    # cup silhouette: a tapered body, bottom-centred, plus a rim glint
     cup_y0 = int(dr * 0.78)
-    cup_h = max(1, dr - cup_y0)
     cup_cx = dc * 0.5
     cup_hw = dc * 0.22
-    for i, r in enumerate(range(cup_y0, dr)):
-        f = i / max(1, cup_h - 1)
-        half_w = cup_hw * (0.72 + 0.28 * f)
-        x0, x1 = max(0, int(cup_cx - half_w)), min(dc, int(cup_cx + half_w))
-        if x1 > x0:
-            field[r, x0:x1] = np.maximum(field[r, x0:x1], 0.28)
-    rim_x0, rim_x1 = max(0, int(cup_cx - cup_hw)), min(dc, int(cup_cx + cup_hw))
-    if rim_x1 > rim_x0:
-        field[cup_y0, rim_x0:rim_x1] = 0.5 + 0.4 * ctx.energy
+
+    # Plume width scales with the terminal so the steam stays in proportion to
+    # the cup, but the scaling is capped: the deposit below costs
+    # height x width per tendril, and letting that track a 400-column terminal
+    # linearly would write more elements than there are dots on the screen.
+    wide = min(dc, 260) / 160.0
+
+    # Every tendril's dots are collected and written in one ``maximum.at``.
+    # Deposited a column at a time it was one scattered-write call per
+    # horizontal offset — 30-odd per tendril, over 300 per frame — and the
+    # per-call overhead, not the element count, was most of the mode's cost.
+    dep_y: list = []
+    dep_x: list = []
+    dep_v: list = []
 
     max_h = cup_y0 * 0.92
     for i in range(_STEAM_TENDRILS):
@@ -731,30 +739,71 @@ def steam(ctx: Ctx):
         x_base = cup_cx + (frac_x - 0.5) * cup_hw * 1.7
         ys = np.arange(cup_y0 - h_i, cup_y0)
         prog = (cup_y0 - ys) / max(h_i, 1)
-        curl_amp = dc * (0.035 + treble * 0.06)
+        curl_amp = dc * (0.05 + treble * 0.10)
         curl = np.sin(prog * 5.0 + ctx.t * st["freq"][i] + st["phase"][i]) * curl_amp * prog
-        xs = np.clip(np.rint(x_base + curl).astype(np.int32), 0, dc - 1)
-        bright = (1.0 - prog * 0.75) * (0.30 + 0.65 * lvl)
+        # Steam spreads as it leaves the cup, so the tendrils fan apart with
+        # height instead of rising in parallel lanes. This is most of what put
+        # steam on more than a narrow strip of the screen.
+        fan = (frac_x - 0.5) * cup_hw * 3.4 * prog
+        xs = np.rint(x_base + curl + fan).astype(np.int32)
+        bright = (1.0 - prog * 0.70) * (0.30 + 1.20 * lvl)
         ok = (ys >= 0) & (ys < dr)
         if not ok.any():
             continue
-        # a plume, not a hairline: steam broadens as it rises and a louder
-        # band pushes a thicker column. Two-dot-wide tendrils were the reason
-        # this mode barely registered as reactive — the geometry tracked the
-        # band correctly, there just wasn't enough of it on screen to see.
-        half = np.maximum(1, np.rint((0.6 + prog * 2.2) * (0.5 + lvl * 1.6)).astype(np.int32))
+        # A plume, not a hairline: steam broadens as it rises and a louder band
+        # pushes a thicker column. It is deposited as a soft profile rather
+        # than a flat-topped bar, because the dither below needs a gradient
+        # across the plume to have anything to break up.
+        half = np.maximum(
+            1, np.rint((1.0 + prog * 7.0) * (0.5 + lvl * 1.4) * wide).astype(np.int32)
+        )
         max_half = int(half.max())
         yy, xx0, bb, hh = ys[ok], xs[ok], bright[ok], half[ok]
-        for off in range(-max_half, max_half + 1):
-            sel = np.abs(off) <= hh
-            if not sel.any():
-                continue
-            falloff = 1.0 - (abs(off) / (max_half + 1.0)) * 0.7
-            px = np.clip(xx0[sel] + off, 0, dc - 1)
-            np.maximum.at(field, (yy[sel], px), bb[sel] * falloff)
+
+        offs = np.arange(-max_half, max_half + 1)
+        edge = 1.0 - np.abs(offs) / (max_half + 1.0)
+        gx = xx0[:, None] + offs[None, :]
+        gv = bb[:, None] * (edge * edge)[None, :]
+        keep = (np.abs(offs)[None, :] <= hh[:, None]) & (gx >= 0) & (gx < dc)
+        if keep.any():
+            dep_y.append(np.broadcast_to(yy[:, None], gx.shape)[keep])
+            dep_x.append(gx[keep])
+            dep_v.append(gv[keep])
+
+    if dep_y:
+        np.maximum.at(
+            plume,
+            (np.concatenate(dep_y), np.concatenate(dep_x)),
+            np.concatenate(dep_v),
+        )
+
+    # Dithered against a *fixed* grain, so the plumes read as vapour instead of
+    # as solid columns. Widening them alone just made bigger blocks; steam has
+    # to be see-through at its edges to be steam at all. Fixed and not
+    # per-frame for the usual reason — the curl already animates it, and
+    # reseeding every frame would make the whole cup fizz.
+    grain = ctx.scratch(
+        "steam_grain", lambda: np.random.default_rng(211).random((dr, dc)) * 0.92 + 0.05
+    )
+    dots = plume > grain
+    field = np.where(dots, plume, 0.0)
+
+    # cup silhouette: a tapered body, bottom-centred, plus a rim glint. Drawn
+    # last and solid — the crockery is the one thing here that isn't vapour.
+    cup_h = max(1, dr - cup_y0)
+    for i, r in enumerate(range(cup_y0, dr)):
+        f = i / max(1, cup_h - 1)
+        half_w = cup_hw * (0.72 + 0.28 * f)
+        x0, x1 = max(0, int(cup_cx - half_w)), min(dc, int(cup_cx + half_w))
+        if x1 > x0:
+            field[r, x0:x1] = np.maximum(field[r, x0:x1], 0.28)
+            dots[r, x0:x1] = True
+    rim_x0, rim_x1 = max(0, int(cup_cx - cup_hw)), min(dc, int(cup_cx + cup_hw))
+    if rim_x1 > rim_x0:
+        field[cup_y0, rim_x0:rim_x1] = 0.5 + 0.4 * ctx.energy
+        dots[cup_y0, rim_x0:rim_x1] = True
 
     np.clip(field, 0.0, 1.0, out=field)
-    dots = field > 0.04
     codes = pack_braille(dots)
     cidx = ctx.ramp(cell_max(field))
     return codes, cidx

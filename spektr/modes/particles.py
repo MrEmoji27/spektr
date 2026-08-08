@@ -98,8 +98,35 @@ def flame(ctx: Ctx):
     return codes, cidx
 
 
-@mode("Pulse", group="particles", blurb="radial pulse with shockwaves")
+#: Concurrent shockwave slots. Two is enough to overlap a fast pair of kicks
+#: without the screen turning into a ripple tank, and each costs a handful of
+#: full-grid passes.
+_PULSE_WAVES = 2
+
+
+@mode("Pulse", group="particles", blurb="a radial blob with shockwaves thrown off the beat")
 def pulse(ctx: Ctx):
+    """A dithered radial blob whose edge is the spectrum, ringing on kicks.
+
+    ``Radial`` maps the spectrum onto a static circle and ``Arcs`` lights a
+    thin annulus per band. This is a solid mass whose *boundary* is the
+    spectrum — the radius at each angle is that angle's band, squared, so
+    loud bands bulge and quiet ones pull the outline in — and the fill is
+    dithered so the inside reads as energy rather than as a filled disc.
+
+    The shockwaves are thrown by the music. They used to expand on
+    ``fmod(ctx.t * 3.6, 1.0)``, a free-running 3.6 Hz sawtooth that fired at
+    exactly the same rate whether the track was a ballad or a drum solo, and
+    scaled only its brightness by the overall level. Now a bass onset launches
+    one, into whichever of two slots is oldest, and its radius is a function
+    of how long ago it was launched. That makes the ring a thing the music
+    *did* rather than a thing the clock did.
+
+    Noise is a fixed per-size field rather than a fresh hash every frame. The
+    hash was over 2 ms of the mode's budget at 400x100 and bought nothing: the
+    blob's edge and the shockwaves both sweep across the field, so a
+    stationary grain still animates everywhere it matters.
+    """
     dr, dc = ctx.dot_rows, ctx.dot_cols
     dist, turn, max_r = _polar(ctx)
     n = min(16, ctx.n_display)
@@ -107,36 +134,61 @@ def pulse(ctx: Ctx):
     avg = ctx.energy
     nrg = _angular_bands(ctx, turn, n, ctx.t * (0.10 + avg * 0.30))
 
+    st = ctx.scratch(
+        "pulse",
+        lambda: {
+            "fast": 0.0, "slow": 0.0,
+            "born": np.full(_PULSE_WAVES, -99.0),
+            "amp": np.zeros(_PULSE_WAVES),
+        },
+    )
+    bass = ctx.range(0.0, 0.2)
+    st["fast"] += (bass - st["fast"]) * min(1.0, ctx.dt / 0.03)
+    st["slow"] += (bass - st["slow"]) * min(1.0, ctx.dt / 0.40)
+    onset = st["fast"] - st["slow"]
+    if onset > 0.12 and (ctx.t - st["born"].max()) > 0.12:
+        slot = int(np.argmin(st["born"]))
+        st["born"][slot] = ctx.t
+        st["amp"][slot] = float(np.clip(0.35 + onset * 2.2, 0.0, 1.0))
+
     r = max_r * (0.1 + 0.9 * nrg * nrg)
-    nz = noise((dr, dc), ctx.frame)
+    nz = ctx.scratch(
+        "pulse_grain", lambda: np.random.default_rng(419).random((dr, dc)).astype(np.float32)
+    )
 
     core = dist < 1.0
     inside = (dist <= r) & (r >= 1.0)
     prox = np.where(inside, dist / np.maximum(r, 1e-6), 0.0)
     lit = inside & ((prox > 0.45) | (nz < 0.3 + prox * 0.7))
 
-    halo = (~inside) & (dist < r + 4.0) & (nrg > 0.15)
-    ov = np.clip((dist - r) / 4.0, 0.0, 1.0)
-    lit |= halo & (nz < nrg * (1.0 - ov) * 0.4)
+    # Folded into one threshold field rather than a separate mask, a clipped
+    # overshoot and a product: each of those is a pass over the whole dot grid
+    # and the halo was eleven of them.
+    hv = nrg * np.clip(1.0 - (dist - r) * 0.25, 0.0, 1.0) * 0.4
+    lit |= (~inside) & (nz < hv)
 
-    phase = math.fmod(ctx.t * 3.6, 1.0)
-    strength = avg * (1.0 - phase)
-    if strength > 0.1:
-        # reuses nz rather than a second noise() call, same as halo above does
-        # against inside's — a different threshold on the same random field
-        # reads as independently random, and a full-grid hash is expensive
-        # enough (see render.frac's docstring for the same lesson re: np.mod)
-        # that this mode was calling it up to twice a frame for no visible gain.
-        band = 1.0 + strength * 2.0
+    # A wave crosses the radius in ~0.9 s and fades over the same span, so its
+    # position is set by seconds since launch and nothing here is per-frame.
+    for k in range(_PULSE_WAVES):
+        age = ctx.t - st["born"][k]
+        if not (0.0 <= age < 0.9):
+            continue
+        phase = age / 0.9
+        strength = float(st["amp"][k]) * (1.0 - phase)
+        if strength <= 0.06:
+            continue
+        band = 1.0 + strength * 3.0
         edge = np.abs(dist - max_r * phase)
         near = edge < band
-        fade = 1.0 - edge / band
-        lit |= near & (nz < fade * strength)
+        lit |= near & (nz < (1.0 - edge / band) * strength)
 
     lit |= core
     codes = pack_braille(lit)
-    heat = np.maximum(prox, np.where(core, 0.2, 0.0))
-    cidx = ctx.ramp(cell_max(np.where(lit, heat, 0.0)))
+    # The core is a handful of dots; giving it its own full-grid ``where`` and
+    # ``maximum`` cost two passes over 320k cells to colour about twelve.
+    heat = np.where(lit, prox, 0.0)
+    heat[core] = 0.2
+    cidx = ctx.ramp(cell_max(heat))
     return codes, cidx
 
 
