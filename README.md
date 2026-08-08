@@ -7,7 +7,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-00c853)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20·%20Linux%20·%20macOS-546e7a)](#how-it-captures-audio)
-[![Modes](https://img.shields.io/badge/render%20modes-49-ff6d00)](#modes)
+[![Modes](https://img.shields.io/badge/render%20modes-44-ff6d00)](#modes)
 [![Themes](https://img.shields.io/badge/themes-49-7c4dff)](#themes)
 [![Built with Textual](https://img.shields.io/badge/built%20with-Textual-5e35b1)](https://textual.textualize.io/)
 
@@ -21,7 +21,7 @@ spektr draws it: overlapped FFTs across 32 log-spaced bands (settable) from 50 H
 out the way cava does it, rendered with braille sub-characters so the picture moves at
 four times the vertical resolution of a text cell.
 
-**Forty-nine render modes. Forty-nine themes. 60 fps, or your display's.**
+**Forty-four render modes. Forty-nine themes. 60 fps, or your display's.**
 
 ## Install
 
@@ -93,40 +93,37 @@ Listed in the order the picker cycles them.
 
 | | | | |
 |---|---|---|---|
-| **Bars** | the classic — bars with peak markers | **Bubbles** | bubbles from the low end, popping at the top |
-| **Bricks** | chunky, no partial cells | **Radial** | the spectrum wrapped into a circle |
-| **Columns** | gapless, interpolated across the full width | **Retro** | sunset grid, with the spectrum as the horizon |
-| **Ladder** | segmented LED stack | **Auroras** | a light ribbon whose lower rim rides the spectrum |
-| **Sonar** | one sweep, not the whole spectrum — returns fade like a scope | **Tunnel** | flying down a pipe, ribbed by the beat |
-| **Mirror** | grows out from the centre line | **Warp** | starfield, accelerating with the music |
-| **Stereo** | per-band L/R meters, mirrored from centre | **Matrix** | digital rain, falling faster when it's loud |
-| **Wave** | smoothed waveform | **Spectro** | scrolling waterfall — frequency up, time across |
-| **Scope** | trigger-synced oscilloscope — the trace holds still | **Plasma** | solid colour field, warped by the spectrum |
-| **ECG** | scrolling trace, like a heart monitor | **VFD** | vacuum-fluorescent bargraph with phosphor afterglow |
-| **Strings** | plucked strings, bowed by their own band | **Needle** | analogue VU — one sweeping needle, one red zone |
-| **Gonio** | stereo phase scope with a phosphor trail | **VU** | big L/R LED meters with peak hold |
-| **Scatter** | density sparkle, thicker where it's loud | **Arcs** | hollow rings, one per band, pushed out by level |
-| **Flame** | fire, licking upward from each band | **Orbit** | one dot per band, actually revolving around a centre |
-| **Pulse** | radial pulse with shockwaves | **Dune** | sand piles up by band, avalanching past a threshold |
-| **Fireworks** | beat-triggered launches, bursts, and fall | **Keys** | a lit keyboard; struck bands scroll away as notes |
-| **Colony** | a growing culture — spots, worms and mazes, set by the music | **Readout** | scrolling numeric ticker, band levels as plain digits |
-| **Boot** | an old PC waking up — BIOS POST, a boot log, a blinking cursor | **Chladni** | vibrating-plate figure that snaps between real resonances |
-| **Helix** | two strands rotating, split by true L/R phase | **Chladni Flow** | the same plate, melting continuously from one figure to the next |
-| **Flipbook** | your own ASCII animation, played by the music | **Maelstrom** | a real fluid sim, stirred by the music |
-| **Vinyl** | a record whose grooves light up as a radial spectrum | **Rain** | rain on the glass, falling harder when it's loud |
-| **Ember** | a coal bed burning by band, sparks off the hot spots | **Fairylights** | a string of bulbs, one per band, lighting to the music |
-| **Cassette** | a tape deck; the strand carries the waveform | **Steam** | a mug whose steam rises band by band |
-| **Murmuration** | a flock wheeling and scattering with the beat | **Cabinet** | a 4x12 guitar cab; the cones clip when the tone does |
-| | | **Chladni Extreme** | the plate driven past its modes — morphs and escalates |
+| **Bars** | the classic — bars with peak markers | **Gonio** | stereo phase scope with a phosphor trail |
+| **Bubbles** | bubbles from the low end, popping at the top | **VU** | big L/R LED meters with peak hold |
+| **Bricks** | chunky, no partial cells | **Scatter** | density sparkle, thicker where it's loud |
+| **Radial** | the spectrum wrapped into a circle | **Arcs** | hollow rings, one per band, pushed out by level |
+| **Columns** | gapless, interpolated across the full width | **Flame** | fire, licking upward from each band |
+| **Retro** | sunset grid, with the spectrum as the horizon | **Orbit** | one dot per band, actually revolving around a centre |
+| **Ladder** | segmented LED stack | **Pulse** | radial pulse with shockwaves |
+| **Auroras** | a light ribbon whose lower rim rides the spectrum | **Dune** | sand piles up by band, avalanching past a threshold |
+| **Sonar** | one sweep, not the whole spectrum — returns fade like a scope | **Fireworks** | beat-triggered launches, bursts, and fall |
+| **Tunnel** | flying down a pipe, ribbed by the beat | **Keys** | a lit keyboard; struck bands scroll away as notes |
+| **Mirror** | grows out from the centre line | **Readout** | scrolling numeric ticker, band levels as plain digits |
+| **Warp** | starfield, accelerating with the music | **Boot** | an old PC waking up — BIOS POST, a boot log, a blinking cursor |
+| **Stereo** | per-band L/R meters, mirrored from centre | **Chladni** | vibrating-plate figure that snaps between real resonances |
+| **Matrix** | digital rain, falling faster when it's loud | **Helix** | two strands rotating, split by true L/R phase |
+| **Wave** | smoothed waveform | **Chladni Flow** | the same plate, melting continuously from one figure to the next |
+| **Spectro** | scrolling waterfall — frequency up, time across | **Flipbook** | your own ASCII animation, played by the music |
+| **Scope** | trigger-synced oscilloscope — the trace holds still | **Maelstrom** | a real fluid sim, stirred by the music |
+| **Plasma** | solid colour field, warped by the spectrum | **Vinyl** | a record whose grooves light up as a radial spectrum |
+| **ECG** | scrolling trace, like a heart monitor | **Rain** | rain on the glass, falling harder when it's loud |
+| **VFD** | vacuum-fluorescent bargraph with phosphor afterglow | **Ember** | a coal bed burning by band, sparks off the hot spots |
+| **Strings** | plucked strings, bowed by their own band | **Murmuration** | a flock wheeling and scattering with the beat |
+| **Needle** | analogue VU — one sweeping needle, one red zone | **Chladni Extreme** | the plate driven past its modes — morphs and escalates |
 
-Vinyl, Rain, Ember, Fairylights, Cassette, and Steam are the lofi group — a
+Vinyl, Rain and Ember are the lofi group — a
 shared *look* (warm objects, soft edges, nothing strobing) rather than a
 shared reactivity budget. Each one maps real band data into its geometry,
 so what the music changes is what the object is doing, not just how bright
 the picture is.
 
-A fiftieth entry, **None**, is registered as the off switch — it draws nothing.
-That is why the test output counts 50 modes against the forty-nine listed here.
+A forty-fifth entry, **None**, is registered as the off switch — it draws nothing.
+That is why the test output counts 45 modes against the forty-four listed here.
 
 Still frames of a few of them, straight from the render path: **[docs/gallery.md](docs/gallery.md)**.
 

@@ -55,7 +55,7 @@ def _onset(ctx: Ctx) -> tuple[bool, float]:
 
     ``ctx.energy`` is spring-smoothed (see widget.py) and would smear a hit
     across several frames if thresholded directly, the same reasoning
-    ``Fireworks`` and ``Colony`` use their own copy of in particles.py. Each
+    ``Fireworks`` uses its own copy of in particles.py. Each
     caller rolling this itself rather than sharing one implementation across
     files is deliberate — it's four lines, and the alternative is a new
     render.py primitive for something this small.

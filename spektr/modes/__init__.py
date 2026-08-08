@@ -105,9 +105,9 @@ class Ctx:
 
         This is the only *timbre* measure in the app — everything else here is
         level and rough band position, which cannot tell a clean guitar from a
-        distorted one at the same volume. Clipping generates dense harmonics,
-        so overdrive is exactly what drives this number up, which is why
-        ``Cabinet`` reads it.
+        distorted one at the same volume. Clipping and percussive noise both
+        drive it up, a sustained tone drives it down. ``Chladni Extreme`` uses
+        it to tell a drum-led groove from a pad.
 
         Cached per frame: it is cheap over 32 bands but several modes may want
         it, and a ``Ctx`` is built fresh every frame so the cache cannot go

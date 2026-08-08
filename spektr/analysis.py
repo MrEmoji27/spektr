@@ -60,8 +60,8 @@ N_BANDS = 32          # internal resolution; modes downsample for chunky looks
 #:
 #: This was 512, i.e. ~94/sec, which put a hard ceiling on how much of the
 #: audio the picture could actually resolve: above that frame rate consecutive
-#: frames read the same spectrum, and the waveform modes (Scope, Gonio, ECG,
-#: Cassette) draw a genuinely identical trace because they only step when
+#: frames read the same spectrum, and the waveform modes (Scope, Gonio, ECG)
+#: draw a genuinely identical trace because they only step when
 #: ``frame.seq`` changes.
 #:
 #: Halving it costs no frequency resolution — that is set by the *window*

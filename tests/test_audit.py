@@ -56,21 +56,15 @@ SELF_ANIMATING = {
     # firework doesn't stop just because the spectrum did (Fireworks) — plus
     # a boot log that keeps typing, scrolling, and blinking its cursor on its
     # own clock (Boot), a cellular automaton stepping generations on its own
-    # clock (Colony), a flock whose agents keep moving under their own
-    # inter-agent forces even at a constant spectrum (Murmuration), and the
-    # lofi set, each animating on its own even in silence by design: a
-    # record keeps spinning after the needle drops
-    # (Vinyl), rain keeps falling at a small base rate so the loop never
-    # looks paused (Rain), embers keep drifting and cooling on their own
-    # timers once spawned (Ember), bulbs each twinkle on their own fixed
-    # clock (Fairylights), reels keep turning and the counter keeps ticking
-    # (Cassette), steam keeps curling and rising off the cup (Steam), and
-    # a speaker cone that is being driven keeps rippling — the phase
-    # accumulates every frame, a held note is a cone still moving (Cabinet)
+    # a flock whose agents keep moving under their own inter-agent forces
+    # even at a constant spectrum (Murmuration), and the lofi set, each
+    # animating on its own even in silence by design: a record keeps spinning
+    # after the needle drops (Vinyl), rain keeps falling at a small base rate
+    # so the loop never looks paused (Rain), and embers keep drifting and
+    # cooling on their own timers once spawned (Ember)
     "Readout", "Helix", "Chladni Flow", "Chladni Extreme", "Orbit", "Keys",
-    "Flipbook", "Maelstrom",
-    "Dune", "Fireworks", "Boot", "Colony", "Murmuration", "Vinyl", "Rain",
-    "Ember", "Fairylights", "Cassette", "Steam", "Cabinet",
+    "Flipbook", "Maelstrom", "Dune", "Fireworks", "Boot", "Murmuration",
+    "Vinyl", "Rain", "Ember",
 }
 
 #: Modes driven by the waveform rather than the band levels.
