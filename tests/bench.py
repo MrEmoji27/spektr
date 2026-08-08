@@ -79,8 +79,8 @@ def bench(palette, sizes=((120, 16), (200, 50), (240, 60), (400, 100)), n=20, ba
     CPU state made a *different* random set of modes land "over budget" on
     every run — modes that are 6-9 ms when timed alone. Per-frame medians with
     a warm-up helped, but on this machine's power management even those land
-    inside multi-second slow phases (identical code measured 13.5-18.3 ms in
-    consecutive runs; see docs/next-session.md).
+    inside multi-second slow phases: byte-identical code measured 13.5 ms and
+    18.3 ms in consecutive runs of this file.
 
     So: several batches, and two numbers out of them. ``best`` is the min batch
     median — the fastest phase that recurs. It is the stable one, so it is what

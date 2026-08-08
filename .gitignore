@@ -6,3 +6,17 @@ dist/
 .venv/
 .venv-build/
 venv/
+
+# tool caches
+.pytest_cache/
+.ruff_cache/
+
+# local agent/editor config — machine-specific, never shared
+.claude/
+
+# working notes: handoffs and the mode idea list. Kept out of the repo because
+# they are half-finished thinking addressed to whoever picks the work up next,
+# not documentation, and a reader landing on them from GitHub would take them
+# for the latter.
+docs/next-session.md
+docs/mode-ideas.md
