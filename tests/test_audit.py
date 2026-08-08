@@ -61,10 +61,12 @@ SELF_ANIMATING = {
     # looks paused (Rain), embers keep drifting and cooling on their own
     # timers once spawned (Ember), bulbs each twinkle on their own fixed
     # clock (Fairylights), reels keep turning and the counter keeps ticking
-    # (Cassette), and steam keeps curling and rising off the cup (Steam)
+    # (Cassette), steam keeps curling and rising off the cup (Steam), and
+    # a speaker cone that is being driven keeps rippling — the phase
+    # accumulates every frame, a held note is a cone still moving (Cabinet)
     "Readout", "Helix", "Chladni", "Orbit", "Keys", "Flipbook", "Maelstrom",
     "Dune", "Fireworks", "Boot", "Colony", "Murmuration", "Vinyl", "Rain",
-    "Ember", "Fairylights", "Cassette", "Steam",
+    "Ember", "Fairylights", "Cassette", "Steam", "Cabinet",
 }
 
 #: Modes driven by the waveform rather than the band levels.

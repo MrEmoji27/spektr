@@ -14,7 +14,7 @@ surface — this module is free to move around underneath it.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from functools import lru_cache
+from functools import cached_property, lru_cache
 from typing import Callable
 
 import numpy as np
@@ -94,6 +94,27 @@ class Ctx:
         if self.bars:
             return int(max(4, min(self.bars, self.n_bands, max(4, self.w // 2))))
         return int(max(8, min(self.n_bands, self.w // 7)))
+
+    @cached_property
+    def flatness(self) -> float:
+        """Spectral flatness, 0..1 — how noise-like the spectrum is.
+
+        The geometric mean of the band magnitudes over their arithmetic mean.
+        A pure tone puts everything in one band and scores near 0; white noise
+        or a wall of distortion spreads energy evenly and scores near 1.
+
+        This is the only *timbre* measure in the app — everything else here is
+        level and rough band position, which cannot tell a clean guitar from a
+        distorted one at the same volume. Clipping generates dense harmonics,
+        so overdrive is exactly what drives this number up, which is why
+        ``Cabinet`` reads it.
+
+        Cached per frame: it is cheap over 32 bands but several modes may want
+        it, and a ``Ctx`` is built fresh every frame so the cache cannot go
+        stale.
+        """
+        b = np.asarray(self.bands, dtype=np.float64) + 1e-6
+        return float(np.exp(np.log(b).mean()) / b.mean())
 
     def range(self, lo: float, hi: float) -> float:
         """Mean level across a slice of the spectrum, given as fractions.

@@ -115,7 +115,7 @@ Listed in the order the picker cycles them.
 | **Flipbook** | your own ASCII animation, played by the music | **Rain** | rain on the glass, falling harder when it's loud |
 | **Vinyl** | a record whose grooves light up as a radial spectrum | **Fairylights** | a string of bulbs, one per band, lighting to the music |
 | **Ember** | a coal bed burning by band, sparks off the hot spots | **Steam** | a mug whose steam rises band by band |
-| **Cassette** | a tape deck; the strand carries the waveform | | |
+| **Cassette** | a tape deck; the strand carries the waveform | **Cabinet** | a 4x12 guitar cab; the cones clip when the tone does |
 | **Murmuration** | a flock wheeling and scattering with the beat | | |
 
 Vinyl, Rain, Ember, Fairylights, Cassette, and Steam are the lofi group — a
@@ -124,8 +124,8 @@ shared reactivity budget. Each one maps real band data into its geometry,
 so what the music changes is what the object is doing, not just how bright
 the picture is.
 
-A forty-seventh entry, **None**, is registered as the off switch — it draws nothing.
-That is why the test output counts 47 modes against the forty-six listed here.
+A forty-eighth entry, **None**, is registered as the off switch — it draws nothing.
+That is why the test output counts 48 modes against the forty-seven listed here.
 
 Still frames of a few of them, straight from the render path: **[docs/gallery.md](docs/gallery.md)**.
 
