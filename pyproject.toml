@@ -1,5 +1,5 @@
 [project]
-name = "spektr"
+name = "spektr-audio"
 version = "0.2.1"
 description = "A terminal spectrum analyser for system audio — forty-seven render modes and forty-nine themes, drawn with braille."
 readme = "README.md"

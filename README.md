@@ -52,7 +52,7 @@ four times the vertical resolution of a text cell.
 **With Python 3.10+ (works on Windows, Linux and macOS):**
 
 ```bash
-pip install spektr
+pip install spektr-audio
 spektr
 ```
 
