@@ -283,25 +283,73 @@ class BandPlan:
 
 
 class OnsetDetector:
-    """Turns a per-hop spectrum into discrete beats. **Currently a stub.**
+    """Turns a per-hop spectrum into discrete beats.
 
-    The contract is fixed and the implementation is not: this returns no
-    onsets and no tempo, so every rhythm field on :class:`Frame` reads as its
-    "nothing known" value. That is a legitimate runtime state, not only a
-    placeholder — it is also what a listener gets during silence, under a
-    sustained drone, or in the first second before tempo is established. Code
-    consuming these fields has to handle it either way, so it is worth having
-    the stub exercise that path from the start.
+    Half-wave rectified spectral flux with an adaptive threshold. Flux, rather
+    than level, is the whole reason this exists: three modes previously rolled
+    their own beat detection out of ``ctx.energy`` — the mean band level — and
+    a mean cannot tell a kick drum from the track simply getting louder. Put a
+    sustained pad under a four-on-the-floor and an energy detector either fires
+    continuously or not at all, because total energy barely dips between hits.
+    Flux asks a different question: *how much of the spectrum just got louder
+    than it was*. A steady pad contributes nothing to that however loud it is,
+    because it is not changing. Only the attack does.
 
-    Deliberately a class rather than a function: onset detection is stateful
-    (it compares this hop's spectrum with the last, tracks a moving threshold,
-    and enforces a refractory gap), and hiding that state in module globals
-    would make two analysers in one process quietly share it.
+    Rectified because only increases are onsets. A note ending is a large
+    spectral change and not a beat, so the negative half is discarded rather
+    than taken as magnitude.
+
+    Log compression before differencing. Raw magnitudes make the flux scale
+    with absolute level, so a quiet passage detects nothing and a loud one
+    detects everything; comparing log spectra measures *proportional* change,
+    which is roughly what a listener hears and roughly level-independent.
+
+    Deliberately a class rather than a function: this is stateful — previous
+    spectrum, a moving threshold, a refractory clock — and hiding that in
+    module globals would make two analysers in one process share it silently.
     """
 
-    #: Shortest gap between two onsets, seconds. Below roughly this, a single
-    #: drum hit's attack and body register as two events.
+    #: Shortest gap between two onsets, seconds. Below roughly this a single
+    #: drum hit's attack and its body register as two events. 50 ms also caps
+    #: detection at 1200 BPM, far above any real pulse.
     REFRACTORY_S = 0.05
+    # Measured across 0.04-0.07 against the evaluation corpus: total F moved
+    # by 0.004 and dense-material recall not at all, so this is the standard
+    # value rather than a tuned one. The limit on fast material is PEAK_FRAC,
+    # not this.
+
+    #: Half-width of the peak-picking neighbourhood, in hops. A peak must be
+    #: the largest flux value within this many hops either side. Costs that
+    #: many hops of latency (5.3 ms each), which is the price of not reporting
+    #: one drum hit as two.
+    PEAK_SPAN = 4
+
+    #: Seconds of flux history behind the adaptive threshold. Long enough to
+    #: span a bar at slow tempi, short enough to follow a track that changes
+    #: density. Too long and a quiet intro sets the bar for a loud chorus.
+    HISTORY_S = 0.7
+
+    #: Log compression constant. Standard in the onset literature; large
+    #: enough that quiet spectral detail still registers.
+    GAMMA = 1000.0
+
+    #: Threshold is the running median plus this many mean-absolute-deviations.
+    #: Median and MAD rather than mean and standard deviation because onsets
+    #: are exactly the outliers being looked for, and they drag a mean upward
+    #: until the detector stops being able to see them.
+    K_MAD = 3.0
+
+    #: A peak must also reach this fraction of the recent peak flux.
+    #:
+    #: Median-plus-deviation alone collapses on sparse percussive material. A
+    #: four-on-the-floor kick is a short event in a mostly quiet bar, so the
+    #: median flux sits near zero and the deviation with it, and the threshold
+    #: goes to roughly nothing -- at which point every faint ripple between
+    #: hits clears it. Measured: a spurious detection 278 ms after every kick,
+    #: in the same place every bar, giving exactly two detections per beat.
+    #: Requiring a candidate to be a real fraction of how hard things have
+    #: recently hit is what a bare median cannot express.
+    PEAK_FRAC = 0.65
 
     def __init__(self) -> None:
         self.seq = 0
@@ -310,13 +358,181 @@ class OnsetDetector:
         self.tempo_bpm = 0.0
         self.beat_phase = 0.0
 
+        self._level = 0.0
+        self._prev: np.ndarray | None = None
+        self._hist: np.ndarray | None = None      # circular flux history
+        self._hi = 0
+        self._filled = 0
+        #: last three (time, flux) samples — a peak is picked from the middle
+        #: one, so detection lags by a single hop (~5.3 ms) in exchange for
+        #: not firing on the leading edge of every slow swell.
+        self._win: list[tuple[float, float]] = []
+        self._peak = 1e-9
+        self._last_t = -1e9
+        self._beats: list[float] = []
+        self._span = self.PEAK_SPAN * 2 + 1
+
     def feed(self, spectrum: np.ndarray, now: float) -> None:
         """Consume one hop's magnitude spectrum, taken at time ``now``.
 
-        ``now`` is passed rather than read here so the caller controls the
-        clock — the evaluation harness runs faster than real time and needs
-        the detector to see the timeline of the *signal*, not of the wall.
+        ``now`` is passed rather than read from a clock here so the caller
+        owns the timeline — an offline harness drives this on the signal's
+        clock, and onsets are judged to within tens of milliseconds.
         """
+        # Normalise before compressing, or the compression is not compression.
+        #
+        # log1p(GAMMA * x) only behaves logarithmically once GAMMA * x is
+        # comfortably above 1; below that it is very nearly linear. So the same
+        # code measures *relative* spectral change at ordinary listening levels
+        # and *absolute* change on a quiet track — two different detectors
+        # chosen by volume, which is the opposite of the level independence
+        # this was supposed to provide. Measured on a track at -40 dB:
+        # precision 0.06, sixteen false positives and fifteen misses in one
+        # scenario, while the identical material at full level scored 0.91.
+        #
+        # Dividing by a slow running mean of the spectrum's own magnitude puts
+        # the input to log1p in the same range whatever the track's level. The
+        # follower is deliberately sluggish: it should track "how loud is this
+        # recording" and not "how loud is this beat", or it would normalise
+        # away the very transients being detected.
+        total = float(spectrum.sum()) / max(spectrum.size, 1)
+        if self._level <= 0.0:
+            self._level = max(total, 1e-12)
+        else:
+            self._level += (total - self._level) * 0.002
+        cur = np.log1p(self.GAMMA * spectrum / max(self._level, 1e-12))
+
+        if self._prev is None or self._prev.shape != cur.shape:
+            # No previous spectrum to difference against, or the window
+            # changed size under us (a sample-rate change rebuilds the plan).
+            # Either way this hop has no meaningful flux.
+            self._prev = cur
+            self.flux = 0.0
+            return
+
+        diff = cur - self._prev
+        self._prev = cur
+        np.maximum(diff, 0.0, out=diff)
+        raw = float(diff.sum()) / diff.size
+
+        # Peak decays so ``strength`` means "hard, for this passage" rather
+        # than "hard, compared with the loudest thing since startup". Half a
+        # second-ish of memory: 0.996 per hop at 187.5 Hz is ~0.47 a second.
+        self._peak = max(raw, self._peak * 0.996)
+        self.flux = min(1.0, raw / self._peak) if self._peak > 0 else 0.0
+
+        if self._hist is None:
+            n = max(8, int(self.HISTORY_S * 187.5))
+            self._hist = np.zeros(n, dtype=np.float64)
+            self._hi = 0
+            self._filled = 0
+
+        if not self._win:
+            # Seed the left half of the peak-picking neighbourhood with
+            # silence rather than waiting for it to refill.
+            #
+            # A candidate cannot be judged until there is history either side
+            # of it, so an empty window costs PEAK_SPAN hops before anything
+            # can fire. That is invisible in continuous music and fatal for
+            # sparse percussion: the noise gate shuts between widely spaced
+            # hits, and the next attack arrives *during* the refill and is
+            # never tested. Measured on an impulse track at 120 BPM — sixteen
+            # gate closures for sixteen beats, and none of the sixteen
+            # detected.
+            #
+            # Seeding zeros is not a trick to dodge the wait; it is what the
+            # recent past actually contained. The gate was shut, so the flux
+            # was nothing, and a transient arriving now genuinely does tower
+            # over the silence behind it.
+            step = 1.0 / 187.5
+            self._win = [
+                (now - (self.PEAK_SPAN - k) * step, 0.0)
+                for k in range(self.PEAK_SPAN)
+            ]
+
+        self._win.append((now, raw))
+        if len(self._win) > self._span:
+            self._win.pop(0)
+
+        if self._filled >= 8 and len(self._win) == self._span:
+            hist = self._hist[: self._filled]
+            med = float(np.median(hist))
+            mad = float(np.mean(np.abs(hist - med)))
+            thresh = max(med + self.K_MAD * mad, self.PEAK_FRAC * self._peak)
+
+            t_mid, b = self._win[self.PEAK_SPAN]
+            # A peak has to dominate a whole neighbourhood, not merely beat its
+            # two neighbours. The analysis window is 4096 samples -- 85 ms --
+            # so a single drum hit slides through it over many hops and its
+            # flux forms a broad hump, not a spike. Testing only the adjacent
+            # pair finds several maxima inside one hump and reports one hit as
+            # two: measured precision 0.49 against recall 0.97, almost exactly
+            # double-counting.
+            #
+            # Strictly greater on the left and not less on the right, so a
+            # plateau resolves to its first sample rather than firing twice.
+            left = all(b > v for _, v in self._win[: self.PEAK_SPAN])
+            right = all(b >= v for _, v in self._win[self.PEAK_SPAN + 1 :])
+            if left and right and b > thresh and t_mid - self._last_t >= self.REFRACTORY_S:
+                self._last_t = t_mid
+                self.seq += 1
+                self.strength = min(1.0, b / self._peak) if self._peak > 0 else 0.0
+                self._note_beat(t_mid)
+
+        self._hist[self._hi] = raw
+        self._hi = (self._hi + 1) % len(self._hist)
+        self._filled = min(self._filled + 1, len(self._hist))
+
+        self._update_phase(now)
+
+    # ── tempo ──
+    def _note_beat(self, t: float) -> None:
+        self._beats.append(t)
+        if len(self._beats) > 48:
+            del self._beats[:-48]
+
+    def _update_phase(self, now: float) -> None:
+        """Estimate tempo from inter-onset intervals, and phase from the last.
+
+        Deliberately conservative. A histogram of gaps between recent onsets
+        is a crude tempo tracker — it has no notion of metre and will happily
+        lock to eighth notes — so it reports 0.0 (unknown) unless a clear
+        plurality of intervals agree. Saying nothing is much better than
+        handing a mode a confident wrong number to sync animation to.
+        """
+        if len(self._beats) < 6:
+            self.tempo_bpm = 0.0
+            self.beat_phase = 0.0
+            return
+
+        gaps = np.diff(np.asarray(self._beats[-24:]))
+        gaps = gaps[(gaps > 0.25) & (gaps < 2.0)]      # 30..240 BPM
+        if gaps.size < 4:
+            self.tempo_bpm = 0.0
+            self.beat_phase = 0.0
+            return
+
+        # Cluster around the median gap rather than averaging: a missed beat
+        # produces a double-length interval, and a mean quietly splits the
+        # difference between right and twice-right.
+        med = float(np.median(gaps))
+        near = gaps[np.abs(gaps - med) < med * 0.18]
+        if near.size < max(3, int(gaps.size * 0.5)):
+            self.tempo_bpm = 0.0
+            self.beat_phase = 0.0
+            return
+
+        period = float(near.mean())
+        # Fold into a musically plausible range. A detector that fires on
+        # every eighth note is not wrong about the music, but 240 BPM is the
+        # wrong number to hand something trying to pulse on the beat.
+        while period < 0.4:
+            period *= 2.0
+        while period > 1.2:
+            period *= 0.5
+
+        self.tempo_bpm = 60.0 / period
+        self.beat_phase = float(((now - self._last_t) / period) % 1.0)
 
     def reset_continuity(self) -> None:
         """Called when the input goes silent.
@@ -327,15 +543,26 @@ class OnsetDetector:
         would fire a spurious onset on every un-pause. The count itself has to
         survive, or a reader differencing it sees the gap as beats.
         """
+        self._prev = None
+        self._win.clear()
+        self.flux = 0.0
+        self.strength = 0.0
+        self.beat_phase = 0.0
 
 
 class Analyser:
     """Overlapped FFT running independently of the render loop."""
 
-    def __init__(self, ring: RingBuffer, samplerate_getter):
+    def __init__(self, ring: RingBuffer, samplerate_getter, clock=time.monotonic):
         self._ring = ring
         self._get_sr = samplerate_getter
         self._onset = OnsetDetector()
+        # Injectable so an offline harness can drive the analyser on the
+        # *signal's* timeline rather than the wall's. Onset detection is
+        # judged on timing to within tens of milliseconds, and a corpus that
+        # renders twenty seconds of audio in two hundred milliseconds of CPU
+        # would otherwise have every event compared against the wrong clock.
+        self._clock = clock
         self._running = False
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
@@ -482,7 +709,7 @@ class Analyser:
         mono = (left + right) * 0.5
 
         rms = float(np.sqrt(np.mean(mono * mono))) + 1e-12
-        now = time.monotonic()
+        now = self._clock()
 
         # Noise gate: a *fixed* absolute threshold, deliberately. An adaptive
         # floor collapses onto the music when playback is already running as
@@ -548,6 +775,26 @@ class Analyser:
         raw_l *= plan.eq
         raw_r *= plan.eq
 
+        # Rhythm comes off the band sums here, and the position in the chain is
+        # the point.
+        #
+        # *After* the eq, because that is a fixed per-band constant: it cannot
+        # create change where there was none, and it lifts the treble where
+        # transients actually live.
+        #
+        # *Before* autosens, because that is not constant. It walks up and down
+        # continuously to keep the display in range, and a detector watching a
+        # signal multiplied by a moving number sees change that is not in the
+        # music.
+        #
+        # And band sums rather than the raw spectrum, which was the first
+        # version and was wrong. Differencing 2049 FFT bins meant ~2000 of them
+        # sat at the noise floor, where log1p(1000 x) amplifies numerical
+        # jitter enormously, and summing that much rectified noise swamped the
+        # few bins carrying an actual attack. A dead-steady drone scored 72
+        # onsets. Thirty-two band sums average that jitter away, and cost less.
+        self._onset.feed(raw_l + raw_r, now)
+
         # ── cava's autosens ──
         # Judged before the manual trim, so pressing ] actually makes the bars
         # taller instead of being cancelled out over the next second. That is a
@@ -594,16 +841,6 @@ class Analyser:
             ),
             axis=1,
         )
-
-        # Rhythm is derived from the mid-window magnitudes rather than from
-        # the band levels. The bands are eq-tilted, gain-scaled and about to be
-        # spring-smoothed for display; every one of those steps is there to
-        # make the picture readable and every one of them blunts an attack.
-        # An onset is a sudden change, so it wants the rawest spectrum around.
-        # Summed rather than per-channel: a beat is a beat wherever it is
-        # panned, and running the detector twice to OR the results would double
-        # its cost for no extra information.
-        self._onset.feed(spec_mid_l + spec_mid_r, now)
 
         self._publish(
             Frame(
