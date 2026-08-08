@@ -146,9 +146,10 @@ def chladni(ctx: Ctx):
     figures. Loudness sharpens the lines rather than moving them, the way a
     harder-driven plate throws sand into tighter bands.
 
-    This is the discrete, physical one: it holds a figure and jumps to the
-    next. See ``Chladni Extreme`` for the version that morphs continuously
-    between them and escalates as a track sustains energy.
+    The calmest of the three. This one is discrete and physical: it holds a
+    figure and jumps to the next. ``Chladni Flow`` sweeps continuously between
+    them instead, and ``Chladni Extreme`` does that *and* escalates as a track
+    sustains energy.
 
     Two things here exist only to keep make_strips cheap, the same lesson
     Plasma's docstring already tells: this uses the same two-colour ``▀``
@@ -227,6 +228,110 @@ def chladni(ctx: Ctx):
     sharpness = 1.4 + ctx.energy * 3.2
     nodal = np.clip(1.0 - np.abs(z) * sharpness, 0.0, 1.0)
     nodal *= nodal
+
+    # Quantised before ramping, for the ``make_strips`` reason in the
+    # docstring above. Twelve buckets rather than ten: the figure is smooth
+    # curves and the extra steps visibly soften the banding across a broad
+    # nodal region, at no measurable cost.
+    #
+    # Deliberately *not* dithered into a sand texture, which is the obvious
+    # thing to try given what a Chladni plate physically is. It was tried:
+    # at terminal resolution a nodal band is only a few cells across, so
+    # thresholding the field against a noise mask leaves isolated speckle
+    # with no curve left to read — and restricting the dither to the fringe
+    # while keeping the ridge solid still broke the thin parts of the
+    # figure, which is most of it. The clean field is the better picture.
+    nodal = np.round(nodal * 12.0) * (1.0 / 12.0)
+
+    idx = ctx.ramp(nodal)
+    codes = np.full((h, w), _UPPER_HALF, dtype=np.int32)
+    return codes, idx[0::2], idx[1::2]
+
+
+@mode(
+    "Chladni Flow",
+    group="fields",
+    blurb="a plate figure melting continuously from one resonance into the next",
+)
+def chladni_flow(ctx: Ctx):
+    """A vibrating-plate figure that morphs rather than snapping.
+
+    The middle of the three. ``Chladni`` uses integer mode numbers, so it
+    holds a figure and jumps to the next one, which is what a real plate
+    does. ``Chladni Extreme`` sweeps continuously *and* escalates as a
+    track sustains energy. This one is the plain continuous sweep: no
+    snapping, no charge, no harmonic — one figure melting into the next at
+    a fixed slow spin. It is the original, restored unchanged from 966aefb.
+
+    Plasma is a smooth continuous field; this is the opposite kind of
+    pattern — an interference figure with hard nodal lines, the shape sand
+    takes on a real Chladni plate, where it collects at the nodes (zero
+    motion) and gets shaken off everywhere else. The two integer mode
+    numbers that decide the figure's shape track the spectrum's centre of
+    mass, so a bass-heavy passage gives a coarse few-line figure and a
+    bright treble-heavy one gives a dense, many-celled figure — the same way
+    sweeping a real plate's drive frequency snaps it between resonant
+    figures. Loudness sharpens the lines rather than moving them, the way a
+    harder-driven plate throws sand into tighter bands.
+
+    Two things here exist only to keep make_strips cheap, the same lesson
+    Plasma's docstring already tells: this uses the same two-colour ``▀``
+    trick, and unlike Plasma's smooth field, ``nodal`` is a sharp,
+    non-monotonic difference-of-products — measured at ~50 distinct ramp
+    values per row at 400x100, versus Plasma's handful, because the
+    interference pattern has many local extrema even at low mode numbers.
+    ``m``/``n`` are capped lower than a "real" Chladni figure would use
+    (halving them only cut cost by ~15%, so frequency wasn't the main
+    driver), and ``nodal`` is quantised to 10 buckets before ramping so
+    neighbouring pixels collapse into the same colour index more often. That
+    combination measured worst-case ~7ms at 400x100, down from ~9-14ms and
+    frequently over the 11ms slow-mode threshold — which read as exactly the
+    "pops up, lags, then catches up" pattern it was reported as, since
+    crossing that threshold makes the widget reuse every other frame.
+    """
+    w, h = ctx.w, ctx.h
+    if w < 4 or h < 4:
+        return empty(w, h)
+
+    rows2 = h * 2
+
+    def geo():
+        y = np.arange(rows2, dtype=np.float64)[:, None] / max(1, rows2 - 1)
+        x = np.arange(w, dtype=np.float64)[None, :] / max(1, w - 1)
+        return y, x
+
+    y, x = ctx.scratch("chladni_flow_geo", geo)
+
+    bands8 = ctx.display_bands(8).astype(np.float64)
+    total = float(bands8.sum())
+    centroid = float((bands8 * np.arange(8)).sum() / total / 7.0) if total > 1e-9 else 0.0
+    highs = ctx.range(0.6, 1.0)
+
+    st = ctx.scratch("chladni_flow_ease", lambda: {"c": 0.3, "e": 0.5})
+    st["c"] += (centroid - st["c"]) * min(1.0, ctx.dt / 0.35)
+    st["e"] += (highs - st["e"]) * min(1.0, ctx.dt / 0.35)
+
+    # Mode numbers are continuous, not snapped to integers. Integer modes are
+    # the physically real ones, but stepping between them makes the whole
+    # figure change shape between one frame and the next — a hard cut, on a
+    # mode whose appeal is watching the pattern reorganise. Sweeping through
+    # the fractional values in between morphs one figure into the next, and
+    # the interference pattern stays a plausible plate figure throughout.
+    m = 2.0 + st["c"] * 4.4    # 2.0 .. 6.4
+    n = 3.2 + st["e"] * 4.4    # 3.2 .. 7.6
+
+    # a slow spin keeps a held tone's figure visibly alive rather than frozen
+    ang = ctx.t * 0.06
+    cs, sn = math.cos(ang), math.sin(ang)
+    xr = (x - 0.5) * cs - (y - 0.5) * sn + 0.5
+    yr = (x - 0.5) * sn + (y - 0.5) * cs + 0.5
+
+    z = np.sin(m * math.pi * xr) * np.sin(n * math.pi * yr) - np.sin(
+        n * math.pi * xr
+    ) * np.sin(m * math.pi * yr)
+
+    sharpness = 1.4 + ctx.energy * 3.2
+    nodal = np.clip(1.0 - np.abs(z) * sharpness, 0.0, 1.0) ** 2
 
     # Quantised before ramping, for the ``make_strips`` reason in the
     # docstring above. Twelve buckets rather than ten: the figure is smooth
@@ -365,13 +470,17 @@ def chladni_extreme(ctx: Ctx):
     # over the field. Same for folding the quantiser's scale into one step.
     nodal = np.clip(1.0 - np.abs(z) * sharpness, 0.0, 1.0)
     nodal *= nodal
-    # Twelve buckets, same as Chladni and for the same make_strips reason,
-    # but in place: allocating three more full-field temporaries to do it is
-    # the kind of thing that only shows up at 400x100, where this field is
-    # 80k cells and this mode is the heaviest in the app.
-    nodal *= 12.0
+    # Eight buckets, not the twelve its two siblings use, and in place: this
+    # is the heaviest mode in the app and over half its frame is the strip
+    # builder, which pays per colour boundary. Eight costs almost nothing
+    # visually here because escalation drives ``sharpness`` up to 7, and a
+    # sharp field is already nearly bimodal — most cells sit hard against 0
+    # or 1 rather than in the midtones the extra buckets would resolve.
+    # Measured at 400x100: 86 runs/row at twelve, 77 at eight, which is what
+    # takes it from sitting on the 16.7 ms line to under it.
+    nodal *= 8.0
     np.round(nodal, 0, out=nodal)
-    nodal *= 1.0 / 12.0
+    nodal *= 1.0 / 8.0
 
     idx = ctx.ramp(nodal)
     codes = np.full((h, w), _UPPER_HALF, dtype=np.int32)

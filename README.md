@@ -7,7 +7,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-00c853)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20·%20Linux%20·%20macOS-546e7a)](#how-it-captures-audio)
-[![Modes](https://img.shields.io/badge/render%20modes-48-ff6d00)](#modes)
+[![Modes](https://img.shields.io/badge/render%20modes-49-ff6d00)](#modes)
 [![Themes](https://img.shields.io/badge/themes-49-7c4dff)](#themes)
 [![Built with Textual](https://img.shields.io/badge/built%20with-Textual-5e35b1)](https://textual.textualize.io/)
 
@@ -21,7 +21,7 @@ spektr draws it: overlapped FFTs across 32 log-spaced bands (settable) from 50 H
 out the way cava does it, rendered with braille sub-characters so the picture moves at
 four times the vertical resolution of a text cell.
 
-**Forty-eight render modes. Forty-nine themes. 60 fps, or your display's.**
+**Forty-nine render modes. Forty-nine themes. 60 fps, or your display's.**
 
 ## Install
 
@@ -111,12 +111,13 @@ Listed in the order the picker cycles them.
 | **Fireworks** | beat-triggered launches, bursts, and fall | **Keys** | a lit keyboard; struck bands scroll away as notes |
 | **Colony** | a growing culture — spots, worms and mazes, set by the music | **Readout** | scrolling numeric ticker, band levels as plain digits |
 | **Boot** | an old PC waking up — BIOS POST, a boot log, a blinking cursor | **Chladni** | vibrating-plate figure that snaps between real resonances |
-| **Helix** | two strands rotating, split by true L/R phase | **Maelstrom** | a real fluid sim, stirred by the music |
-| **Flipbook** | your own ASCII animation, played by the music | **Rain** | rain on the glass, falling harder when it's loud |
-| **Vinyl** | a record whose grooves light up as a radial spectrum | **Fairylights** | a string of bulbs, one per band, lighting to the music |
-| **Ember** | a coal bed burning by band, sparks off the hot spots | **Steam** | a mug whose steam rises band by band |
-| **Cassette** | a tape deck; the strand carries the waveform | **Cabinet** | a 4x12 guitar cab; the cones clip when the tone does |
-| **Murmuration** | a flock wheeling and scattering with the beat | **Chladni Extreme** | the plate driven past its modes — morphs and escalates |
+| **Helix** | two strands rotating, split by true L/R phase | **Chladni Flow** | the same plate, melting continuously from one figure to the next |
+| **Flipbook** | your own ASCII animation, played by the music | **Maelstrom** | a real fluid sim, stirred by the music |
+| **Vinyl** | a record whose grooves light up as a radial spectrum | **Rain** | rain on the glass, falling harder when it's loud |
+| **Ember** | a coal bed burning by band, sparks off the hot spots | **Fairylights** | a string of bulbs, one per band, lighting to the music |
+| **Cassette** | a tape deck; the strand carries the waveform | **Steam** | a mug whose steam rises band by band |
+| **Murmuration** | a flock wheeling and scattering with the beat | **Cabinet** | a 4x12 guitar cab; the cones clip when the tone does |
+| | | **Chladni Extreme** | the plate driven past its modes — morphs and escalates |
 
 Vinyl, Rain, Ember, Fairylights, Cassette, and Steam are the lofi group — a
 shared *look* (warm objects, soft edges, nothing strobing) rather than a
@@ -124,8 +125,8 @@ shared reactivity budget. Each one maps real band data into its geometry,
 so what the music changes is what the object is doing, not just how bright
 the picture is.
 
-A forty-ninth entry, **None**, is registered as the off switch — it draws nothing.
-That is why the test output counts 49 modes against the forty-eight listed here.
+A fiftieth entry, **None**, is registered as the off switch — it draws nothing.
+That is why the test output counts 50 modes against the forty-nine listed here.
 
 Still frames of a few of them, straight from the render path: **[docs/gallery.md](docs/gallery.md)**.
 
