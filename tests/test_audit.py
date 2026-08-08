@@ -635,6 +635,58 @@ def check_fps_sentinel() -> list[str]:
     return bad
 
 
+def check_shuffle_scope() -> list[str]:
+    """Shuffle's scope setting round-trips, migrates, and gates what moves.
+
+    The field used to be a boolean and is now one of four scopes, so old config
+    files carry `true`/`false` where a string is expected. That migration is the
+    part most likely to rot: `True == 1` in Python, so a membership test alone
+    silently accepts a boolean and a truthiness test silently accepts the string
+    `"off"`.
+    """
+    from spektr.config import (
+        SHUFFLE_CHOICES,
+        SHUFFLE_DEFAULT,
+        SHUFFLE_OFF,
+        Settings,
+    )
+
+    bad = []
+    for raw, want in (
+        (True, SHUFFLE_DEFAULT), (False, SHUFFLE_OFF),
+        ("both", "both"), ("modes", "modes"), ("themes", "themes"),
+        (SHUFFLE_OFF, SHUFFLE_OFF),
+        ("junk", SHUFFLE_OFF), (None, SHUFFLE_OFF),
+        (1, SHUFFLE_OFF), (0, SHUFFLE_OFF), ("", SHUFFLE_OFF),
+    ):
+        st = Settings()
+        st.shuffle = raw
+        st.clamp()
+        if st.shuffle != want:
+            bad.append(f"Settings.shuffle={raw!r} clamped to {st.shuffle!r}, want {want!r}")
+
+    if SHUFFLE_OFF not in SHUFFLE_CHOICES:
+        bad.append("SHUFFLE_OFF must be one of SHUFFLE_CHOICES, or the panel cannot turn it off")
+    if SHUFFLE_DEFAULT == SHUFFLE_OFF or SHUFFLE_DEFAULT not in SHUFFLE_CHOICES:
+        bad.append(f"SHUFFLE_DEFAULT {SHUFFLE_DEFAULT!r} must be a real scope")
+
+    # What each scope is allowed to move. Mirrors _shuffle_tick's gating, which
+    # is the behaviour the setting exists to control.
+    every = 3
+    for scope, ticks, want_mode, want_theme in (
+        ("modes", 3, True, False),
+        ("themes", 3, False, True),
+        ("both", 3, True, True),
+    ):
+        moves_mode = scope in ("modes", "both")
+        moves_theme = scope == "themes" or (scope == "both" and ticks % every == 0)
+        if moves_mode != want_mode:
+            bad.append(f"scope {scope!r}: mode movement {moves_mode}, want {want_mode}")
+        if moves_theme != want_theme:
+            bad.append(f"scope {scope!r}: theme movement {moves_theme}, want {want_theme}")
+    return bad
+
+
 TESTS = [
     ("modes don't mutate shared buffers", check_no_mutation),
     ("modes animate", check_animates),
@@ -650,6 +702,7 @@ TESTS = [
     ("gate hysteresis", check_gate_hysteresis),
     ("themes are visible against their own background", check_theme_visibility),
     ("fps unlimited sentinel survives clamping", check_fps_sentinel),
+    ("shuffle scope migrates and gates", check_shuffle_scope),
 ]
 
 
@@ -730,6 +783,11 @@ def test_theme_visibility() -> None:
 
 def test_fps_sentinel() -> None:
     bad = check_fps_sentinel()
+    assert not bad, "\n".join(bad)
+
+
+def test_shuffle_scope() -> None:
+    bad = check_shuffle_scope()
     assert not bad, "\n".join(bad)
 
 

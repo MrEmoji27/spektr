@@ -150,6 +150,12 @@ class Spektr(App):
         #: the shuffle timer, or None when shuffle is off
         self._shuffle_timer = None
         self._shuffle_count = 0
+        #: what `s` turns shuffle back on to — the last scope actually used
+        self._shuffle_scope = (
+            self.settings.shuffle
+            if self.settings.shuffle != config.SHUFFLE_OFF
+            else config.SHUFFLE_DEFAULT
+        )
         self._presets = presets_module.load()
         #: the capture/device status text — what the header falls back to
         #: when nothing is playing that the OS will report on
@@ -177,7 +183,7 @@ class Spektr(App):
         self.viz.on_mode_disabled = self._mode_disabled
         # give the capture thread a moment, then say what it found
         self.set_timer(1.5, self.action_show_status)
-        if self.settings.shuffle:
+        if self.settings.shuffle != config.SHUFFLE_OFF:
             self._start_shuffle()
         self.set_interval(NOWPLAYING_POLL_SECONDS, self._poll_now_playing)
 
@@ -406,13 +412,26 @@ class Spektr(App):
     # in the same order is exactly what makes a screensaver feel like a slideshow
     # instead of a surprise.
 
-    def action_toggle_shuffle(self) -> None:
-        self.settings.shuffle = not self.settings.shuffle
-        if self.settings.shuffle:
-            self._start_shuffle()
-        else:
+    def _set_shuffle(self, scope: str) -> str:
+        """Apply a shuffle scope and start or stop the timer to match."""
+        if scope not in config.SHUFFLE_CHOICES:
+            scope = config.SHUFFLE_OFF
+        self.settings.shuffle = scope
+        if scope == config.SHUFFLE_OFF:
             self._stop_shuffle()
-        self.notify(f"shuffle {'on' if self.settings.shuffle else 'off'}", timeout=2)
+        else:
+            # Remembered so `s` can turn shuffle back on to whatever the user
+            # last chose, rather than resetting their scope every time they
+            # toggle it off and on.
+            self._shuffle_scope = scope
+            self._start_shuffle()
+        return scope
+
+    def action_toggle_shuffle(self) -> None:
+        off = self.settings.shuffle == config.SHUFFLE_OFF
+        scope = self._set_shuffle(self._shuffle_scope if off else config.SHUFFLE_OFF)
+        label = "off" if scope == config.SHUFFLE_OFF else f"on — {scope}"
+        self.notify(f"shuffle {label}", timeout=2)
 
     def _start_shuffle(self) -> None:
         if self._shuffle_timer is None:
@@ -432,13 +451,25 @@ class Spektr(App):
             return
 
         viz = self.viz
-        others = [n for n in viz.mode_names if n != viz.mode_name]
-        if others:
-            viz.set_mode(random.choice(others))
-            viz.commit_mode()
-
+        scope = self.settings.shuffle
         self._shuffle_count += 1
-        if self._shuffle_count % SHUFFLE_THEME_EVERY == 0:
+
+        if scope in ("modes", "both"):
+            others = [n for n in viz.mode_names if n != viz.mode_name]
+            if others:
+                viz.set_mode(random.choice(others))
+                viz.commit_mode()
+
+        # Every tick when themes are the only thing moving, every
+        # SHUFFLE_THEME_EVERY-th when they ride along with the modes. Changing
+        # both on the same tick reads as the picture breaking rather than as a
+        # deliberate change, which is why they are staggered — but that reason
+        # disappears when the mode is holding still, and a theme that changed
+        # only every third tick would look like shuffle had stopped working.
+        theme_due = scope == "themes" or (
+            scope == "both" and self._shuffle_count % SHUFFLE_THEME_EVERY == 0
+        )
+        if theme_due:
             theme_others = [n for n in viz.theme_names if n != viz.theme_name]
             if theme_others:
                 viz.apply_theme(random.choice(theme_others))
@@ -669,6 +700,15 @@ class Spektr(App):
                 "below this, input counts as silence",
             ),
             Setting(
+                "shuffle",
+                "shuffle",
+                config.SHUFFLE_CHOICES,
+                lambda v: "off" if v == config.SHUFFLE_OFF else f"cycling {v}",
+                self._set_shuffle,
+                f"a new pick every {int(SHUFFLE_MODE_SECONDS)}s; "
+                f"with both, the theme changes every {SHUFFLE_THEME_EVERY}rd one",
+            ),
+            Setting(
                 "chrome",
                 "header + footer",
                 (True, False),
@@ -723,6 +763,7 @@ class Spektr(App):
             "sensitivity": s.sensitivity,
             "gate": s.gate,
             "chrome": s.chrome,
+            "shuffle": s.shuffle,
         }
 
         # Flipbook-only rows: two more settings with no fixed choice list

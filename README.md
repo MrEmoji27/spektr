@@ -233,7 +233,7 @@ Full guide, including the whole of `ctx` and the drawing toolkit: **[docs/plugin
 | Key | Action | | Key | Action |
 |---|---|---|---|---|
 | `v` | Visualizer picker — live preview, `/` filter | | `d` / `D` | Next audio source / back to the default |
-| `t` | Theme picker — live preview, `/` filter | | `s` | Shuffle — random mode + theme on a timer |
+| `t` | Theme picker — live preview, `/` filter | | `s` | Shuffle on/off — what it cycles is set in `c` |
 | `c` | Settings — frame rate, bands, sensitivity, gate, source | | `[` `]` | Sensitivity down / up |
 | `m` / `space` | Next mode (`M` for previous) | | `g` `G` | Noise gate down / up |
 | `T` | Next theme | | `r` | Reload themes and plugins from disk |
@@ -253,6 +253,12 @@ distinct ranges of FFT bins rather than interpolated copies of their neighbours.
 is the last row — it shows what's currently listening, refreshing on its own as a switch
 settles rather than only when you touch it; → cycles to the next candidate device (same as
 `d`), ← resets to the system default (same as `D`).
+
+**Shuffle** is a scope, not just a switch: `off`, `modes`, `themes` or `both`. `s` toggles it
+on and off and remembers the scope you last used; the `c` panel is where you choose which.
+With `both` the mode changes every 15 s and the theme every third change — staggered, because
+new shapes and new colours in the same instant read as the picture breaking. With `themes`
+alone there is no mode change to stagger against, so the theme moves every tick instead.
 
 The **theme editor** row in `c` opens an editor on whatever is currently showing. Same panel shape, same live
 application — the visualiser is running behind it with real audio, so you judge a colour by
@@ -326,7 +332,7 @@ deliberately, or start with `--mic`.
 If the display is flat, `spektr --diagnose` prints which device Windows calls the default
 and which endpoint spektr resolved it to — those two lines answer it most of the time.
 
-Press `s` at any time for the current source and the input level against the noise gate.
+The **source** row in `c` shows the current source and the input level against the noise gate, refreshing on its own as a switch settles.
 When nothing adds up, `spektr --diagnose` opens every candidate in turn and prints the
 measured RMS and peak for each, which settles it:
 

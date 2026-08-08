@@ -28,6 +28,14 @@ FPS_UNLIMITED = 0
 #: opinion about the number.
 FPS_MAX = 240
 
+#: Shuffle scopes offered in the settings panel, in cycle order. ``off`` is one
+#: of them rather than a separate switch, so the row reads as a single decision.
+SHUFFLE_OFF = "off"
+SHUFFLE_CHOICES = (SHUFFLE_OFF, "modes", "themes", "both")
+
+#: What ``s`` turns shuffle *on* to, when there is no previous scope to restore.
+SHUFFLE_DEFAULT = "both"
+
 #: Frame rates offered in the settings panel. Anything in 15..240 is valid via
 #: ``--fps``; these are just the useful stops — 24 and 48 for people who want
 #: the film-ish look, 30/60 for the obvious ones, 90/120/144 for high-refresh.
@@ -52,7 +60,12 @@ class Settings:
     #: Screensaver-style auto-cycling of mode and theme. Remembered across
     #: restarts like everything else here — if you left it on, you wanted it
     #: on, not a surprise burst of quiet the next time you open a terminal.
-    shuffle: bool = False
+    #: What shuffle cycles: ``off``, ``modes``, ``themes`` or ``both``. This is
+    #: the on/off switch as well as the scope — a separate boolean plus a scope
+    #: would have made "on, shuffling nothing" representable, which is a state
+    #: with no meaning. Older configs stored a bool here; :meth:`clamp` migrates
+    #: those, so ``true`` still means what it used to.
+    shuffle: str = SHUFFLE_OFF
     #: Flipbook's selected reel and effect. Empty string means "unresolved,
     #: pick the first one" — see asciiart.restore(), which never touches disk
     #: itself, only records these names for the mode to resolve on first use.
@@ -90,7 +103,13 @@ class Settings:
         self.mode = self.mode if isinstance(self.mode, str) and self.mode else "Bars"
         self.theme = self.theme if isinstance(self.theme, str) and self.theme else "classic"
         self.chrome = bool(self.chrome)
-        self.shuffle = bool(self.shuffle)
+        # Migrates the old boolean. `is True` / `is False` rather than a
+        # truthiness test, and checked before the membership test, because
+        # `True == 1` and a bare `in` would not catch it.
+        if self.shuffle is True:
+            self.shuffle = SHUFFLE_DEFAULT
+        elif self.shuffle is False or self.shuffle not in SHUFFLE_CHOICES:
+            self.shuffle = SHUFFLE_OFF
         self.ascii_reel = self.ascii_reel if isinstance(self.ascii_reel, str) else ""
         self.ascii_fx = self.ascii_fx if self.ascii_fx in ("warp", "dissolve", "lit") else "warp"
         return self
