@@ -595,6 +595,61 @@ def check_theme_visibility() -> list[str]:
     return bad
 
 
+def check_fps_sentinel() -> list[str]:
+    """``fps`` accepts 0 as "unlimited" without swallowing junk into it.
+
+    The sentinel is the one value in ``Settings`` where a clamp bound and a
+    meaningful value collide. Clamping first and then testing for 0 turns
+    every negative number in a hand-edited config into a request to uncap,
+    and JSON booleans compare equal to 0, so both are checked here.
+
+    Also pins the resolution side: a failed probe must be distinguishable from
+    a probe that genuinely measured the fallback, and neither may raise.
+    """
+    from unittest.mock import patch
+
+    import spektr.display as disp
+    from spektr.config import FPS_MAX, FPS_UNLIMITED, Settings
+    from spektr.widget import AudioVisualizer
+
+    bad = []
+    for raw, want in (
+        (0, FPS_UNLIMITED), (0.0, FPS_UNLIMITED),
+        (60, 60), (144, 144), (FPS_MAX, FPS_MAX),
+        (10_000, FPS_MAX), (5, 15), (-3, 15), (-999, 15),
+        (None, 60), ("junk", 60), (float("nan"), 60),
+        (True, 15), (False, 15),
+    ):
+        s = Settings()
+        s.fps = raw
+        s.clamp()
+        if s.fps != want:
+            bad.append(f"Settings.fps={raw!r} clamped to {s.fps!r}, expected {want!r}")
+
+    def boom():
+        raise OSError("no display")
+
+    cap = 375
+    for probe, want in ((lambda: 144.0, (144, 144)), (lambda: None, (60, None)),
+                        (lambda: 500.0, (cap, 500)), (boom, (60, None))):
+        saved, disp._UNLIMITED = disp._UNLIMITED, None
+        try:
+            with patch.object(disp, "refresh_hz", probe):
+                got = disp.unlimited_fps(cap)
+            if got != want:
+                bad.append(f"unlimited_fps: probe gave {got}, expected {want}")
+        finally:
+            disp._UNLIMITED = saved
+
+    viz = object.__new__(AudioVisualizer)
+    viz._unlimited = (144, 144)
+    for raw, want in ((FPS_UNLIMITED, 144), (30, 30), (10, 15), (10_000, FPS_MAX)):
+        got = viz._resolve_fps(raw)
+        if got != want:
+            bad.append(f"_resolve_fps({raw!r}) = {got}, expected {want}")
+    return bad
+
+
 TESTS = [
     ("modes don't mutate shared buffers", check_no_mutation),
     ("modes animate", check_animates),
@@ -609,6 +664,7 @@ TESTS = [
     ("analyser stability over 1 s", check_analyser_stability),
     ("gate hysteresis", check_gate_hysteresis),
     ("themes are visible against their own background", check_theme_visibility),
+    ("fps unlimited sentinel survives clamping", check_fps_sentinel),
 ]
 
 
@@ -684,6 +740,11 @@ def test_gate_hysteresis() -> None:
 
 def test_theme_visibility() -> None:
     bad = check_theme_visibility()
+    assert not bad, "\n".join(bad)
+
+
+def test_fps_sentinel() -> None:
+    bad = check_fps_sentinel()
     assert not bad, "\n".join(bad)
 
 

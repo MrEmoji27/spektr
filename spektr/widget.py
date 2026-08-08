@@ -18,10 +18,11 @@ from textual.reactive import reactive
 from textual.strip import Strip
 from textual.widget import Widget
 
+from . import display as display_probe
 from . import modes as mode_registry
-from .analysis import N_BANDS, Analyser
+from .analysis import ANALYSES_PER_SEC, N_BANDS, Analyser
 from .capture import Capture
-from .config import Settings
+from .config import FPS_MAX, FPS_UNLIMITED, Settings
 from .modes import Ctx
 from .motion import Peaks, Spring, Trace
 from .palette import AUTO, RAMP_STEPS, Palette, all_themes, theme_from_textual
@@ -89,7 +90,13 @@ class AudioVisualizer(Widget):
         # Adaptive pacing moves the second one; the first is what gets saved,
         # so a slow machine never quietly rewrites the preference — and it is
         # also the ceiling adaptive pacing is allowed to climb back up to.
-        self._target_fps = int(self.settings.fps)
+        # "Unlimited" is resolved to a concrete number here, once, and never
+        # again. Everything downstream — the adaptive step-down, the recovery
+        # ceiling, the ``1000 / fps`` budget — needs a finite target, and
+        # keeping the resolution at this one point means none of that had to
+        # learn about the sentinel.
+        self._unlimited = display_probe.unlimited_fps(int(2 * ANALYSES_PER_SEC))
+        self._target_fps = self._resolve_fps(self.settings.fps)
         self._fps = self._target_fps
         self._build_ms: float | None = None
         self._last_seq = -1
@@ -116,7 +123,11 @@ class AudioVisualizer(Widget):
 
         self.capture.start()
         self.analyser.start()
-        self._retime(self._target_fps, requested=True)
+        # Pass the raw setting, not the resolved rate: ``requested=True``
+        # writes it back to ``settings``, and writing the resolved number there
+        # would silently turn "unlimited" into "144 fps" on first run and pin
+        # the preference to whatever monitor happened to be attached.
+        self._retime(self.settings.fps, requested=True)
 
     def on_unmount(self) -> None:
         self.analyser.stop()
@@ -354,6 +365,22 @@ class AudioVisualizer(Widget):
         self.refresh()
         return self.settings.bands
 
+    def unlimited_info(self) -> tuple[int, int | None]:
+        """``(resolved fps, detected Hz or None)`` for the settings row.
+
+        The row shows both because they are different failures. A probe that
+        returns a plausible-but-wrong number and a probe that fails and falls
+        back to 60 produce the same *rate*, and a user on a 165 Hz panel who
+        sees "display rate unknown" can report the one fact needed to fix it.
+        """
+        return self._unlimited
+
+    def _resolve_fps(self, fps: int) -> int:
+        """Turn a requested rate — possibly the unlimited sentinel — into Hz."""
+        if int(fps) == FPS_UNLIMITED:
+            return self._unlimited[0]
+        return max(15, min(FPS_MAX, int(fps)))
+
     def _retime(self, fps: int, *, requested: bool = False) -> None:
         """Re-pace the render timer.
 
@@ -362,14 +389,18 @@ class AudioVisualizer(Widget):
         not touch ``settings`` — persisting it both eroded the user's setting
         across sessions and made the recovery branch in ``_tick`` unreachable,
         because the ceiling it compares against had just been lowered to match.
+
+        A requested rate is saved *as requested*, so the unlimited sentinel
+        stays a sentinel in the config file; only the resolved number reaches
+        the timer and ``_target_fps``.
         """
-        fps = max(15, min(120, int(fps)))
+        resolved = self._resolve_fps(fps)
         if requested:
-            self._target_fps = fps
-            self.settings.fps = fps
-        if self._timer is not None and fps == self._fps:
+            self._target_fps = resolved
+            self.settings.fps = int(fps)
+        if self._timer is not None and resolved == self._fps:
             return
-        self._fps = fps
+        fps = self._fps = resolved
         if self._timer is not None:
             self._timer.stop()
         self._timer = self.set_interval(1.0 / fps, self._tick)

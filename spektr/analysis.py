@@ -74,6 +74,12 @@ N_BANDS = 32          # internal resolution; modes downsample for chunky looks
 #: Cost is linear in the rate: measured at 0.447 ms per analysis, 4.2% of one
 #: core at 94 Hz and ~8.4% at 188 Hz.
 HOP = 256
+
+#: Analyses per second at a nominal 48 kHz. Only used to size the ceiling on
+#: "unlimited" frame rate — past roughly twice this, consecutive frames read
+#: the same spectrum and the extra ones are interpolation, not new audio. The
+#: real device rate is whatever the capture reports; this is a planning figure.
+ANALYSES_PER_SEC = 48000 / HOP
 WAVE_POINTS = 512     # downsampled scope trace
 
 #: cava's defaults, and they are the right ones. Below 50 Hz you are looking at

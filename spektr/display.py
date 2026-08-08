@@ -250,3 +250,37 @@ def refresh_hz_or(default: int = FALLBACK_HZ) -> int:
     if hz is None or hz <= 1.0:
         return int(default)
     return int(round(hz))
+
+
+#: Resolved once, then reused. The Linux path shells out and none of the
+#: probes are cheap enough to call per frame — and the answer is not allowed
+#: to change mid-session anyway, because ``_target_fps`` is a fixed number the
+#: adaptive pacer compares against.
+_UNLIMITED: tuple[int, int | None] | None = None
+
+
+def unlimited_fps(cap: int) -> tuple[int, int | None]:
+    """Resolve "unlimited" to a real frame rate. Returns ``(fps, detected)``.
+
+    ``detected`` is the probed refresh rate, or ``None`` when every probe
+    failed — the caller needs to tell those apart, because "we measured 60"
+    and "we gave up and assumed 60" look identical in the number alone and
+    only one of them is a bug worth reporting.
+
+    ``cap`` is an upper bound from the analysis rate: past roughly twice the
+    rate at which new spectra exist, extra frames carry no new audio, only
+    interpolation. In practice it does not bind on any current panel — at
+    HOP 256 the cap is 375 — but a display faster than the analyser is a real
+    configuration and the ceiling says what happens in it.
+
+    Never raises and never returns 0: a failed probe yields ``FALLBACK_HZ``.
+    """
+    global _UNLIMITED
+    if _UNLIMITED is None:
+        try:
+            hz = refresh_hz()
+        except Exception:
+            hz = None
+        detected = int(round(hz)) if hz and hz > 1.0 else None
+        _UNLIMITED = (max(15, min(detected or FALLBACK_HZ, int(cap))), detected)
+    return _UNLIMITED

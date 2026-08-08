@@ -17,10 +17,22 @@ from . import palette
 #: which is what every mode did unconditionally before this was settable.
 BAND_CHOICES = (0, 8, 12, 16, 24, 32, 48, 64)
 
-#: Frame rates offered in the settings panel. Anything in 15..120 is valid via
+#: ``fps`` value meaning "run as fast as the display can show". Stored as the
+#: sentinel rather than as a resolved number so the preference survives moving
+#: the terminal to a different monitor: what was saved is the *intent*.
+#: :func:`spektr.display.unlimited_fps` turns it into a real rate at startup.
+FPS_UNLIMITED = 0
+
+#: Highest explicit frame rate accepted, from ``--fps`` or the panel. Raised
+#: from 120 because high-refresh panels are ordinary now and the pacer has no
+#: opinion about the number.
+FPS_MAX = 240
+
+#: Frame rates offered in the settings panel. Anything in 15..240 is valid via
 #: ``--fps``; these are just the useful stops — 24 and 48 for people who want
-#: the film-ish look, 30/60 for the obvious ones, 90/120 for high-refresh.
-FPS_CHOICES = (24, 30, 36, 48, 56, 60, 72, 90, 120)
+#: the film-ish look, 30/60 for the obvious ones, 90/120/144 for high-refresh.
+#: Unlimited sits at the end, past every explicit stop.
+FPS_CHOICES = (24, 30, 36, 48, 56, 60, 72, 90, 120, 144, FPS_UNLIMITED)
 
 
 @dataclass
@@ -58,7 +70,21 @@ class Settings:
         """
         self.sensitivity = _clamp_number(self.sensitivity, 0.15, 8.0, 1.0)
         self.gate = _clamp_number(self.gate, 1e-6, 2e-3, 8e-5)
-        self.fps = int(_clamp_number(self.fps, 15, 120, 60))
+        # The sentinel is recognised *before* clamping, not after. Clamping
+        # first and then testing for 0 turns every negative number in a
+        # hand-edited config into "unlimited", because the low bound floors
+        # them onto the sentinel — ``fps: -3`` should be junk, not a request to
+        # uncap. ``is not True/False`` because JSON booleans survive ``== 0``.
+        raw = self.fps
+        if (
+            isinstance(raw, (int, float))
+            and raw is not True
+            and raw is not False
+            and raw == FPS_UNLIMITED
+        ):
+            self.fps = FPS_UNLIMITED
+        else:
+            self.fps = int(_clamp_number(raw, 15, FPS_MAX, 60))
         bands = int(_clamp_number(self.bands, 0, 64, 16))
         self.bands = bands if bands == 0 else max(8, bands)
         self.mode = self.mode if isinstance(self.mode, str) and self.mode else "Bars"

@@ -501,14 +501,28 @@ class Spektr(App):
                 else f"{v}" + ("  (resolved)" if v > 32 else "")
             )
 
+        def show_fps(v):
+            if v != config.FPS_UNLIMITED:
+                return f"{v} fps"
+            # Show what was actually detected, not just the resolved rate. A
+            # probe that silently guessed wrong and a probe that failed and
+            # fell back both produce a number; only one of them is worth
+            # reporting, and the user cannot tell which from the number alone.
+            got, detected = viz.unlimited_info()
+            if detected is None:
+                return f"unlimited (experimental) — display rate unknown, using {got}"
+            return f"unlimited (experimental) — detected {detected} Hz"
+
         rows = [
             Setting(
                 "fps",
                 "frame rate",
                 config.FPS_CHOICES,
-                lambda v: f"{v} fps",
+                show_fps,
                 lambda v: viz._retime(v, requested=True),
-                "the motion is timed in seconds, so this changes smoothness only",
+                "motion is timed in seconds, so this is smoothness only; "
+                "unlimited caps to the detected display rate and is only worth "
+                "it with resources to spare",
             ),
             Setting(
                 "bands",
@@ -640,7 +654,8 @@ usage: spektr [options]
   --device <n>       force a capture device by index
   --mode <name>      start in a given visualiser
   --theme <name>     start with a given theme
-  --fps <n>          frame rate cap (default 60)
+  --fps <n>          frame rate cap, 15-240 (default 60)
+  --fps unlimited    run at the detected display refresh rate (experimental)
   --mic              allow the microphone as an automatic source
   --no-plugins       skip loading plugins this run
   --list-modes       print visualiser names and exit
@@ -829,9 +844,18 @@ def main() -> None:
     theme = _arg(argv, "--theme")
     if theme:
         settings.theme = theme
-    fps = _arg(argv, "--fps", int)
-    if fps:
-        settings.fps = fps
+    # ``unlimited`` spelled out, and 0 as its numeric form. ``if fps:`` would
+    # have quietly dropped the sentinel on the floor, since 0 is falsy.
+    fps_raw = _arg(argv, "--fps")
+    if fps_raw is not None:
+        if fps_raw.strip().lower() in ("unlimited", "max"):
+            settings.fps = config.FPS_UNLIMITED
+        else:
+            try:
+                settings.fps = int(fps_raw)
+            except ValueError:
+                print("--fps needs a number, or 'unlimited'")
+                raise SystemExit(2) from None
     settings.clamp()
 
     Spektr(

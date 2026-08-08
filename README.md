@@ -21,7 +21,7 @@ spektr draws it: overlapped FFTs across 32 log-spaced bands (settable) from 50 H
 out the way cava does it, rendered with braille sub-characters so the picture moves at
 four times the vertical resolution of a text cell.
 
-**Forty render modes. Forty-seven themes. Locked 60 fps.**
+**Forty-seven render modes. Forty-nine themes. 60 fps, or your display's.**
 
 ## Install
 
@@ -264,7 +264,8 @@ spektr --devices        list every audio device
 spektr --device 7       force a capture device by index
 spektr --mode Retro     start in a given visualiser
 spektr --theme gruvbox  start with a given theme
-spektr --fps 30         cap the frame rate
+spektr --fps 30         cap the frame rate (15-240)
+spektr --fps unlimited  run at the detected display rate (experimental)
 spektr --mic            allow the microphone as an automatic source
 spektr --list-modes     print visualiser names
 spektr --list-themes    print theme names
@@ -349,8 +350,14 @@ loudness-following gain shrinks the whole display on every kick.
 
 **The easing is expressed in seconds, not frames.** Bands are driven by a damped spring
 integrated with sub-stepping, and peak markers hold for a duration rather than a frame
-count. The animation feels identical at 15 fps and 120 fps, which means the frame rate
-can adapt to load without the motion changing character.
+count. The animation feels identical at 15 fps and 240 fps, which means the frame rate
+can adapt to load without the motion changing character — and it is what makes the
+`unlimited` setting safe to offer. That one probes the display's refresh rate at startup
+(`EnumDisplaySettingsW` on Windows, `xrandr`/`wlr-randr` on Linux, `CGDisplayModeGetRefreshRate`
+on macOS), resolves it to a fixed number once, and paces to that. It is marked experimental
+because two of those three probes have not been exercised on real hardware; the failure
+mode is a wrong rate rather than a crash, so the settings row prints the value it detected
+next to the option.
 
 **Modes emit arrays, not strings.** Every mode returns a `(h, w)` grid of codepoints and
 a matching grid of palette indices; the widget run-length encodes those into Textual
