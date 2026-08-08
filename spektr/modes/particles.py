@@ -391,12 +391,20 @@ def bubbles(ctx: Ctx):
     # transients twice as sharply and peaks much higher. Capped at 0.95 the
     # ripple can only ever occupy two adjacent dot rows.
     mids = ctx.range(0.25, 0.60)
-    sx = np.arange(0, dc, 3)
-    ripple = np.sin(sx * 0.07 + ctx.t * 1.4) * min(0.95, 0.4 + mids * 1.1)
+    # Every other dot column, not every third. At a stride of 3 the lit dots
+    # fall 1.5 braille cells apart, so one cell in three is empty and the
+    # "surface" is a broken row of specks — legible on a tall window where
+    # there is room to read it as a line, easy to lose entirely on a short
+    # one. A stride of 2 puts exactly one dot in every cell column.
+    sx = np.arange(0, dc, 2)
+    # The ripple is a fraction of the width rather than a fixed 0.07 rad/dot,
+    # so the surface carries the same two-and-a-bit waves at any size instead
+    # of one lazy curve at 60 columns and nine at 400.
+    ripple = np.sin(sx * (14.0 / max(dc, 1)) + ctx.t * 1.4) * min(0.95, 0.4 + mids * 1.1)
     srow = np.clip(np.rint(1.5 + ripple).astype(np.int32), 0, dr - 1)
     # Loudness goes into how brightly the surface glows rather than into how
     # far it swings, so the reaction is one the shape survives.
-    field[srow, sx] = np.maximum(field[srow, sx], 0.22 + 0.48 * mids)
+    field[srow, sx] = np.maximum(field[srow, sx], 0.34 + 0.46 * mids)
 
     np.clip(field, 0.0, 1.0, out=field)
     dots = field > 0.05
