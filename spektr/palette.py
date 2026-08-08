@@ -41,6 +41,18 @@ from rich.style import Style
 RAMP_STEPS = 64
 _GAMMA = 2.2
 
+#: Worst per-channel error, out of 255, that ``make_strips`` may introduce by
+#: merging near-identical colours into one Segment. About 4% of the channel
+#: range — under the ~2% JND for a large flat patch only in the sense that the
+#: merged cells are adjacent and the gradient is already quantised to 64 steps,
+#: which is the bound this has to live inside. Raising it starts to show as
+#: banding on smooth full-screen fields.
+_RLE_MAX_RGB = 10
+#: Never merge more than this many ramp steps regardless of how gentle the
+#: ramp is — beyond a few steps the run is no longer "the same colour", it is
+#: a decision to draw a different picture than the mode asked for.
+_RLE_MAX_TOL = 3
+
 
 # ── colour helpers ───────────────────────────────────────────────────────────
 
@@ -580,6 +592,7 @@ class Palette:
         "note",
         "pair_styles",
         "rgb",
+        "rle_tol",
         "styles",
         "theme",
     )
@@ -654,6 +667,28 @@ class Palette:
         # theme the ramp moves every frame, so the cache is dropped with it —
         # the indices it keys on now name different colours.
         self.pair_styles = {}
+
+        # How far ``make_strips`` may let a colour run drift from its start
+        # before it must split, derived from *this* ramp rather than fixed.
+        #
+        # A flat tolerance cannot be right for every theme, because "two ramp
+        # steps" is not a fixed amount of colour. Across the built-ins the
+        # largest channel move over two steps ranges from about 4/255 on the
+        # gentle ramps to 34/255 on ``classic`` — the default — and 72/255 on
+        # ``rainbow``, which walks a whole hue wheel. Merging at a flat two
+        # steps is invisible on the first and obvious banding on the last.
+        #
+        # So: take the largest drift whose worst-case channel error stays
+        # under ``_RLE_MAX_RGB``. Gentle ramps get the full merge and the
+        # Segment count that comes with it; aggressive ones fall back toward
+        # exact RLE, which is what they always had.
+        self.rle_tol = 0
+        for t in range(1, _RLE_MAX_TOL + 1):
+            if len(rgb_int) <= t:
+                break
+            if int(np.abs(rgb_int[t:] - rgb_int[:-t]).max()) > _RLE_MAX_RGB:
+                break
+            self.rle_tol = t
 
     # ── lookups ──
     def pair_style(self, key: int) -> Style:

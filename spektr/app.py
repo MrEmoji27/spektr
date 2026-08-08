@@ -116,7 +116,6 @@ class Spektr(App):
         Binding("t", "pick_theme", "Themes"),
         Binding("c", "settings", "Settings"),
         Binding("T", "cycle_theme", "Next theme", show=False),
-        Binding("n", "new_theme", "New theme", show=False),
         Binding("f", "toggle_chrome", "Full screen"),
         Binding("d", "next_source", "Next source", show=False),
         Binding("D", "default_source", "Default output", show=False),
@@ -283,6 +282,10 @@ class Spektr(App):
 
     def action_new_theme(self) -> None:
         """Live theme editor, starting from whatever is on screen.
+
+        Reached from the settings panel's "theme editor" row, not from a key
+        of its own. Everything that configures spektr lives behind ``c``; a
+        second entry point would be one more thing to know about for no gain.
 
         Deliberately not a colour-picker widget. The visualiser is already
         running behind the panel with real audio in it, so the feature is
@@ -688,7 +691,7 @@ class Spektr(App):
                 step=lambda delta: (
                     self.call_after_refresh(self.action_new_theme) if delta > 0 else None
                 ),
-                note="four colours, applied live; unlock all six inside. also on n",
+                note="four colours, applied live; unlock all six inside",
             ),
             # No fixed choices to step through and nothing to read out of
             # values — the audio source is whatever the capture thread

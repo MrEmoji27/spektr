@@ -198,8 +198,14 @@ def auroras(ctx: Ctx):
     inv_h = 1.0 / np.maximum(hsum * inv_w, 1e-3)
 
     # fine vertical ribbing — the striations are what make an aurora read as an
-    # aurora rather than as a smear, and in 1-D they cost nothing
-    bright *= 0.66 + 0.34 * np.sin(cols * 0.8 + ctx.t * 0.5).astype(np.float32)
+    # aurora rather than as a smear, and in 1-D they cost nothing. The period
+    # is ~20 cycles across any width rather than a fixed 7.85 dot-columns:
+    # at 400 wide a fixed period-8 sine is 100 cycles of shimmer across the
+    # screen — sub-resolution noise that also drove the strip builder to emit
+    # a segment for every other cell (see the ``_RLE_TOL`` note in render.py).
+    # The 160 keeps the original 0.8 rad/dot-column at an 80-column terminal,
+    # so the reference look is untouched.
+    bright *= 0.66 + 0.34 * np.sin(cols * (0.8 * (160.0 / dc)) + ctx.t * 0.5).astype(np.float32)
 
     # Tiled three times so the shear can wrap by simple offset. A modulo over
     # the whole dot grid is one of the most expensive things you can do per
@@ -244,7 +250,16 @@ def auroras(ctx: Ctx):
     lit = grain < heat * np.float32(1.9)
 
     codes = pack_braille(lit)
-    cidx = ctx.ramp(cell_max(np.where(lit, np.clip(heat, 0.0, 1.0), 0.0)))
+    # Quantised before ramping, the same trick and for the same reason as
+    # Chladni: this is a smooth full-width field, so without it almost every
+    # adjacent pair of cells lands in a different ramp bucket and the strip
+    # builder emits a Segment for each — measured at ~107 runs per row at
+    # 400x100, which cost more than building the picture did. Sixteen buckets
+    # over a field whose visible range is a fraction of the ramp is finer than
+    # the eye resolves here, and it does not depend on the theme being gentle
+    # enough for the strip builder's own tolerance to help.
+    shade = np.where(lit, np.clip(heat, 0.0, 1.0), 0.0)
+    cidx = ctx.ramp(np.round(cell_max(shade) * 16.0) * (1.0 / 16.0))
     return codes, cidx
 
 

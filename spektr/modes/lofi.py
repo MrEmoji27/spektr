@@ -553,10 +553,16 @@ def _cassette_static(dr: int, dc: int) -> dict:
     return {
         "reel_r": reel_r, "hub_r": hub_r,
         "reel1": (d1 <= reel_r) & ~hub1, "reel2": (d2 <= reel_r) & ~hub2,
+        # compressed angle arrays, one entry per reel cell — the spokes are
+        # evaluated on these instead of the full grid, see ``cassette``
+        "a1c": a1[(d1 <= reel_r) & ~hub1], "a2c": a2[(d2 <= reel_r) & ~hub2],
         "rim1": (d1 <= reel_r) & (d1 >= reel_r * 0.86),
         "rim2": (d2 <= reel_r) & (d2 >= reel_r * 0.86),
+        # combined masks: the per-frame code wants "either rim / either hub",
+        # and the OR is a full-grid pass — cached here once instead
+        "rim12": ((d1 <= reel_r) & (d1 >= reel_r * 0.86)) | ((d2 <= reel_r) & (d2 >= reel_r * 0.86)),
+        "hub12": hub1 | hub2,
         "hub1": hub1, "hub2": hub2,
-        "a1": a1, "a2": a2,
         "band1": band_of(d1), "band2": band_of(d2),
         "ringf1": frac(d1 / ring_period), "ringf2": frac(d2 / ring_period),
         "body_border": body_border,
@@ -576,6 +582,11 @@ def _spoke_mask(ang: np.ndarray, offset: float, n: int) -> np.ndarray:
     well over budget. Rescaling into "spoke-index space" turns five wrapped
     comparisons into one ``frac`` call regardless of spoke count — down to
     ~3.5ms, confirmed bit-identical to the old loop's output.
+
+    The caller passes a *compressed* array — only the reel's cells, gathered
+    from the cached static angle grid. Evaluating the same maths over the
+    full dot grid was ~3.8 ms per reel at 400x100, most of it spent on cells
+    that are not on the reel at all; compressed it is ~0.05 ms.
     """
     x = (ang - offset) * (n / (2 * math.pi))
     f = frac(x)
@@ -605,19 +616,33 @@ def cassette(ctx: Ctx):
     st["counter"] += (4.0 + st["warm"] * 26.0) * ctx.dt
     st["spin"] += (0.5 + ctx.energy * 5.5) * max(ctx.dt, 0.0)
 
-    spoke1 = sv["reel1"] & _spoke_mask(sv["a1"], st["spin"], _CASSETTE_SPOKES)
-    spoke2 = sv["reel2"] & _spoke_mask(sv["a2"], st["spin"], _CASSETTE_SPOKES)
+    heat = np.zeros((dr, dc), dtype=np.float32)
+    lvb = ctx.display_bands(_CASSETTE_BANDS).astype(np.float32)
 
-    lvb = ctx.display_bands(_CASSETTE_BANDS)
-    heat = np.zeros((dr, dc), dtype=np.float64)
-    for reel, bkey, rkey in (("reel1", "band1", "ringf1"), ("reel2", "band2", "ringf2")):
-        lvl = lvb[sv[bkey]]
-        lit = sv[reel] & (sv[rkey] < (0.16 + 0.64 * lvl))
-        heat[lit] = (0.14 + 0.74 * lvl)[lit]
-    heat[sv["rim1"] | sv["rim2"]] = 0.38 + 0.3 * st["warm"]
-    heat[sv["hub1"] | sv["hub2"]] = 0.5 + 0.4 * st["warm"]
-    heat[spoke1 | spoke2] = 0.45 + 0.45 * st["warm"]
-    heat[sv["body_border"]] = 0.34 + 0.2 * st["warm"]
+    # Wound-tape rings, evaluated only on each reel's cells. The reels are
+    # ~3% of the dot grid, yet the full-grid band gather, threshold compare
+    # and masked scatter per reel were measured at 6.65 ms of the frame at
+    # 400x100 — the mode's biggest cost after the spokes.
+    for rsel, bkey, rkey in (
+        (sv["reel1"], "band1", "ringf1"),
+        (sv["reel2"], "band2", "ringf2"),
+    ):
+        lvl = lvb[sv[bkey][rsel]]
+        lit = sv[rkey][rsel] < (np.float32(0.16) + np.float32(0.64) * lvl)
+        heat[rsel] = np.where(lit, np.float32(0.14) + np.float32(0.74) * lvl, heat[rsel])
+
+    heat[sv["rim12"]] = np.float32(0.38 + 0.3 * st["warm"])
+    heat[sv["hub12"]] = np.float32(0.5 + 0.4 * st["warm"])
+    heat[sv["body_border"]] = np.float32(0.34 + 0.2 * st["warm"])
+
+    # spinning spokes — computed on the cached compressed angle arrays, then
+    # scattered back onto the reel masks; same result as masking the full
+    # grid at a fraction of the cost
+    glow = np.float32(0.45 + 0.45 * st["warm"])
+    hit1 = _spoke_mask(sv["a1c"], st["spin"], _CASSETTE_SPOKES)
+    heat[sv["reel1"]] = np.where(hit1, glow, heat[sv["reel1"]])
+    hit2 = _spoke_mask(sv["a2c"], st["spin"], _CASSETTE_SPOKES)
+    heat[sv["reel2"]] = np.where(hit2, glow, heat[sv["reel2"]])
 
     # the strand: sag plus the live waveform, so the tape shakes with the audio
     on = sv["on_tape_zone"]

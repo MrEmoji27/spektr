@@ -225,7 +225,8 @@ def chladni(ctx: Ctx):
     ) * np.sin(m * math.pi * yr)
 
     sharpness = 1.4 + ctx.energy * 3.2
-    nodal = np.clip(1.0 - np.abs(z) * sharpness, 0.0, 1.0) ** 2
+    nodal = np.clip(1.0 - np.abs(z) * sharpness, 0.0, 1.0)
+    nodal *= nodal
 
     # Quantised before ramping, for the ``make_strips`` reason in the
     # docstring above. Twelve buckets rather than ten: the figure is smooth
@@ -359,8 +360,18 @@ def chladni_extreme(ctx: Ctx):
         z = z * (1.0 - 0.22 * charge) + z2 * (0.22 * charge)
 
     sharpness = 1.4 + ctx.energy * 3.2 + charge * 2.4
-    nodal = np.clip(1.0 - np.abs(z) * sharpness, 0.0, 1.0) ** 2
-    nodal = np.round(nodal * 12.0) * (1.0 / 12.0)
+    # ``x ** 2`` on a float array calls the power ufunc; an in-place multiply
+    # is the same result for a fraction of the cost, and this is a full pass
+    # over the field. Same for folding the quantiser's scale into one step.
+    nodal = np.clip(1.0 - np.abs(z) * sharpness, 0.0, 1.0)
+    nodal *= nodal
+    # Twelve buckets, same as Chladni and for the same make_strips reason,
+    # but in place: allocating three more full-field temporaries to do it is
+    # the kind of thing that only shows up at 400x100, where this field is
+    # 80k cells and this mode is the heaviest in the app.
+    nodal *= 12.0
+    np.round(nodal, 0, out=nodal)
+    nodal *= 1.0 / 12.0
 
     idx = ctx.ramp(nodal)
     codes = np.full((h, w), _UPPER_HALF, dtype=np.int32)

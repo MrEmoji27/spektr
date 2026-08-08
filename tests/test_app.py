@@ -246,8 +246,24 @@ async def main() -> int:
         await pilot.pause()
         before = viz.palette.theme.low
 
-        await pilot.press("n")
-        await pilot.pause()
+        # The editor has no key of its own — it is reached from the settings
+        # panel's "theme editor" row, so the test walks the same path a user
+        # does. Located by label for the reason documented above.
+        async def open_theme_editor() -> None:
+            await pilot.press("c")
+            await pilot.pause()
+            rows = app._overlay.query_one("#rows")
+            labels = [str(o.prompt).lstrip() for o in rows._options]
+            target = next(
+                i for i, t in enumerate(labels) if t.startswith("theme editor")
+            )
+            for _ in range(target):
+                await pilot.press("down")
+            await pilot.press("right")
+            await pilot.pause()
+            await pilot.pause()
+
+        await open_theme_editor()
         await pilot.press("down")
         for _ in range(8):
             await pilot.press("right")
@@ -265,8 +281,7 @@ async def main() -> int:
         if list((_scratch_dir / "themes").glob("*.toml")):
             problems.append("cancelled theme edit still wrote a file")
 
-        await pilot.press("n")
-        await pilot.pause()
+        await open_theme_editor()
         await pilot.press("down")
         for _ in range(8):
             await pilot.press("right")

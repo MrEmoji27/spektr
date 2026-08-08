@@ -187,13 +187,21 @@ def make_strips(
     """``(h, w)`` codepoints + ramp indices -> one Strip per row.
 
     Colour indices are run-length encoded, so a row of constant colour becomes
-    a single Segment and a smooth gradient becomes a few dozen. Blank cells are
-    folded into whichever run they land in — a space has no visible foreground,
-    so letting it inherit avoids splitting runs for nothing.
+    a single Segment and a smooth gradient becomes a few dozen. Runs tolerate
+    a small drift from their start colour before splitting, and every merged
+    boundary is one Segment fewer. How much drift is ``palette.rle_tol``, which
+    each theme derives from its own ramp: "two ramp steps" is not a fixed
+    amount of colour, and a tolerance that is invisible on a gentle ramp is
+    visible banding on ``rainbow``, which walks a hue wheel. Blank cells are
+    folded into whichever run they land in — a space has no visible
+    foreground, so letting it inherit avoids splitting runs for nothing.
     """
     h, w = codes.shape
     styles = palette.styles
     strips: list[Strip] = []
+    # Per-palette, not a module constant: how many ramp steps a run may drift
+    # is a question about *this* theme's colours. See Palette.rle_tol.
+    tol = palette.rle_tol
 
     # One C-level decode for the whole grid beats h*w calls to chr(). At 240x60
     # that is 14,400 interpreter round trips replaced by a single memcpy and a
@@ -216,14 +224,36 @@ def make_strips(
                     Strip([Segment(text_all[base : base + w], styles[int(idx[0])])], w)
                 )
                 continue
-            bounds = change.tolist()
-            starts = [0, *bounds]
-            ends = [*bounds, w]
-            pick = idx[starts]
-            segs = [
-                Segment(text_all[base + s : base + e], styles[int(c)])
-                for s, e, c in zip(starts, ends, pick.tolist())
-            ]
+            starts = [0, *change.tolist()]
+            pick = idx[starts].tolist()
+            # If no two adjacent runs are within tol of each other, the
+            # drift merge below is a no-op — every adjacent pair more than T
+            # apart forces a boundary immediately, by induction. Skipping the
+            # Python merge loop keeps rows of sharply distinct colours (a
+            # Chladni grid, say) exactly as cheap as before this tolerance.
+            if np.any(np.abs(np.diff(idx[starts])) <= tol):
+                # Merge runs while the colour stays within tol of the
+                # current run's start. Adjacent runs a step or two apart are
+                # perceptually identical; this is what keeps a smooth field
+                # from turning into a Segment for every other cell.
+                ms = [0]
+                mv = [pick[0]]
+                v0 = pick[0]
+                for k in range(1, len(starts)):
+                    v = pick[k]
+                    if v > v0 + tol or v < v0 - tol:
+                        ms.append(starts[k])
+                        mv.append(v)
+                        v0 = v
+                segs = [
+                    Segment(text_all[base + s : base + e], styles[c])
+                    for s, e, c in zip(ms, [*ms[1:], w], mv)
+                ]
+            else:
+                segs = [
+                    Segment(text_all[base + s : base + e], styles[c])
+                    for s, e, c in zip(starts, [*starts[1:], w], pick)
+                ]
             strips.append(Strip(segs, w))
         return strips
 
@@ -240,15 +270,43 @@ def make_strips(
         fi = cidx[y]
         bi = bidx[y]
         change = np.flatnonzero((fi[1:] != fi[:-1]) | (bi[1:] != bi[:-1])) + 1
-        bounds = change.tolist()
-        starts = [0, *bounds]
-        ends = [*bounds, w]
-        keys = (fi[starts].astype(np.int32) * RAMP_STEPS + bi[starts]).tolist()
+        starts = [0, *change.tolist()]
+        fvals = fi[starts].tolist()
+        bvals = bi[starts].tolist()
+        # Same skip-check and drift merge as the foreground-only path, applied
+        # to both indices — a step of background colour is as invisible as a
+        # step of foreground.
+        # AND, not OR: a merge needs *both* channels inside the tolerance, so
+        # a pair that qualifies on only one of them can never merge and must
+        # not drag the row onto the Python path.
+        if np.any(
+            (np.abs(np.diff(fi[starts])) <= tol)
+            & (np.abs(np.diff(bi[starts])) <= tol)
+        ):
+            ms = [0]
+            mv = [fvals[0] * RAMP_STEPS + bvals[0]]
+            f0, b0 = fvals[0], bvals[0]
+            for k in range(1, len(starts)):
+                f, b = fvals[k], bvals[k]
+                if (
+                    f > f0 + tol
+                    or f < f0 - tol
+                    or b > b0 + tol
+                    or b < b0 - tol
+                ):
+                    ms.append(starts[k])
+                    mv.append(f * RAMP_STEPS + b)
+                    f0, b0 = f, b
+            starts = ms
+            keys = mv
+        else:
+            keys = (fi[starts].astype(np.int32) * RAMP_STEPS + bi[starts]).tolist()
         segs = []
-        for s, e, key in zip(starts, ends, keys):
-            st = cache.get(key)
+        for k, s in enumerate(starts):
+            e = starts[k + 1] if k + 1 < len(starts) else w
+            st = cache.get(keys[k])
             if st is None:
-                st = pair_style(key)
+                st = pair_style(keys[k])
             segs.append(Segment(text_all[base + s : base + e], st))
         strips.append(Strip(segs, w))
     return strips

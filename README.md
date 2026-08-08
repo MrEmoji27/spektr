@@ -239,7 +239,6 @@ Full guide, including the whole of `ctx` and the drawing toolkit: **[docs/plugin
 | `c` | Settings — frame rate, bands, sensitivity, gate, source | | `[` `]` | Sensitivity down / up |
 | `m` / `space` | Next mode (`M` for previous) | | `g` `G` | Noise gate down / up |
 | `T` | Next theme | | `r` | Reload themes and plugins from disk |
-| `n` | New theme — live editor, saves to your themes folder | | | |
 | `f` | Hide header and footer — full-screen visual | | `q` | Quit |
 | `p` | Frame time and FPS | | | |
 | `L` | Save the current mode + theme + settings as a preset | | `l` | Load a saved preset — live preview, `esc` restores |
@@ -257,7 +256,7 @@ is the last row — it shows what's currently listening, refreshing on its own a
 settles rather than only when you touch it; → cycles to the next candidate device (same as
 `d`), ← resets to the system default (same as `D`).
 
-`n` — or the **theme editor** row in `c` — opens the editor on whatever is currently showing. Same panel shape, same live
+The **theme editor** row in `c` opens an editor on whatever is currently showing. Same panel shape, same live
 application — the visualiser is running behind it with real audio, so you judge a colour by
 watching bars move in it rather than by looking at a swatch. Pick a slot on the top row,
 then nudge its hue, saturation and lightness. Four slots by default (`low`, `mid`, `high`,
@@ -391,14 +390,20 @@ python tests/perf.py all     # analyser cost, strip scaling, memory, headroom
 Building the Windows exe and installer: **[packaging/README.md](packaging/README.md)** —
 one PowerShell command, or a tagged push and let CI do it.
 
-`bench.py` prints build and strip time for every mode at 120×16, 200×50 and 240×60.
+`bench.py` prints build and strip time for every mode at 120×16, 200×50, 240×60
+and 400×100. Five batches per mode, reporting both the best batch median (stable,
+so it is what to compare across runs) and the median one (what the budget gate
+uses, because whether a mode drops frames is a question about its ordinary case).
+Run it with nothing else going — two overlapping runs measured a 41% spread.
 `test_audit.py` is the one that catches logic errors rather than crashes — a mode that
 writes into the shared band buffer, or renders the same picture regardless of the audio,
 passes every shape check ever written.
 
 Measured on one core: the analyser costs **2.9%** of a core continuously, the audio
 callback **0.02%**, and the heaviest mode at 240×60 takes **7.5 ms** against a 16.7 ms
-budget. Nothing exceeds budget even at 400×100.
+budget. Nothing exceeds budget even at 400×100, where the worst are Vinyl and
+Chladni Extreme at ~16.1 ms and ~16.6 ms against 16.7 — measured on the typical
+batch, not the best one.
 
 ## Why it exists
 
