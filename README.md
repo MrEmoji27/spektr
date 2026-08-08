@@ -239,6 +239,7 @@ Full guide, including the whole of `ctx` and the drawing toolkit: **[docs/plugin
 | `c` | Settings — frame rate, bands, sensitivity, gate, source | | `[` `]` | Sensitivity down / up |
 | `m` / `space` | Next mode (`M` for previous) | | `g` `G` | Noise gate down / up |
 | `T` | Next theme | | `r` | Reload themes and plugins from disk |
+| `n` | New theme — live editor, saves to your themes folder | | | |
 | `f` | Hide header and footer — full-screen visual | | `q` | Quit |
 | `p` | Frame time and FPS | | | |
 | `L` | Save the current mode + theme + settings as a preset | | `l` | Load a saved preset — live preview, `esc` restores |
@@ -255,6 +256,18 @@ distinct ranges of FFT bins rather than interpolated copies of their neighbours.
 is the last row — it shows what's currently listening, refreshing on its own as a switch
 settles rather than only when you touch it; → cycles to the next candidate device (same as
 `d`), ← resets to the system default (same as `D`).
+
+`n` opens a **theme editor** on whatever is currently showing. Same panel shape, same live
+application — the visualiser is running behind it with real audio, so you judge a colour by
+watching bars move in it rather than by looking at a swatch. Pick a slot on the top row,
+then nudge its hue, saturation and lightness. Four slots by default (`low`, `mid`, `high`,
+`accent`) with the background and text colour derived from them; the `slots` row unlocks
+those two for hand-picking, seeded from what was being derived so nothing jumps. A `check`
+row runs the same visibility rule the test suite applies to the built-in themes — anchors
+too close to their own background, text below WCAG AA — as a warning, not a veto. `esc`
+asks for a name and writes `<config>/themes/<name>.toml`; a name that already exists gets a
+numeric suffix rather than shadowing a built-in. `esc` at the name prompt throws the draft
+away and restores the theme you started from.
 
 ## Command line
 

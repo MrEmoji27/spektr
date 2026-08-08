@@ -16,6 +16,7 @@ midtones where the eye expects them.
 
 from __future__ import annotations
 
+import colorsys
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -77,6 +78,105 @@ def mix(a, b, t: float) -> str:
 def _luminance(colour) -> float:
     r, g, b = _to_linear(np.array(hex_to_rgb(colour), dtype=np.float64))
     return float(0.2126 * r + 0.7152 * g + 0.0722 * b)
+
+
+def hex_to_hsl(colour) -> tuple[float, float, float]:
+    """``(hue 0..1, saturation 0..1, lightness 0..1)``.
+
+    HSL rather than RGB because this exists for the theme editor, and nudging
+    a colour is something people do in terms of "more blue" and "paler", not
+    in terms of a red channel. Round-trips exactly through ``hsl_to_hex`` for
+    every colour that came from an 8-bit-per-channel value.
+    """
+    r, g, b = (c / 255.0 for c in hex_to_rgb(colour))
+    hue, lightness, saturation = colorsys.rgb_to_hls(r, g, b)
+    return hue, saturation, lightness
+
+
+def hsl_to_hex(hue: float, saturation: float, lightness: float) -> str:
+    hue = hue % 1.0
+    saturation = min(1.0, max(0.0, saturation))
+    lightness = min(1.0, max(0.0, lightness))
+    r, g, b = colorsys.hls_to_rgb(hue, lightness, saturation)
+    return rgb_to_hex((r * 255.0, g * 255.0, b * 255.0))
+
+
+def rgb_distance(a, b) -> float:
+    """Straight-line distance in unit RGB, 0..sqrt(3)."""
+    x = np.array(hex_to_rgb(a), dtype=np.float64) / 255.0
+    y = np.array(hex_to_rgb(b), dtype=np.float64) / 255.0
+    return float(np.sqrt(((x - y) ** 2).sum()))
+
+
+def contrast_ratio(a, b) -> float:
+    """WCAG contrast ratio, 1..21."""
+    la, lb = _luminance(a), _luminance(b)
+    hi, lo = max(la, lb), min(la, lb)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+#: A ramp anchor closer than this to its own background renders as background.
+#: ``infrared`` shipped at 0.18 against every other theme's 0.27 or higher.
+MIN_ANCHOR_DISTANCE = 0.18
+#: WCAG AA for body text, which fg-on-bg has to clear.
+MIN_FG_CONTRAST = 4.5
+
+
+def theme_visibility_problems(theme: "Theme") -> list[str]:
+    """Why this theme would be hard to see, as human-readable lines.
+
+    One definition of "visible", used in two places that must not drift: the
+    audit test that guards the built-ins, and the theme editor, which has to
+    warn about the same thing *live* rather than letting someone save a theme
+    the test suite would reject.
+    """
+    bad = []
+    for label, colour in (("low", theme.low), ("mid", theme.mid), ("high", theme.high)):
+        d = rgb_distance(colour, theme.bg)
+        if d < MIN_ANCHOR_DISTANCE:
+            bad.append(
+                f"{label} anchor {colour} is only {d:.2f} from bg {theme.bg} — nearly invisible"
+            )
+    ratio = contrast_ratio(theme.fg, theme.bg)
+    if ratio < MIN_FG_CONTRAST:
+        bad.append(f"fg/bg contrast is {ratio:.2f}, below WCAG AA's {MIN_FG_CONTRAST}")
+    return bad
+
+
+def derive_bg(low: str, mid: str, high: str) -> str:
+    """A background for a theme whose ramp anchors are already chosen.
+
+    Built in HSL — ``low``'s hue at half its saturation and a fixed low
+    lightness — rather than by blending ``low`` toward black. Blending is the
+    obvious approach and it does not work here: ``mix`` interpolates in linear
+    light, which is right for a gradient and wrong for this, because 94% of
+    the way to black in linear light is still #004706. A background has to be
+    dark *perceptually*, and lightness is the axis that means that.
+
+    Steps darker if the result is too close to any anchor, and ends at pure
+    black. A near-black ``low`` on a near-black bg still fails after that, and
+    should: that is the ``infrared`` bug, and the editor warns rather than
+    silently choosing a colour the user did not ask for.
+    """
+    hue, sat, _ = hex_to_hsl(low)
+    for lightness in (0.07, 0.05, 0.03):
+        candidate = hsl_to_hex(hue, sat * 0.5, lightness)
+        if all(
+            rgb_distance(c, candidate) >= MIN_ANCHOR_DISTANCE + 0.04
+            for c in (low, mid, high)
+        ):
+            return candidate
+    return "#000000"
+
+
+def derive_fg(high: str, bg: str) -> str:
+    """Readable body text for a derived theme: a pale tint of the hot anchor."""
+    hue, sat, _ = hex_to_hsl(high)
+    for lightness in (0.86, 0.90, 0.94, 0.98):
+        candidate = hsl_to_hex(hue, sat * 0.25, lightness)
+        if contrast_ratio(candidate, bg) >= MIN_FG_CONTRAST + 0.5:
+            return candidate
+    return "#ffffff"
 
 
 # ── theme model ──────────────────────────────────────────────────────────────
@@ -617,3 +717,148 @@ def theme_from_textual(app) -> Theme | None:
         fg=fg,
         accent=accent,
     )
+
+
+# ── the theme editor's draft model ───────────────────────────────────────────
+
+
+#: Slots the editor exposes by default. A theme has six; four is what someone
+#: who has not read the ramp documentation can pick meaningfully, and bg/fg are
+#: derived from these well enough that most people never need the other two.
+BASIC_SLOTS = ("low", "mid", "high", "accent")
+#: What the advanced toggle unlocks, in addition to the four above.
+ADVANCED_SLOTS = ("bg", "fg")
+
+
+class ThemeDraft:
+    """A theme being edited, in HSL, with bg/fg derived until they are not.
+
+    Held in HSL rather than as hex strings because that is the axis the editor
+    nudges along, and repeatedly round-tripping a hue through 8-bit RGB
+    quantises it: nudge hue down and back up ten times through hex and you do
+    not return to where you started, so the control feels like it is slipping.
+    Hex is generated on demand instead.
+
+    ``advanced`` unlocks bg and fg for direct editing. While it is off they are
+    recomputed from the ramp on every change, which is what makes a four-colour
+    pick produce a usable six-slot theme.
+    """
+
+    def __init__(self, base: "Theme | None" = None, name: str = "custom"):
+        src = base or BUILTIN["classic"]
+        self.name = name
+        self.advanced = False
+        self._hsl = {
+            "low": hex_to_hsl(src.low),
+            "mid": hex_to_hsl(src.mid),
+            "high": hex_to_hsl(src.high),
+            "accent": hex_to_hsl(src.accent or src.mid),
+            "bg": hex_to_hsl(src.bg),
+            "fg": hex_to_hsl(src.fg),
+        }
+
+    @property
+    def slots(self) -> tuple[str, ...]:
+        return BASIC_SLOTS + ADVANCED_SLOTS if self.advanced else BASIC_SLOTS
+
+    def hex_of(self, slot: str) -> str:
+        if slot in ADVANCED_SLOTS and not self.advanced:
+            low, mid, high = (self.hex_of(s) for s in ("low", "mid", "high"))
+            bg = derive_bg(low, mid, high)
+            return bg if slot == "bg" else derive_fg(high, bg)
+        return hsl_to_hex(*self._hsl[slot])
+
+    def component(self, slot: str, which: str) -> float:
+        return self._hsl[slot]["hsl".index(which)]
+
+    def set_advanced(self, on: bool) -> None:
+        """Unlock bg and fg for editing, or hand them back to the derivation.
+
+        Turning it on seeds both from the values that *were* being derived, so
+        flipping the toggle changes nothing on screen — it only makes two more
+        colours reachable. Seeding from the original base theme instead would
+        make the picture jump the moment the toggle was touched, which reads
+        as the editor having lost the user's work.
+        """
+        on = bool(on)
+        if on and not self.advanced:
+            derived = {slot: self.hex_of(slot) for slot in ADVANCED_SLOTS}
+            for slot, colour in derived.items():
+                self._hsl[slot] = hex_to_hsl(colour)
+        self.advanced = on
+
+    def nudge(self, slot: str, which: str, delta: float) -> None:
+        """Move one HSL component of one slot. Hue wraps; the others clamp."""
+        h, s, lum = self._hsl[slot]
+        i = "hsl".index(which)
+        values = [h, s, lum]
+        values[i] = (values[i] + delta) % 1.0 if i == 0 else min(1.0, max(0.0, values[i] + delta))
+        self._hsl[slot] = (values[0], values[1], values[2])
+
+    def to_theme(self, name: str | None = None) -> "Theme":
+        return Theme(
+            name=name or self.name,
+            low=self.hex_of("low"),
+            mid=self.hex_of("mid"),
+            high=self.hex_of("high"),
+            bg=self.hex_of("bg"),
+            fg=self.hex_of("fg"),
+            accent=self.hex_of("accent"),
+        )
+
+    def problems(self) -> list[str]:
+        return theme_visibility_problems(self.to_theme())
+
+
+def sanitise_theme_name(name: str) -> str:
+    """A filename-safe, lowercase theme name. Empty input becomes ``custom``."""
+    kept = [c if (c.isalnum() or c in "-_") else "-" for c in str(name).strip().lower()]
+    cleaned = "".join(kept).strip("-")
+    while "--" in cleaned:
+        cleaned = cleaned.replace("--", "-")
+    return cleaned[:32] or "custom"
+
+
+def available_theme_name(name: str) -> str:
+    """``name``, suffixed until it collides with nothing that already exists.
+
+    Suffix rather than reject. A built-in name is a *good* name for a variant
+    on it — someone editing ``gruvbox`` and calling the result ``gruvbox`` is
+    being reasonable — and silently shadowing the built-in would remove it
+    from the picker with no way back short of deleting a file by hand.
+    """
+    base = sanitise_theme_name(name)
+    taken = set(all_themes())
+    if base not in taken:
+        return base
+    for n in range(2, 100):
+        candidate = f"{base}-{n}"
+        if candidate not in taken:
+            return candidate
+    return f"{base}-{os.getpid()}"
+
+
+def save_user_theme(theme: "Theme") -> Path:
+    """Write a theme to ``<config>/themes/<name>.toml``, and return the path.
+
+    Hand-rolled TOML: the standard library reads it and cannot write it, and
+    six quoted hex strings do not justify a dependency. Every value here is a
+    ``#rrggbb`` produced by ``rgb_to_hex``, so there is nothing to escape.
+    """
+    folder = config_dir() / "themes"
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"{theme.name}.toml"
+    body = "\n".join(
+        [
+            f"# {theme.name} — written by spektr's theme editor",
+            f'low    = "{theme.low}"',
+            f'mid    = "{theme.mid}"',
+            f'high   = "{theme.high}"',
+            f'bg     = "{theme.bg}"',
+            f'fg     = "{theme.fg}"',
+            f'accent = "{theme.accent}"',
+            "",
+        ]
+    )
+    path.write_text(body, encoding="utf-8")
+    return path

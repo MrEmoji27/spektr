@@ -276,6 +276,21 @@ class AudioVisualizer(Widget):
         except Exception:
             pass
 
+    def preview_theme_object(self, theme) -> None:
+        """Show a ``Theme`` that isn't in the registry yet — the editor's draft.
+
+        ``preview_theme`` takes a *name* and looks it up, which a theme being
+        invented does not have. Same restore path though: the name of whatever
+        was showing is stashed on ``_preview``, so cancelling out of the editor
+        goes through ``cancel_theme_preview`` unchanged.
+        """
+        if self._preview is None:
+            self._preview = self._theme_name
+        self.palette.set(theme)
+        self._paint_background()
+        self._strips = None
+        self.refresh()
+
     def preview_theme(self, name: str) -> str:
         if self._preview is None:
             self._preview = self._theme_name

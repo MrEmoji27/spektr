@@ -567,31 +567,18 @@ def check_theme_visibility() -> list[str]:
     because no check ever compared a theme's colours to its own bg. This one
     does, plus the WCAG AA text-contrast floor for fg-on-bg, which every
     built-in theme already happened to clear.
+
+    The check itself lives in ``palette.theme_visibility_problems`` rather than
+    here, because the theme editor has to apply exactly the same rule live as
+    the user picks colours. Two copies of "visible" would drift, and the copy
+    that drifted would be the one letting people save themes this test then
+    rejects.
     """
-    from spektr.palette import _luminance, hex_to_rgb
-
-    def dist(a, b) -> float:
-        x = np.array(hex_to_rgb(a), dtype=np.float64) / 255.0
-        y = np.array(hex_to_rgb(b), dtype=np.float64) / 255.0
-        return float(np.sqrt(((x - y) ** 2).sum()))
-
-    def contrast(a, b) -> float:
-        la, lb = _luminance(a), _luminance(b)
-        hi, lo = max(la, lb), min(la, lb)
-        return (hi + 0.05) / (lo + 0.05)
+    from spektr.palette import theme_visibility_problems
 
     bad = []
     for name, theme in all_themes().items():
-        for label, colour in (("low", theme.low), ("mid", theme.mid), ("high", theme.high)):
-            d = dist(colour, theme.bg)
-            if d < 0.18:
-                bad.append(
-                    f"{name}: {label} anchor {colour} is only {d:.2f} from bg {theme.bg} — "
-                    "nearly invisible"
-                )
-        fg_bg = contrast(theme.fg, theme.bg)
-        if fg_bg < 4.5:
-            bad.append(f"{name}: fg/bg contrast is {fg_bg:.2f}, below WCAG AA's 4.5")
+        bad += [f"{name}: {problem}" for problem in theme_visibility_problems(theme)]
     return bad
 
 

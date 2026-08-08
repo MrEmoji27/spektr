@@ -221,6 +221,53 @@ async def main() -> int:
             )
         mark(f"presets OK (saved+loaded {list(app._presets)})")
 
+        # theme editor: nudge a colour, cancel, then do it again and save.
+        # Cancelling has to leave both the live theme and the themes folder
+        # exactly as they were — a preview that leaks is the failure mode here.
+        viz.apply_theme("gruvbox")
+        viz.commit_theme()
+        await pilot.pause()
+        before = viz.palette.theme.low
+
+        await pilot.press("n")
+        await pilot.pause()
+        await pilot.press("down")
+        for _ in range(8):
+            await pilot.press("right")
+        await pilot.pause()
+        if viz.palette.theme.low == before:
+            problems.append("theme editor did not preview live")
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.press("escape")   # cancel the name prompt
+        await pilot.pause()
+        if viz.palette.theme.low != before:
+            problems.append(
+                f"cancelled theme edit leaked: low={viz.palette.theme.low}, was {before}"
+            )
+        if list((_scratch_dir / "themes").glob("*.toml")):
+            problems.append("cancelled theme edit still wrote a file")
+
+        await pilot.press("n")
+        await pilot.pause()
+        await pilot.press("down")
+        for _ in range(8):
+            await pilot.press("right")
+        await pilot.press("escape")
+        await pilot.pause()
+        for ch in "smoketheme":
+            await pilot.press(ch)
+        await pilot.press("enter")
+        await pilot.pause()
+        written = sorted(p.name for p in (_scratch_dir / "themes").glob("*.toml"))
+        if written != ["smoketheme.toml"]:
+            problems.append(f"theme editor wrote {written}, expected ['smoketheme.toml']")
+        if viz.theme_name != "smoketheme":
+            problems.append(f"saved theme not applied: {viz.theme_name}")
+        if "smoketheme" not in viz.theme_names:
+            problems.append("saved theme missing from the picker")
+        mark(f"theme editor OK (saved {written})")
+
         # resize must not break cached geometry
         for size in ((40, 10), (200, 50), (80, 24)):
             viz.set_mode("Pulse")

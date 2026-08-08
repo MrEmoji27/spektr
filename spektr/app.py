@@ -11,6 +11,7 @@ from textual.widgets import Footer, Header
 
 from . import __version__, asciiart, config, nowplaying
 from . import modes as mode_registry
+from . import palette as palette_mod
 from . import presets as presets_module
 from .pickers import NamePrompt, Picker, Setting, SettingsPanel
 from .widget import AudioVisualizer
@@ -115,6 +116,7 @@ class Spektr(App):
         Binding("t", "pick_theme", "Themes"),
         Binding("c", "settings", "Settings"),
         Binding("T", "cycle_theme", "Next theme", show=False),
+        Binding("n", "new_theme", "New theme", show=False),
         Binding("f", "toggle_chrome", "Full screen"),
         Binding("d", "next_source", "Next source", show=False),
         Binding("D", "default_source", "Default output", show=False),
@@ -278,6 +280,121 @@ class Spektr(App):
 
     def action_cycle_theme(self) -> None:
         self.notify(f"theme — {self.viz.cycle_theme()}", timeout=2)
+
+    def action_new_theme(self) -> None:
+        """Live theme editor, starting from whatever is on screen.
+
+        Deliberately not a colour-picker widget. The visualiser is already
+        running behind the panel with real audio in it, so the feature is
+        *applying every change immediately* — you judge a theme by watching
+        bars move in it, not by looking at six swatches. Every keypress rebuilds
+        the draft and pushes it straight at the palette.
+
+        Four slots, not six. A theme has six, but low/mid/high/accent is what
+        someone who has not read the ramp documentation can pick meaningfully;
+        bg and fg are derived from those until the moment you edit one, which
+        is also what flips the panel into showing them.
+
+        The visibility rule from the audit suite runs live on the draft and
+        surfaces as a warning line rather than as a refusal — the check exists
+        to stop people accidentally making an invisible theme, not to stop them
+        deliberately making a subtle one.
+        """
+        viz = self.viz
+        draft = palette_mod.ThemeDraft(viz.palette.theme, name=viz.theme_name)
+        state = {"slot": 0}
+
+        def apply() -> None:
+            viz.preview_theme_object(draft.to_theme("preview"))
+
+        def slot_name() -> str:
+            return draft.slots[min(state["slot"], len(draft.slots) - 1)]
+
+        def step_slot(delta: int) -> None:
+            state["slot"] = (state["slot"] + delta) % len(draft.slots)
+            apply()
+
+        def nudge(which: str, amount: float):
+            def go(delta: int) -> None:
+                draft.nudge(slot_name(), which, delta * amount)
+                apply()
+
+            return go
+
+        def show_slot(_v=None) -> str:
+            name = slot_name()
+            derived = name in palette_mod.ADVANCED_SLOTS and not draft.advanced
+            return f"{name}  {draft.hex_of(name)}" + ("  (derived)" if derived else "")
+
+        def component(which: str):
+            def show(_v=None) -> str:
+                value = draft.component(slot_name(), which)
+                filled = int(round(value * 12))
+                return f"{'█' * filled}{'·' * (12 - filled)}  {value:.2f}"
+
+            return show
+
+        def show_warning(_v=None) -> str:
+            problems = draft.problems()
+            return "looks fine" if not problems else f"[!] {problems[0]}"
+
+        def show_slots(_v=None) -> str:
+            return "6 — bg and fg editable" if draft.advanced else "4 — bg and fg derived"
+
+        def step_slots(_delta: int) -> None:
+            draft.set_advanced(not draft.advanced)
+            state["slot"] = min(state["slot"], len(draft.slots) - 1)
+            apply()
+
+        rows = [
+            Setting(
+                "slot", "colour", [], show_slot, None,
+                "which colour the rows below change",
+                step=step_slot,
+                live=lambda: None,
+            ),
+            Setting("hue", "hue", [], component("h"), None, "",
+                    step=nudge("h", 0.02), live=lambda: None),
+            Setting("sat", "saturation", [], component("s"), None, "",
+                    step=nudge("s", 0.04), live=lambda: None),
+            Setting("lum", "lightness", [], component("l"), None, "",
+                    step=nudge("l", 0.03), live=lambda: None),
+            Setting(
+                "slots", "slots", [], show_slots, None,
+                "four is enough for a working theme; six if you want the "
+                "background and text picked by hand",
+                step=step_slots,
+                live=lambda: None,
+            ),
+            Setting(
+                "visible", "check", [], show_warning, None,
+                "the same rule the test suite applies to built-in themes",
+                step=lambda _d: None,
+                live=lambda: None,
+            ),
+        ]
+
+        def done() -> None:
+            def named(name: str | None) -> None:
+                if name is None:
+                    viz.cancel_theme_preview()
+                    return
+                final = palette_mod.available_theme_name(name)
+                try:
+                    palette_mod.save_user_theme(draft.to_theme(final))
+                except OSError as exc:
+                    viz.cancel_theme_preview()
+                    self.notify(f"could not save theme: {exc}", severity="error", timeout=4)
+                    return
+                viz.reload_themes()
+                viz.apply_theme(final)
+                viz.commit_theme()
+                self.notify(f"saved theme — {final}", timeout=3)
+
+            self._open_overlay(NamePrompt("name this theme", draft.name), named)
+
+        apply()
+        self._open_overlay(SettingsPanel(rows, {}), done)
 
     # ── shuffle ──────────────────────────────────────────────────────────────
     # A screensaver toggle: pick a random mode every SHUFFLE_MODE_SECONDS, and
