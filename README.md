@@ -97,25 +97,25 @@ Listed in the order the picker cycles them.
 | **Bricks** | chunky, no partial cells | **Radial** | the spectrum wrapped into a circle |
 | **Columns** | gapless, interpolated across the full width | **Retro** | sunset grid, with the spectrum as the horizon |
 | **Ladder** | segmented LED stack | **Auroras** | light curtains, billowing on the treble |
-| **Sonar** | one sweep, not the whole spectrum — returns fade like a scope | **Skyline** | a city at night, windows lit by their band |
-| **Mirror** | grows out from the centre line | **Tunnel** | flying down a pipe, ribbed by the beat |
-| **Stereo** | per-band L/R meters, mirrored from centre | **Warp** | starfield, accelerating with the music |
-| **Wave** | smoothed waveform | **Matrix** | digital rain, falling faster when it's loud |
-| **Scope** | trigger-synced oscilloscope — the trace holds still | **Spectro** | scrolling waterfall — frequency up, time across |
-| **ECG** | scrolling trace, like a heart monitor | **Plasma** | solid colour field, warped by the spectrum |
-| **Strings** | plucked strings, bowed by their own band | **VFD** | vacuum-fluorescent bargraph with phosphor afterglow |
-| **Gonio** | stereo phase scope with a phosphor trail | **Needle** | analogue VU — one sweeping needle, one red zone |
-| **Scatter** | density sparkle, thicker where it's loud | **VU** | big L/R LED meters with peak hold |
-| **Flame** | fire, licking upward from each band | **Arcs** | hollow rings, one per band, pushed out by level |
-| **Pulse** | radial pulse with shockwaves | **Orbit** | one dot per band, actually revolving around a centre |
-| **Fireworks** | beat-triggered launches, bursts, and fall | **Dune** | sand piles up by band, avalanching past a threshold |
-| **Colony** | a growing culture — spots, worms and mazes, set by the music | **Keys** | a lit keyboard; struck bands scroll away as notes |
-| **Boot** | an old PC waking up — BIOS POST, a boot log, a blinking cursor | **Readout** | scrolling numeric ticker, band levels as plain digits |
-| **Helix** | two strands rotating, split by true L/R phase | **Chladni** | nodal interference pattern, plate modes set by pitch |
-| **Flipbook** | your own ASCII animation, played by the music | **Maelstrom** | a real fluid sim, stirred by the music |
-| **Vinyl** | a record whose grooves light up as a radial spectrum | **Rain** | rain on the glass, falling harder when it's loud |
-| **Ember** | a coal bed burning by band, sparks off the hot spots | **Fairylights** | a string of bulbs, one per band, lighting to the music |
-| **Cassette** | a tape deck; the strand carries the waveform | **Steam** | a mug whose steam rises band by band |
+| **Sonar** | one sweep, not the whole spectrum — returns fade like a scope | **Tunnel** | flying down a pipe, ribbed by the beat |
+| **Mirror** | grows out from the centre line | **Warp** | starfield, accelerating with the music |
+| **Stereo** | per-band L/R meters, mirrored from centre | **Matrix** | digital rain, falling faster when it's loud |
+| **Wave** | smoothed waveform | **Spectro** | scrolling waterfall — frequency up, time across |
+| **Scope** | trigger-synced oscilloscope — the trace holds still | **Plasma** | solid colour field, warped by the spectrum |
+| **ECG** | scrolling trace, like a heart monitor | **VFD** | vacuum-fluorescent bargraph with phosphor afterglow |
+| **Strings** | plucked strings, bowed by their own band | **Needle** | analogue VU — one sweeping needle, one red zone |
+| **Gonio** | stereo phase scope with a phosphor trail | **VU** | big L/R LED meters with peak hold |
+| **Scatter** | density sparkle, thicker where it's loud | **Arcs** | hollow rings, one per band, pushed out by level |
+| **Flame** | fire, licking upward from each band | **Orbit** | one dot per band, actually revolving around a centre |
+| **Pulse** | radial pulse with shockwaves | **Dune** | sand piles up by band, avalanching past a threshold |
+| **Fireworks** | beat-triggered launches, bursts, and fall | **Keys** | a lit keyboard; struck bands scroll away as notes |
+| **Colony** | a growing culture — spots, worms and mazes, set by the music | **Readout** | scrolling numeric ticker, band levels as plain digits |
+| **Boot** | an old PC waking up — BIOS POST, a boot log, a blinking cursor | **Chladni** | nodal interference pattern, plate modes set by pitch |
+| **Helix** | two strands rotating, split by true L/R phase | **Maelstrom** | a real fluid sim, stirred by the music |
+| **Flipbook** | your own ASCII animation, played by the music | **Rain** | rain on the glass, falling harder when it's loud |
+| **Vinyl** | a record whose grooves light up as a radial spectrum | **Fairylights** | a string of bulbs, one per band, lighting to the music |
+| **Ember** | a coal bed burning by band, sparks off the hot spots | **Steam** | a mug whose steam rises band by band |
+| **Cassette** | a tape deck; the strand carries the waveform | | |
 | **Murmuration** | a flock wheeling and scattering with the beat | | |
 
 Vinyl, Rain, Ember, Fairylights, Cassette, and Steam are the lofi group — a
@@ -124,8 +124,8 @@ shared reactivity budget. Each one maps real band data into its geometry,
 so what the music changes is what the object is doing, not just how bright
 the picture is.
 
-A forty-eighth entry, **None**, is registered as the off switch — it draws nothing.
-That is why the test output counts 48 modes against the forty-seven listed here.
+A forty-seventh entry, **None**, is registered as the off switch — it draws nothing.
+That is why the test output counts 47 modes against the forty-six listed here.
 
 Still frames of a few of them, straight from the render path: **[docs/gallery.md](docs/gallery.md)**.
 

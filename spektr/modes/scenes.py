@@ -206,61 +206,6 @@ def auroras(ctx: Ctx):
     return codes, cidx
 
 
-_WINDOW = ord("▀")
-_ANTENNA = ord("╹")
-
-
-@mode("Skyline", group="scenes", blurb="a city at night, windows lit by their band")
-def skyline(ctx: Ctx):
-    """Bands as buildings, with windows that flicker at the band's own rate.
-
-    Drawn at text-cell resolution rather than on the dot grid: a skyline wants
-    hard rectangular edges, and braille would only soften them. ``Retro`` has a
-    horizon and a perspective grid; this is flat and front-lit, and the motion
-    comes entirely from the windows.
-    """
-    w, h = ctx.w, ctx.h
-    if w < 12 or h < 5:
-        return empty(w, h)
-
-    n = ctx.n_display
-    col_band, active = band_columns(w, n)      # the gutters become alleys
-    lv = ctx.display_bands(n)
-
-    level = np.where(active, lv[col_band], 0.0)
-    tops = h - 1 - np.rint(np.clip(level, 0.05, 1.0) * (h - 2)).astype(np.int32)
-
-    rows = np.arange(h, dtype=np.int32)[:, None]
-    body = active[None, :] & (rows >= tops[None, :])
-
-    # a fixed random phase per cell, so windows don't all blink together
-    phase = ctx.scratch(
-        "skyline", lambda: np.random.default_rng(5).uniform(0.0, 2 * math.pi, (h, w))
-    )
-    # window grid: every other row, every third column of each building
-    grid = ((rows % 2) == 1) & ((np.arange(w)[None, :] % 3) == 1)
-    rate = 1.2 + level * 7.0
-    lit = np.sin(phase + ctx.t * rate[None, :]) > 0.45
-    windows = body & grid & lit
-
-    codes = np.where(body, _FULL, SPACE).astype(np.int32)
-    codes[windows] = _WINDOW
-
-    # buildings are near-black; the windows carry all the colour
-    cidx = np.zeros((h, w), dtype=np.int32)
-    cidx[body] = ctx.palette.index(0.06)
-    win_heat = np.repeat(ctx.ramp(0.55 + 0.45 * level)[None, :], h, axis=0)
-    cidx[windows] = win_heat[windows]
-
-    # a blinking aircraft light on whichever buildings are tallest right now
-    tall = np.flatnonzero(active & (level > 0.72))
-    if tall.size and math.sin(ctx.t * 3.4) > 0.0:
-        r = np.clip(tops[tall] - 1, 0, h - 1)
-        codes[r, tall] = _ANTENNA
-        cidx[r, tall] = RAMP_STEPS - 1
-    return codes, cidx
-
-
 @mode("Keys", group="scenes", blurb="a lit keyboard; struck bands scroll away as falling notes")
 def keys(ctx: Ctx):
     """A piano roll, not another bar chart.

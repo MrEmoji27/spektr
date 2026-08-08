@@ -43,8 +43,8 @@ SELF_ANIMATING = {
     "Matrix", "Spectro", "Plasma", "Gonio",
     # scroll (ECG), standing-wave phase (Strings), ring breathing and angular
     # spin (Arcs), travelling particles (Bubbles), curtain billow (Auroras),
-    # window flicker (Skyline), continuous sweep rotation (Sonar)
-    "ECG", "Strings", "Arcs", "Bubbles", "Auroras", "Skyline", "Sonar",
+    # continuous sweep rotation (Sonar)
+    "ECG", "Strings", "Arcs", "Bubbles", "Auroras", "Sonar",
     # continuous ticker scroll (Readout), continuous spin (Helix, Chladni),
     # continuous orbital motion (Orbit), continuous scroll (Keys), a real
     # playback clock (Flipbook), a persisted simulation that keeps evolving

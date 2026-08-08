@@ -507,53 +507,23 @@ def orbit(ctx: Ctx):
     py = np.clip(np.rint(cy + dy).astype(np.int32), 0, dr - 1)
 
     buf = ctx.scratch("orbit_buf", lambda: np.zeros((dr, dc), dtype=np.float32))
-    buf *= float(np.exp(-max(ctx.dt, 0.0) / 0.13))
+    buf *= float(np.exp(-max(ctx.dt, 0.0) / 0.35))
 
-    field = np.zeros((dr, dc), dtype=np.float32)
-    dist, _turn, _mr = _polar(ctx)
+    # One fixed-size body per band, all written in a single vectorised pass.
+    # A version of this grew the bodies with their level and hung spokes and a
+    # bass-driven core off the centre; it read as busier, not better — sixteen
+    # swept bands and a permanent disc in the middle bury the one thing the
+    # mode is for, which is watching bodies travel. The trail is the subject.
+    dy_off, dx_off = _BUBBLE_RINGS[1]
+    ys = py[:, None] + dy_off[None, :]
+    xs = px[:, None] + dx_off[None, :]
+    vals = np.broadcast_to((0.45 + 0.55 * lv)[:, None], ys.shape)
+    ok = (ys >= 0) & (ys < dr) & (xs >= 0) & (xs < dc)
+    np.maximum.at(buf, (ys[ok], xs[ok]), vals[ok].astype(np.float32))
 
-    # A spoke from the centre out to each body. The first attempt drew each
-    # body's full orbit as a ring instead, which looks right for one body and
-    # fails for sixteen: the radii sweep with their bands, so the rings tile
-    # the whole disc and the picture saturates into a solid blob. A spoke
-    # anchors a body to the centre and shows its radius without claiming any
-    # of the area between the orbits.
-    steps = max(4, int(max_r))
-    tt = np.linspace(0.12, 1.0, steps)[None, :]
-    sx = cx + (dx[:, None] / x_scale) * tt
-    sy = cy + dy[:, None] * tt
-    spx = np.clip(np.rint(sx).astype(np.int32), 0, dc - 1)
-    spy = np.clip(np.rint(sy).astype(np.int32), 0, dr - 1)
-    spoke_v = (0.06 + 0.20 * lv)[:, None] * (1.0 - 0.45 * tt)
-    np.maximum.at(field, (spy.ravel(), spx.ravel()), spoke_v.ravel().astype(np.float32))
-
-    # a central mass, breathing on the low end
-    bass = ctx.range(0.0, 0.2)
-    core_r = max(1.0, max_r * (0.05 + 0.07 * bass))
-    core = dist <= core_r
-    np.maximum(field, core * np.float32(0.55 + 0.45 * bass), out=field)
-
-    # Bodies grow with their band instead of being a fixed one-dot ring, but
-    # only up to radius 2. Allowing 3 turns each body's trail from a thin arc
-    # into a wide swept band, and sixteen of those fill the disc solid.
-    for j in range(n):
-        size = 1 + int(min(1, lv[j] * 1.6))
-        dy_off, dx_off = _BUBBLE_RINGS[size]
-        ys = py[j] + dy_off
-        xs = px[j] + dx_off
-        ok = (ys >= 0) & (ys < dr) & (xs >= 0) & (xs < dc)
-        if ok.any():
-            np.maximum.at(buf, (ys[ok], xs[ok]), np.float32(0.45 + 0.55 * lv[j]))
-
-    # Spokes and core composite over the trail buffer rather than into it.
-    # Writing them into ``buf`` leaves them there permanently — the buffer
-    # only decays a few percent a frame and they are redrawn every frame, so
-    # they never fade and the disc fills in solid. Only the bodies belong in
-    # the buffer; that is what the buffer is for.
-    out = np.maximum(buf, field)
-    dots = out > 0.04
+    dots = buf > 0.04
     codes = pack_braille(dots)
-    cidx = ctx.ramp(cell_max(out))
+    cidx = ctx.ramp(cell_max(buf))
     return codes, cidx
 
 
@@ -975,9 +945,27 @@ def dune(ctx: Ctx):
 _MURM_CAP = 240
 
 
+def _blob_offsets(r: float) -> tuple:
+    """A soft round stamp, as (dy, dx, weight). Braille dots are ~square."""
+    k = int(math.ceil(r))
+    dy, dx = np.mgrid[-k:k + 1, -k:k + 1]
+    d2 = (dy * dy + dx * dx).astype(np.float64)
+    keep = d2 <= r * r
+    w = np.exp(-d2 / (2.0 * (r * 0.55) ** 2))
+    return dy[keep].astype(np.int32), dx[keep].astype(np.int32), w[keep]
+
+
+#: One bird's deposit into the density field. Small on purpose: the mass has
+#: to come from birds overlapping each other, not from each bird being big.
+_MURM_BLOB = _blob_offsets(2.5)
+
+
 def _murmuration_state(dr: int, dc: int) -> dict:
     rng = np.random.default_rng(211)
-    n = int(np.clip(dc * 0.35, 90, _MURM_CAP))
+    # Enough birds that overlapping blobs actually make a mass. At the old
+    # floor of 90 an 80x24 terminal got a scatter of separate specks, because
+    # the flock is drawn as density and 90 agents cannot be dense.
+    n = int(np.clip(dc * 0.55, 150, _MURM_CAP))
     cx, cy = dc * 0.5, dr * 0.5
     r0 = min(dr, dc) * 0.2
     ang = rng.uniform(0.0, 2 * math.pi, n)
@@ -990,6 +978,8 @@ def _murmuration_state(dr: int, dc: int) -> dict:
         "vx": np.cos(vang) * speed0, "vy": np.sin(vang) * speed0,
         "wind_dir": float(rng.uniform(0.0, 2 * math.pi)),
         "fast": 0.0, "slow": 0.0, "scatter_t": -99.0,
+        # last frame's density bounding box, so only that region needs clearing
+        "box": (0, dr, 0, dc),
         "rng": rng,
     }
 
@@ -1018,15 +1008,26 @@ def murmuration(ctx: Ctx):
     as circular and not squashed sideways.
 
     Audio drives real dynamics, not just brightness — this isn't one of the
-    lofi modes: bass adds a wind force in a slowly rotating direction
-    (``ctx.t * constant``, the safe half of the pattern ``Tunnel``'s
-    docstring warns about), treble adds per-agent jitter (genuinely random
-    every frame on purpose — this is stochastic forcing on the physics, not
-    a texture that should hold still like ``Dune``'s grain), and a bass onset
-    gives the whole flock an outward kick from its own centroid. Nothing
-    scripts the flock back together afterward — cohesion is already pulling
-    every agent toward its neighbours every frame, so it reforms because
-    that's what the same three rules that hold it together always do.
+    lofi modes. What the spectrum plays is the flock's *size and shape*: bass
+    stiffens the centroid spring and shrinks the birds' comfort spacing, so
+    the whole thing contracts into a dense ball; treble drives separation and
+    speed and blows it back open into a churning sheet. On top of that, bass
+    adds a wind force in a slowly rotating direction (``ctx.t * constant``,
+    the safe half of the pattern ``Tunnel``'s docstring warns about), treble
+    adds per-agent jitter (genuinely random every frame on purpose — this is
+    stochastic forcing on the physics, not a texture that should hold still
+    like ``Dune``'s grain), and a hard bass onset gives the whole flock an
+    outward kick from its own centroid. Nothing scripts the flock back
+    together afterward — cohesion is already pulling every agent toward its
+    neighbours every frame, so it reforms because that's what the same three
+    rules that hold it together always do.
+
+    It is drawn as a *density field*, not as bodies. Each bird deposits a soft
+    blob into one shared buffer and the buffer is dithered against fixed
+    grain; nothing on screen corresponds to one agent. A real murmuration
+    reads as mass — you see the shape of the whole thing and only pick out
+    individuals at the thin edge — and giving each agent a bright head and a
+    tapering trail instead made two hundred tadpoles.
     """
     dr, dc = ctx.dot_rows, ctx.dot_cols
     if dr < 20 or dc < 30:
@@ -1041,7 +1042,12 @@ def murmuration(ctx: Ctx):
     treble = ctx.range(0.6, 1.0)
     st["fast"] += (bass - st["fast"]) * min(1.0, ctx.dt / 0.03)
     st["slow"] += (bass - st["slow"]) * min(1.0, ctx.dt / 0.4)
-    hit = (st["fast"] - st["slow"]) > 0.14 and (ctx.t - st["scatter_t"]) > 0.6
+    # The scatter has to stay an *event*. At a 0.14 threshold with a 0.6 s
+    # refractory it fired on essentially every kick drum, and since the
+    # centroid spring needs about a second to haul the flock back in, a plain
+    # four-to-the-floor beat left it permanently blown out against the walls —
+    # scattering constantly is indistinguishable from never being together.
+    hit = (st["fast"] - st["slow"]) > 0.22 and (ctx.t - st["scatter_t"]) > 2.2
 
     # The domain is bounded, not periodic. Wrapping positions is the obvious
     # thing to do and it was wrong twice over: the pairwise deltas did not
@@ -1060,7 +1066,10 @@ def murmuration(ctx: Ctx):
     # too tight and cohesion never binds, so the "flock" is just a scatter of
     # independent particles obeying rules against an empty neighbourhood.
     r_perc = min(dr, dc) * 0.22
-    r_sep = r_perc * 0.3
+    # Comfort spacing. Bass shrinks it as well as stiffening the spring below:
+    # a flock contracts because the birds tolerate being closer, not only
+    # because something outside is squeezing them.
+    r_sep = r_perc * (0.34 - 0.12 * bass)
     neigh = (dist2 < r_perc * r_perc) & (dist2 > 1e-9)
     sep_m = neigh & (dist2 < r_sep * r_sep)
 
@@ -1077,11 +1086,28 @@ def murmuration(ctx: Ctx):
     coh_x = -(nf * raw_dx).sum(axis=1) / cnt_safe
     coh_y = -(nf * raw_dy).sum(axis=1) / cnt_safe
 
+    # Separation with a real distance falloff. This used to be a mean of pure
+    # *unit* offsets, which is purely directional: it says which way to go but
+    # not how badly, so inside a uniformly compressed cloud the unit vectors
+    # cancel and there is no force left resisting the squeeze. The flock had
+    # no spacing floor at all and cohesion crushed it to a blob a tenth of the
+    # screen wide. Weighting each push by ``r_sep/d - 1`` makes it zero at the
+    # comfort distance and steep below it, so the flock has a size set by how
+    # many birds are in it.
+    # Separation as a *sum* of distance-weighted pushes, which is what gives
+    # the flock a size. It used to be a mean of pure unit offsets, and that is
+    # doubly toothless: unit offsets carry no "how badly", and averaging them
+    # divides by neighbour count, so the term gets *weaker* exactly as the
+    # flock gets denser. Interior pushes cancel by symmetry either way — that
+    # part is correct, it is how a fluid works — but with a sum the birds on
+    # the boundary feel an outward force proportional to the density behind
+    # them, which is the pressure that balances cohesion. Without it there is
+    # no equilibrium radius at all and the flock crushes to a dot.
     sf = sep_m.astype(np.float64)
-    inv_d = sf / np.sqrt(np.maximum(dist2, 1e-9))
-    sep_cnt = np.maximum(sf.sum(axis=1), 1.0)
-    sep_ax = (inv_d * raw_dx).sum(axis=1) / sep_cnt
-    sep_ay = (inv_d * raw_dy).sum(axis=1) / sep_cnt
+    d = np.sqrt(np.maximum(dist2, 1e-9))
+    push = sf * np.clip(r_sep / d - 1.0, 0.0, 4.0) / d
+    sep_ax = (push * raw_dx).sum(axis=1)
+    sep_ay = (push * raw_dy).sum(axis=1)
 
     # The two rules that fight each other are what the music drives, so the
     # flock's *shape* tracks the spectrum: bass tightens cohesion into a
@@ -1098,10 +1124,40 @@ def murmuration(ctx: Ctx):
     # collapses to a single point and stays there.
     scale = float(min(dr, dc))
     inv_perc = 1.0 / max(r_perc, 1e-6)
-    coh_gain = (0.30 + bass * 0.85) * scale
-    sep_gain = (1.20 + treble * 1.60) * scale
+    coh_gain = (0.25 + bass * 0.40) * scale
+    # Separation sets *spacing inside* the flock; it is not the thing that
+    # makes treble read. Driving it hard (it used to reach 2.8x scale) simply
+    # overpowers cohesion and the flock stops being a flock — every bird ends
+    # up an isolated agent obeying rules against an empty neighbourhood, which
+    # is the scattered-dots picture this mode had. Treble goes into speed and
+    # churn below instead, where an agitated flock actually shows it.
+    sep_gain = (0.80 + treble * 0.60) * scale
     ax = sep_ax * sep_gain + (avg_vx - vx) * 2.0 + coh_x * inv_perc * coh_gain
     ay = sep_ay * sep_gain + (avg_vy - vy) * 2.0 + coh_y * inv_perc * coh_gain
+
+    # Global cohesion toward the flock's own centroid, on top of the local
+    # rule. Local cohesion only reaches one perception radius, so as soon as
+    # the flock grows past that it fragments into unconnected sub-clusters and
+    # the sub-clusters drift apart for good — there is no force left that can
+    # find them again. This is the term that keeps it one readable mass, and
+    # it is a spring, so bass tightening it makes the whole flock contract.
+    # The spring constant is what the bass actually plays: slack, and the
+    # flock spreads into a loose sheet that separation alone shapes; stiff,
+    # and it contracts into a dense ball. That swing is the mode's whole
+    # reaction, so the range has to be wide — a narrow one just moves a
+    # constant-looking blob around the screen.
+    gcx, gcy = float(x.mean()), float(y.mean())
+    # Sizing note, because the numbers are not arbitrary: at the flock's edge
+    # the outward separation force (max ``sep_gain``) balances the inward
+    # spring (``pull`` x radius), so the flock settles at a radius of about
+    # ``sep_gain / pull`` dots. At 80x24 (96 dot rows) that is a ~33-dot mass
+    # when nothing is playing, ~14 dots under heavy bass, and ~57 dots when
+    # treble drives separation and blows it open — a real change of shape at
+    # every end, with a flock still on screen at all of them. A slacker spring
+    # than this does not read as "spread out", it reads as dissolved.
+    pull = 1.00 + 1.30 * bass
+    ax += (gcx - x) * pull
+    ay += (gcy - y) * pull
 
     # The wind veers a full turn every ~20s. At the original 0.05 rad/s it
     # took two minutes to come round, which is long enough that it acts as a
@@ -1113,10 +1169,10 @@ def murmuration(ctx: Ctx):
     ay += math.sin(wind_ang) * wind_mag
 
     # a weak pull toward mid-screen so the flock stays where it can be seen
-    ax += ((dc - 1) * 0.5 - x) * (scale * 0.010) / max(dc, 1)
-    ay += ((dr - 1) * 0.5 - y) * (scale * 0.010) / max(dr, 1)
+    ax += ((dc - 1) * 0.5 - x) * 0.35
+    ay += ((dr - 1) * 0.5 - y) * 0.35
 
-    jitter_mag = treble * min(dr, dc) * 0.7
+    jitter_mag = treble * scale * 0.30
     ax += rng.normal(0.0, 1.0, n) * jitter_mag
     ay += rng.normal(0.0, 1.0, n) * jitter_mag
 
@@ -1135,13 +1191,13 @@ def murmuration(ctx: Ctx):
         st["scatter_t"] = ctx.t
         ox, oy = x - x.mean(), y - y.mean()
         od = np.hypot(ox, oy) + 1e-6
-        kick = min(dr, dc) * 1.5
+        kick = scale * 0.85
         vx = vx + (ox / od) * kick
         vy = vy + (oy / od) * kick
 
     speed = np.hypot(vx, vy)
-    max_speed = min(dr, dc) * (0.55 + bass * 0.4)
-    min_speed = min(dr, dc) * 0.12
+    max_speed = scale * (0.50 + bass * 0.35 + treble * 0.45)
+    min_speed = scale * (0.12 + treble * 0.18)
     safe_speed = np.maximum(speed, 1e-6)
     too_fast = speed > max_speed
     vx = np.where(too_fast, vx / safe_speed * max_speed, vx)
@@ -1154,36 +1210,56 @@ def murmuration(ctx: Ctx):
     y = np.clip(y + vy * ctx.dt, 0.0, dr - 1.0)
     st["x"], st["y"], st["vx"], st["vy"] = x, y, vx, vy
 
-    field = np.zeros((dr, dc), dtype=np.float64)
-
     px = np.clip(np.rint(x).astype(np.int32), 0, dc - 1)
     py = np.clip(np.rint(y).astype(np.int32), 0, dr - 1)
-    density = np.clip(cnt / 8.0, 0.0, 1.0)
-    bright = 0.45 + 0.45 * density
 
-    # A bird is a small cross whose arms grow where the flock is dense, and
-    # every bird drags a three-step trail. As single dots with one trailing
-    # dot the whole flock covered ~6% of the screen — the sparsest mode in
-    # the file after Fireworks — so the emergent shape, which is the entire
-    # reason for simulating flocking at all, was invisible at a glance.
-    np.maximum.at(field, (py, px), bright)
-    for oy, ox in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-        ny = np.clip(py + oy, 0, dr - 1)
-        nx = np.clip(px + ox, 0, dc - 1)
-        np.maximum.at(field, (ny, nx), bright * (0.30 + 0.45 * density))
+    # Density, not bodies. Drawing each bird as a bright cross with a
+    # tapering three-step trail behind it gives every agent a head and a tail,
+    # and two hundred of those read as a field of tadpoles rather than as a
+    # flock. A real murmuration reads as *mass*: you see the shape of the
+    # whole thing and only pick out individuals at the thin edge. So every
+    # bird deposits a soft round blob into one shared field and the field is
+    # what gets drawn — overlap is what makes the middle solid.
+    # Everything below only ever touches the flock's bounding box. The field
+    # is exactly zero outside it, and at 400x100 a full-grid pass is 320k
+    # cells — three or four of those cost more than the entire n-squared
+    # flocking simulation does. The buffer is kept in scratch and only the
+    # previous frame's box is cleared, so the cost tracks the flock's size
+    # rather than the terminal's.
+    field = ctx.scratch("murm_field", lambda: np.zeros((dr, dc), dtype=np.float32))
+    py0, py1, px0, px1 = st["box"]
+    field[py0:py1, px0:px1] = 0.0
 
-    fast = speed > (min(dr, dc) * 0.05)
-    if fast.any():
-        inv_s = 1.0 / np.maximum(speed, 1e-6)
-        for k, w_off in ((1.4, 0.55), (2.8, 0.35), (4.2, 0.20)):
-            tx = np.rint(x - vx * inv_s * k).astype(np.int32)
-            ty = np.rint(y - vy * inv_s * k).astype(np.int32)
-            ok = fast & (ty >= 0) & (ty < dr) & (tx >= 0) & (tx < dc)
-            if ok.any():
-                np.maximum.at(field, (ty[ok], tx[ok]), bright[ok] * w_off)
+    y0, y1 = max(0, int(py.min()) - 3), min(dr, int(py.max()) + 4)
+    x0, x1 = max(0, int(px.min()) - 3), min(dc, int(px.max()) + 4)
+    st["box"] = (y0, y1, x0, x1)
 
-    np.clip(field, 0.0, 1.0, out=field)
-    dots = field > 0.03
+    by, bx, bw = _MURM_BLOB
+    ys = py[:, None] + by[None, :]
+    xs = px[:, None] + bx[None, :]
+    ok = (ys >= 0) & (ys < dr) & (xs >= 0) & (xs < dc)
+    np.add.at(field, (ys[ok], xs[ok]), np.broadcast_to(bw[None, :], ys.shape)[ok])
+
+    # Saturating rather than clipped: one bird alone is faint, a pile of them
+    # goes solid, and there is no flat ceiling where a dense core stops
+    # getting denser and the interior structure disappears.
+    box = field[y0:y1, x0:x1]
+    vis = np.zeros((dr, dc), dtype=np.float32)
+    vis[y0:y1, x0:x1] = 1.0 - np.exp(-box * np.float32(0.60 + 1.70 * ctx.energy))
+
+    # Dithering against a *fixed* noise field, so the edge of the mass breaks
+    # up into individual dots on its own. The threshold field is per-size and
+    # never regenerated: the grain has to belong to the screen, not to the
+    # frame, or the whole flock boils (invariant: animated randomness is
+    # almost always wrong).
+    thr = ctx.scratch(
+        "murm_grain",
+        lambda: (np.random.default_rng(77).random((dr, dc)) * 0.80 + 0.06).astype(np.float32),
+    )
+    dots = np.zeros((dr, dc), dtype=bool)
+    dots[y0:y1, x0:x1] = box_vis = vis[y0:y1, x0:x1] > thr[y0:y1, x0:x1]
+    np.multiply(vis[y0:y1, x0:x1], box_vis, out=vis[y0:y1, x0:x1])
+
     codes = pack_braille(dots)
-    cidx = ctx.ramp(cell_max(field))
+    cidx = ctx.ramp(cell_max(vis))
     return codes, cidx
