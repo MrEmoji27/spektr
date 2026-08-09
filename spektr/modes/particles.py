@@ -151,19 +151,38 @@ def pulse(ctx: Ctx):
     st = ctx.scratch(
         "pulse",
         lambda: {
-            "fast": 0.0, "slow": 0.0,
             "born": np.full(_PULSE_WAVES, -99.0),
             "amp": np.zeros(_PULSE_WAVES),
+            "acc": 0.0,
         },
     )
-    bass = ctx.range(0.0, 0.2)
-    st["fast"] += (bass - st["fast"]) * min(1.0, ctx.dt / 0.03)
-    st["slow"] += (bass - st["slow"]) * min(1.0, ctx.dt / 0.40)
-    onset = st["fast"] - st["slow"]
-    if onset > 0.12 and (ctx.t - st["born"].max()) > 0.12:
+    # A shockwave per onset, sized by how hard it hit. The analyser detects
+    # these properly now — spectral flux across the whole band plan, with an
+    # adaptive threshold — so this no longer keeps a pair of envelopes over
+    # the bass band and calls their difference an onset. That approximation
+    # could not tell a kick from the track simply getting louder, which is
+    # why it needed a threshold tuned by hand.
+    #
+    # The rate term underneath it is not a second detector, and the
+    # distinction matters. It is a clock whose speed is the loudness: it
+    # cannot tell where a beat is and does not try. It exists because the
+    # detector has measured gaps — recall drops to about 0.4 on dense fast
+    # drums — and a mode whose entire identity is "radial pulse with
+    # shockwaves" must not go still on material the analyser reads poorly. On
+    # anything with a clear beat the onsets arrive first and the clock rarely
+    # reaches its threshold; on a drone it keeps the mode breathing.
+    st["acc"] += (0.8 + ctx.energy * 5.0) * ctx.dt
+    # Fire the first one on arrival rather than making the clock earn it.
+    # Otherwise the mode opens on an empty screen for most of a second, which
+    # reads as broken rather than as anticipation.
+    due = st["acc"] >= 1.0 or st["born"].max() < 0.0
+    if due:
+        st["acc"] = max(0.0, st["acc"] - 1.0)
+    if (ctx.onsets or due) and (ctx.t - st["born"].max()) > 0.12:
         slot = int(np.argmin(st["born"]))
         st["born"][slot] = ctx.t
-        st["amp"][slot] = float(np.clip(0.35 + onset * 2.2, 0.0, 1.0))
+        strength = ctx.onset_strength if ctx.onsets else min(1.0, ctx.energy * 1.4)
+        st["amp"][slot] = float(np.clip(0.35 + strength * 0.9, 0.0, 1.0))
 
     r = max_r * (0.1 + 0.9 * nrg * nrg)
     nz = ctx.scratch(
@@ -778,17 +797,18 @@ def fireworks(ctx: Ctx):
             "svy": np.zeros(s_cap), "svx": np.zeros(s_cap), "sage": np.zeros(s_cap),
             "sgrav": np.zeros(s_cap), "slife": np.full(s_cap, 1.1),
             "skind": np.zeros(s_cap, dtype=np.int32),
-            "fast": 0.0, "slow": 0.0, "launch_acc": 0.0,
+            "launch_acc": 0.0, "launched": 0,
             "rng": np.random.default_rng(41),
         }
 
     st = ctx.scratch("fireworks", spawn_state)
     rng = st["rng"]
 
-    bass = ctx.range(0.0, 0.2)
-    st["fast"] += (bass - st["fast"]) * min(1.0, ctx.dt / 0.03)
-    st["slow"] += (bass - st["slow"]) * min(1.0, ctx.dt / 0.5)
-    hit = (st["fast"] - st["slow"]) > 0.1
+    # One shell per detected onset. Previously a pair of bass envelopes
+    # differenced against a hand-tuned 0.1 — an onset detector in miniature,
+    # and a worse one than the analyser's, which looks at the whole spectrum
+    # rather than the bottom fifth of it and so still fires on a snare.
+    hit = bool(ctx.onsets)
 
     # Burst kind follows the spectrum's centre of mass instead of a coin
     # flip: a bass-heavy passage throws slow drooping willows, a bright one
@@ -807,12 +827,28 @@ def fireworks(ctx: Ctx):
     # A barrage, not one shell per onset. Rockets also launch on sustained
     # loudness rather than only on a rising bass edge, so a dense passage
     # keeps the sky busy instead of going dark between transients.
+    #
+    # This rate is also what keeps the mode alive where the detector is weak.
+    # Onsets punctuate the barrage; they no longer constitute it. Recall falls
+    # to roughly 0.4 on dense fast drums, and a sky that only lights on
+    # detected onsets would visibly thin out on exactly the music that should
+    # fill it.
     st["launch_acc"] += (0.35 + ctx.energy * 7.0) * ctx.dt
+    # Open with a shell instead of making the accumulator earn the first one:
+    # at a moderate level that takes most of a second, and a fireworks mode
+    # that begins on an empty sky reads as not working.
+    if st["launched"] == 0 and st["launch_acc"] < 1.0:
+        st["launch_acc"] = 1.0
     want = int(st["launch_acc"])
     if want:
         st["launch_acc"] -= want
+        st["launched"] += want
     if hit:
-        want += 1 + int(min(2, st["fast"] * 4.0))
+        # A harder onset throws more shells, and several onsets inside one
+        # frame each earn their own — at a low frame rate or on fast drums
+        # ctx.onsets can be 2 or 3, and collapsing that to a single shell
+        # would quietly drop beats the analyser did detect.
+        want += ctx.onsets + int(min(2, ctx.onset_strength * 2.5))
 
     # stage 1: rockets climb toward a randomly chosen burst height, easing
     # off their speed over the final stretch — a constant-velocity climb that
@@ -829,8 +865,15 @@ def fireworks(ctx: Ctx):
         for i in free:
             st["ry"][i] = dr - 1.0
             st["rx"][i] = rng.uniform(dc * 0.10, dc * 0.90)
-            st["rvy"][i] = dr * rng.uniform(1.3, 1.8)
-            st["rtarget"][i] = rng.uniform(dr * 0.12, dr * 0.55)
+            # Loud throws higher and faster. Height and speed were drawn from
+            # a fixed range, so a shell launched during a quiet passage was
+            # indistinguishable from one launched at full tilt — the music
+            # chose when a rocket went up and, after the kind, nothing about
+            # how it flew.
+            lift = 0.55 + ctx.energy * 0.75
+            st["rvy"][i] = dr * rng.uniform(1.1, 1.5) * lift
+            top = dr * (0.55 - 0.38 * min(1.0, ctx.energy * 1.3))
+            st["rtarget"][i] = rng.uniform(max(dr * 0.08, top * 0.7), max(top, dr * 0.14))
             st["rkind"][i] = pick_kind()
 
     # stage 2: a bursting rocket seeds a shower of sparks from its position,
@@ -1021,7 +1064,7 @@ def _murmuration_state(dr: int, dc: int) -> dict:
         "x": cx + np.cos(ang) * rad, "y": cy + np.sin(ang) * rad,
         "vx": np.cos(vang) * speed0, "vy": np.sin(vang) * speed0,
         "wind_dir": float(rng.uniform(0.0, 2 * math.pi)),
-        "fast": 0.0, "slow": 0.0, "scatter_t": -99.0,
+        "scatter_t": -99.0,
         # last frame's density bounding box, so only that region needs clearing
         "box": (0, dr, 0, dc),
         "rng": rng,
@@ -1084,14 +1127,23 @@ def murmuration(ctx: Ctx):
 
     bass = ctx.range(0.0, 0.2)
     treble = ctx.range(0.6, 1.0)
-    st["fast"] += (bass - st["fast"]) * min(1.0, ctx.dt / 0.03)
-    st["slow"] += (bass - st["slow"]) * min(1.0, ctx.dt / 0.4)
-    # The scatter has to stay an *event*. At a 0.14 threshold with a 0.6 s
-    # refractory it fired on essentially every kick drum, and since the
-    # centroid spring needs about a second to haul the flock back in, a plain
-    # four-to-the-floor beat left it permanently blown out against the walls —
-    # scattering constantly is indistinguishable from never being together.
-    hit = (st["fast"] - st["slow"]) > 0.22 and (ctx.t - st["scatter_t"]) > 2.2
+    # The scatter has to stay an *event*, and that is a different requirement
+    # from "was there a beat". The analyser answers the second one now, so
+    # this only has to answer the first: the centroid spring needs about a
+    # second to haul the flock back in, so scattering on every kick leaves it
+    # permanently blown out against the walls, and a flock that is always
+    # scattered is indistinguishable from one that never scatters.
+    #
+    # So: a real onset, hard enough to be worth reacting to, and not too soon
+    # after the last one. What this replaces was a pair of envelopes over the
+    # bass band differenced against a 0.22 threshold — a hand-rolled onset
+    # detector that fired on the track getting louder as readily as on a drum,
+    # and needed a 2.2 s refractory to be usable at all.
+    hit = (
+        ctx.onsets
+        and ctx.onset_strength > 0.35
+        and (ctx.t - st["scatter_t"]) > 1.4
+    )
 
     # The domain is bounded, not periodic. Wrapping positions is the obvious
     # thing to do and it was wrong twice over: the pairwise deltas did not
