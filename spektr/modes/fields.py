@@ -1079,92 +1079,115 @@ def sterling(ctx: Ctx):
     codes = pack_braille(dots)
     idx = ctx.ramp(cell_max(np.where(dots, v, 0.0)))
     return codes, idx
-@mode("Dither", group="fields", blurb="8-band stereo spectrum as ordered-dither grey bars, L/R mirrored")
+@mode("Dither", group="fields", blurb="the spectrum as a dithered field — directional waves in one-bit crosshatch")
 def dither(ctx: Ctx):
-    """Grey-scale posterize of the left channel vs the right channel, mirrored.
+    """The spectrum as a continuous two-dimensional field, thresholded to one
+    bit by an ordered dither — so the whole frame is one textured surface,
+    not a row of bars.
 
-    The panel splits into eight horizontal bands, low to high, and each band
-    is a dither ramp: an ordered-dither cell grid whose lit density stands
-    for the band level, so a bar reads as a true grey rather than a hard
-    slice. The left half of the panel shows the *left* channel and the right
-    half shows the *right* channel drawn as the mirror image — the classic
-    equalizer symmetry — so with a mono signal the panel is exactly
-    left-right symmetric, and with a stereo signal the two halves open up
-    into the field.
+    The field is the sum of eight directional plane waves, one per band, at
+    angles spreading around the circle. Each wave's amplitude is that band's
+    level, so the *shape* of the spectrum steers the texture: heavy bass
+    swells the low-frequency waves into broad slow undulations while the
+    high bands draw fine grain on top, and the sum is normalized by the band
+    total so the mix rotates with the music instead of saturating. The
+    wavelengths run from a twentieth of the width up to a quarter of it, so
+    every braille cell sees a different slice of the wave mix and the
+    cross-hatch pattern varies across the frame instead of repeating. The
+    level drives two scalars — a baseline lift and the texture depth — so a
+    louder signal reads as a denser, deeper field and a quiet one as a flat,
+    even grey. There is no clock in here and no state beyond the cached
+    geometry: a frozen spectrum is a frozen frame, exactly like the bars
+    modes.
 
-    The ramp itself: each cell's lit pattern is the Bayer threshold set for
-    that cell's grey level, which spreads the quantization error into the
-    cross-hatch that gives the mode its name. A 4x4 matrix renders the level
-    in seventeen steps of grey; where the band is tall enough the matrix
-    grows to 16x16 for the full two-hundred-and-fifty-six-step grey scale,
-    and below that it degrades to 2x2 and 1x1 so a short window keeps a
-    readable grid instead of breaking.
+    The threshold is an s x s Bayer matrix tiled by *absolute* dot position
+    on both axes. The tile alignment is what makes this a texture rather
+    than stripes: because the threshold varies with the column inside every
+    row, a row whose field is uniform still breaks into the cross-hatch
+    pattern of the matrix, and because the field varies along x as well as
+    y, no row ever resolves to a single solid line. Wherever the field is
+    near the threshold the matrix turns the gradient into structured dots
+    and wedges — the ordered-dither effect — and the density of the pattern
+    stands in for the field's value: a grey-scale rendering of a surface
+    that is only ever lit or unlit.
 
-    The mirror is exact, not close: the right half's dot columns are folded
-    onto the left half's coordinate system (``x -> dc - 1 - x``) and then
-    run through the same cell and threshold arithmetic, so a dot and its
-    mirror compute the identical grey and threshold, and the frame is
-    bit-for-bit symmetric when the channels match — the same trick as the
-    Kaleidoscope mode's |x| geometry.
+    One guard on top of that: a row whose field rides high across its whole
+    width would saturate every dot. Each row's maximum threshold is known,
+    so the top threshold cell of any such row is forced dark — a uniformly
+    solid row becomes structurally impossible without dimming anything
+    else, and the baseline keeps every row lit somewhere.
 
-    Colour follows the cell's grey: the ramp is walked by the cell-max of
-    the lit density, so brighter cells sit higher in the ramp and the panel
-    reads as a grey-scale version of the band grid.
+    There is deliberately no left-right mirroring here. A mirror line
+    through the centre is exactly the seam the eye locks onto, splitting
+    one surface into two panels; a dithered field should read as a single
+    continuous skin, and the absolute tiling keeps it that way across the
+    whole frame.
+
+    Colour walks the ramp by the lit density of each cell, so brighter
+    patches of the texture sit higher in the ramp.
     """
     dr, dc = ctx.dot_rows, ctx.dot_cols
     if dr < 8 or dc < 8:
         return empty(ctx.w, ctx.h)
 
     def grid():
-        # Bayer matrices, generated by the standard recursion. B(16) has 256
-        # thresholds — the full grey scale; B(4) is the classic 4x4 cross-hatch.
+        # Eight directional plane waves, one per band. Band q runs at angle
+        # pi*q/8; its wavelength goes from a twentieth of the width (fine
+        # grain, high bands) up to a quarter of the width (broad swells,
+        # low bands), scaled to the terminal so the texture keeps its
+        # structure at any size.
+        x = (np.arange(dc, dtype=np.float32) - np.float32((dc - 1) / 2.0)) / np.float32(max(dc - 1, 1))
+        y = (np.arange(dr, dtype=np.float32) - np.float32((dr - 1) / 2.0)) / np.float32(max(dr - 1, 1))
+        twopi = np.float32(2 * math.pi)
+        ph = []
+        for q in range(8):
+            thq = np.float32(math.pi * q / 8.0)
+            kq = np.float32(dc) * np.float32(0.06 + 0.28 * (q / 7.0))
+            wx = np.cos(thq) * twopi * kq
+            wy = np.sin(thq) * twopi * kq
+            ph.append((wx * x[None, :] + wy * y[:, None]).astype(np.float32))
+        # The ordered-dither threshold: an s x s Bayer matrix (the standard
+        # recursion, normalized to [0, 1)) tiled by ABSOLUTE dot position on
+        # both axes, so the cross-hatch runs continuously across the whole
+        # grid instead of restarting at each row or folding at the centre.
+        s = 8 if (dr >= 16 and dc >= 16) else 4
         b = np.zeros((1, 1), dtype=np.float32)
         size = 1
-        while size < 16:
+        while size < s:
             b = np.block([[4 * b, 4 * b + 2], [4 * b + 3, 4 * b + 1]])
             size *= 2
-        b16 = b / np.float32(256)
-        b4 = np.array(
-            [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]],
-            dtype=np.float32,
-        ) / np.float32(16)
-
-        rb = max(1, dr // 8)                       # dot rows per band
-        s = 16 if rb >= 16 else (4 if rb >= 4 else (2 if rb >= 2 else 1))
-        yb = np.minimum(np.arange(dr, dtype=np.int32) // rb, 7)
-        rr = rb - 1 - np.arange(dr, dtype=np.int32) % rb
-        j = (rr // s).astype(np.float32)           # cell row, 0 = bottom of band
-        rw = rr % s                                # dot row inside the cell
-        mid = dc // 2
-        cols = np.arange(dc, dtype=np.int32)
-        # The right half mirrors the left: the cell threshold at column x is
-        # the one its mirror dot (dc - 1 - x) would use, so the frame is
-        # bit-for-bit symmetric when the channels match.
-        xw = np.where(cols < mid, cols % s, (dc - 1 - cols) % s)
-        if s == 16:
-            th = b16[rw][:, xw]
-        elif s == 4:
-            th = b4[rw][:, xw]
-        elif s == 2:
-            th = np.array([[0, 2], [3, 1]], dtype=np.float32)[rw][:, xw] / np.float32(4)
-        else:
-            th = np.full((dr, dc), 0.5, dtype=np.float32)
-        return {"yb": yb, "j": j, "th": th, "nr": float(rb // s), "s": s}
+        b = b / np.float32(size * size)
+        th = b[np.arange(dr, dtype=np.int32) % s][:, np.arange(dc, dtype=np.int32) % s]
+        return {"ph": ph, "th": th, "th_rowmax": th.max(axis=1).astype(np.float32),
+                "th_argmax": np.argmax(th, axis=1).astype(np.int32)}
 
     g = ctx.scratch("dither_grid", grid)
-    lv_l = resample_bands(ctx.bands_l, 8).astype(np.float32)
-    lv_r = resample_bands(ctx.bands_r, 8).astype(np.float32)
-    mid = dc // 2
-    lvl = np.where(
-        np.arange(dc)[None, :] < mid,
-        lv_l[g["yb"]][:, None],
-        lv_r[g["yb"]][:, None],
-    )
-    hc = lvl * g["nr"]
-    grey = np.clip(hc - g["j"][:, None], 0.0, 1.0).astype(np.float32)
-    lit = grey > g["th"]
+
+    # The field: the spectrum-weighted sum of the waves, normalized by the
+    # band total so the spectrum's SHAPE steers the texture while the
+    # overall level steers its depth and density.
+    lvl = resample_bands(ctx.bands, 8).astype(np.float32)
+    acc = lvl[0] * np.sin(g["ph"][0])
+    for q in range(1, 8):
+        acc = acc + lvl[q] * np.sin(g["ph"][q])
+    norm = acc / np.float32(0.15 + float(lvl.sum()))
+    base = np.float32(0.64 + 0.16 * ctx.energy)
+    depth = np.float32(0.10 + 0.14 * ctx.energy)
+    field = (base + depth * 2.2 * norm).astype(np.float32)
+    lit = field > g["th"]
+    # guard: a row whose field stays above its own row-max threshold would
+    # saturate every dot. The top threshold cell of such a row is forced
+    # dark, which makes a uniformly solid row structurally impossible
+    # without dimming anything else.
+    hot = field.max(axis=1) > g["th_rowmax"]
+    if bool(hot.any()):
+        cols = g["th_argmax"]
+        lit[hot, cols[hot]] = False
     codes = pack_braille(lit)
-    col = cell_max(np.where(lit, grey, 0.0))
+
+    # colour follows the lit density: the ramp is walked by the cell-max of
+    # the field where it is lit, so bright patches sit higher in the ramp
+    col = cell_max(np.where(lit, np.clip(field, 0.0, 1.0), 0.0))
     idx = ctx.ramp(np.clip(col, 0.0, 1.0))
     return codes, idx
 
