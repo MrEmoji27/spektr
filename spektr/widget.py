@@ -83,6 +83,8 @@ class AudioVisualizer(Widget):
         self._mode_state: dict[str, dict] = {}
         self._strips: list[Strip] | None = None
         self._frame = 0
+        #: Onset counter as of the previous rendered frame, for ``ctx.onsets``.
+        self._last_onset_seq = 0
         self._t0 = time.monotonic()
         self._last = self._t0
         self._timer = None
@@ -542,6 +544,13 @@ class AudioVisualizer(Widget):
 
             frame = Frame()
 
+        # Difference the onset counter once, here, rather than in every mode
+        # that wants beats. Clamped at zero because a restarted analyser hands
+        # back a counter that begins again from nothing, and a negative delta
+        # is not a burst of beats played backwards.
+        onsets = max(0, frame.onset_seq - self._last_onset_seq)
+        self._last_onset_seq = frame.onset_seq
+
         ctx = Ctx(
             w=w,
             h=h,
@@ -560,6 +569,7 @@ class AudioVisualizer(Widget):
             state=self._mode_state.setdefault(m.name, {}),
             bars=self.settings.bands,
             onset_seq=frame.onset_seq,
+            onsets=onsets,
             onset_strength=frame.onset_strength,
             flux=frame.flux,
             tempo_bpm=frame.tempo_bpm,

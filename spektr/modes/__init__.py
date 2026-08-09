@@ -73,7 +73,21 @@ class Ctx:
     #: fire the detector repeatedly, and a reader that keys on the counter
     #: sees exactly one signal per hit.
     onset_seq: int = 0
-    #: 0..1 strength of the most recently detected onset.
+    #: How many onsets landed since *this mode's previous frame* — 0 or 1
+    #: normally, 2+ at a low frame rate or on fast drums. ``if ctx.onsets:``
+    #: is the short answer to "did anything hit", and it is the field to reach
+    #: for; :attr:`onset_seq` is the raw counter underneath it.
+    #:
+    #: The widget differences the counter once per frame so that 44 modes do
+    #: not each keep their own ``last_seq`` in scratch. Per-mode differencing
+    #: also gets the answer wrong after a mode switch: scratch survives, so a
+    #: mode returned to after a minute away sees every beat that played while
+    #: it was not drawing, and reports them all as having just happened.
+    onsets: int = 0
+    #: 0..1 strength of the most recently detected onset. It persists after
+    #: that onset rather than clearing, so it answers "how hard was the last
+    #: hit", not "how hard was the hit this frame" — gate it on
+    #: :attr:`onsets` when you mean the latter.
     onset_strength: float = 0.0
     #: 0..1 raw onset-detection-function value for this frame. Continuous, so
     #: it is safe to read at any frame rate; useful for "how percussive is
