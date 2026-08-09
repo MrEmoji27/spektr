@@ -9,6 +9,27 @@ import numpy as np
 from ..render import cell_max, frac, noise, pack_braille
 from . import Ctx, band_columns, empty, mode, spread
 
+_INV24 = np.float32(1.0 / 0x1000000)
+
+
+def _noise_at(rows: np.ndarray, cols: np.ndarray, seed: int) -> np.ndarray:
+    """``render.noise`` evaluated at explicit (row, col) positions.
+
+    The hash is positional — ``row * 6271 + col * 3037`` before the mixing
+    chain — so a field sampled at a few thousand scattered cells is exactly
+    the same field :func:`spektr.render.noise` would produce over the whole
+    grid at those positions, at a fraction of the memory traffic. This is
+    Flame's flicker: it only touches a thin band of cells, and the full-grid
+    hash was over 2 ms of the mode's budget at 400x100.
+    """
+    with np.errstate(over="ignore"):
+        h = rows * np.uint32(6271) + cols * np.uint32(3037)
+        h = h + np.uint32((int(seed) * 104729) & 0xFFFFFFFF)
+        h ^= h >> np.uint32(16)
+        h *= np.uint32(0x45D9F3B)
+        h ^= h >> np.uint32(16)
+    return (h & np.uint32(0xFFFFFF)).astype(np.float32) * _INV24
+
 
 def _polar(ctx: Ctx):
     """Cached distance/angle grids. Only rebuilt when the terminal resizes."""
@@ -72,7 +93,17 @@ def flame(ctx: Ctx):
     band_of = np.minimum((np.arange(dc) * n) // dc, n - 1)
     lvl = ctx.display_bands(n)[band_of][None, :].astype(np.float32)
 
-    y = ((dr - 1 - np.arange(dr)) / max(1, dr - 1)).astype(np.float32)[:, None]
+    # The flame is pinned to the top of the grid — ``alive`` is ``y <= lvl``
+    # and every band is quieter than the loudest one, so no row above the
+    # loudest band's top row can light. Everything below that row is dead
+    # every frame; the whole per-frame pass over those rows (the wobble, the
+    # width, the edge, the dither) spends its time writing zeros. Bound the
+    # grid to the top rows the flame can actually occupy; the values there
+    # are identical to the full-grid ones because every row-level input
+    # (``y``) is the same function of the absolute row index.
+    maxlvl = float(lvl.max())
+    top = int(math.ceil((dr - 1) * (1.0 - maxlvl)))
+    y = ((dr - 1 - np.arange(top, dr)) / max(1, dr - 1)).astype(np.float32)[:, None]
     alive = y <= lvl
 
     seg = max(1.0, dc / n)
@@ -94,8 +125,11 @@ def flame(ctx: Ctx):
 
     # ``dist < fw`` is exactly ``edge < 1.0`` wherever fw is positive, which is
     # every alive cell, so the separate distance pass folds into this division.
+    # fw is ``>= 0.3 * seg / 2 > 0`` at every cell, so the old ``maximum(fw,
+    # 1e-6)`` guard could never fire and the pass over the grid to compute it
+    # was pure overhead — divide by ``fw`` directly, bit-identically.
     edge = np.abs(np.arange(dc, dtype=np.float32)[None, :] - centre + np.float32(0.5) - wobble)
-    edge /= np.maximum(fw, np.float32(1e-6))
+    edge /= fw
 
     # Re-seeded every frame, and this is the one mode in the file where that
     # is right. Pulse, Auroras and Murmuration all moved to fixed grain
@@ -105,10 +139,26 @@ def flame(ctx: Ctx):
     # field was measured at 18.3% of cells changing per frame under frozen
     # audio against 5.9%, a three-fold drop in exactly the property that makes
     # it read as fire, to save about 2 ms in a mode that fits its budget.
-    dots = alive & (edge < 1.0) & ((edge < 0.7) | (noise((dr, dc), ctx.frame + 31) < 0.6))
+    #
+    # The dither only needs the hash where it is consulted — the band of
+    # cells with ``0.7 <= edge < 1.0``, a thin arc a few percent of the grid
+    # at 400x100 — so the full-grid noise() call (several uint32 passes over
+    # 320k cells, ~2.4 ms here) becomes a hash over just those cells via
+    # :func:`_noise_at`. ``noise < 0.6`` is only ever evaluated there, so the
+    # result is bit-identical: solid cells stay lit, cells past the flame's
+    # edge stay dark, and the flicker band gets exactly the same field.
+    solid = alive & (edge < 0.7)
+    flick = alive & (edge >= 0.7) & (edge < 1.0)
+    dots = np.zeros((dr, dc), dtype=bool)
+    dots[top:] = solid
+    fy, fx = np.nonzero(flick)
+    if fy.size:
+        dots[top + fy, fx] |= _noise_at((fy + top).astype(np.uint32), fx.astype(np.uint32), ctx.frame + 31) < np.float32(0.6)
 
     codes = pack_braille(dots)
-    cidx = ctx.ramp(cell_max(np.where(dots, tip, np.float32(0.0))))
+    heat = np.zeros((dr, dc), dtype=np.float32)
+    heat[top:] = np.where(dots[top:], tip, np.float32(0.0))
+    cidx = ctx.ramp(cell_max(heat))
     return codes, cidx
 
 
@@ -190,8 +240,11 @@ def pulse(ctx: Ctx):
     )
 
     core = dist < 1.0
-    inside = (dist <= r) & (r >= 1.0)
-    prox = np.where(inside, dist / np.maximum(r, 1e-6), 0.0)
+    # ``r >= 0.1 * max_r >= 1`` at every cell, so the second comparison of the
+    # original mask never fired and was a full-grid pass for nothing; and
+    # ``maximum(r, 1e-6)`` could never fire either. Both drop bit-identically.
+    inside = dist <= r
+    prox = np.where(inside, dist / r, np.float32(0.0))
     lit = inside & ((prox > 0.45) | (nz < 0.3 + prox * 0.7))
 
     # Folded into one threshold field rather than a separate mask, a clipped
@@ -211,9 +264,18 @@ def pulse(ctx: Ctx):
         if strength <= 0.06:
             continue
         band = 1.0 + strength * 3.0
+        # The ring is a thin annulus — a few thousand cells on a 320k grid —
+        # so the dither math runs only on the cells inside it. The membership
+        # mask still needs the full-grid distance pass, but the expensive part
+        # — the division, the fade and the threshold — is per-ring-cell, and
+        # the per-cell values are the same float operations on the same
+        # inputs as the old dense version. Cells outside the ring never had
+        # their ``lit`` bit touched (``near & ...`` was false there).
         edge = np.abs(dist - max_r * phase)
         near = edge < band
-        lit |= near & (nz < (1.0 - edge / band) * strength)
+        wy, wx = np.nonzero(near)
+        if wy.size:
+            lit[wy, wx] |= nz[wy, wx] < (1.0 - edge[wy, wx] / band) * strength
 
     lit |= core
     codes = pack_braille(lit)
@@ -274,13 +336,27 @@ def arcs(ctx: Ctx):
             out=lut,
         )
 
-    idx = np.clip((dist * np.float32(steps / max_r)).astype(np.int32), 0, steps - 1)
-    heat = lut[idx]
+    # ``dist`` never changes, so the whole index conversion — scale, truncate
+    # and clamp — is per-size state, not per-frame work. Rebuilding the three
+    # passes over 320k cells every frame cost over a millisecond for a table
+    # that is the same 400x800 array of small ints all session.
+    ridx = ctx.scratch(
+        "arcs_ridx",
+        lambda: np.clip(
+            (dist * np.float32(steps / max_r)).astype(np.int32), 0, steps - 1
+        ),
+    )
+    heat = lut[ridx]
 
-    # the spectrum also modulates brightness around the ring, so the rings
-    # shimmer where the energy is rather than glowing evenly
-    nrg = _angular_bands(ctx, turn, min(12, n), ctx.t * 0.05)
-    heat *= 0.55 + 0.45 * nrg
+    # The spectrum also modulates brightness around the ring, so the rings
+    # shimmer where the energy is rather than glowing evenly. The modulation
+    # is folded into the angle table itself — ``0.55 + 0.45 * lut_a`` over the
+    # 512-entry table, then one multiply of two gathered fields — instead of
+    # gathering ``lut_a`` and building the modulation over the full dot grid.
+    # Each angle step's value is the same float expression either way.
+    lut_a = _angular_bands(ctx, turn, min(12, n), ctx.t * 0.05)
+    mod = lut_a * np.float32(0.45) + np.float32(0.55)
+    heat *= mod
 
     lit = heat > 0.06
     codes = pack_braille(lit)
