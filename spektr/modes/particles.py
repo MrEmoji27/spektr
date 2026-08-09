@@ -766,7 +766,21 @@ def orbit(ctx: Ctx):
     fy = cy + np.sin(ang) * r
 
     buf = ctx.scratch("orbit_buf", lambda: np.zeros((dr, dc), dtype=np.float32))
-    buf *= float(np.exp(-max(ctx.dt, 0.0) / 0.55))
+    # Trail length, and it was the whole problem with this mode.
+    #
+    # At a 0.55 s decay against a 0.04 threshold a stroke stays lit for
+    # 0.55 * ln(1/0.04) = 1.77 seconds. The inner bodies orbit in a couple of
+    # seconds, so each one was drawing most of a full revolution at once and
+    # sixteen of them overlapped into a solid scribble -- 41% of the frame
+    # filled, almost all of it the heaviest glyph, with no individual path
+    # readable anywhere in it. The Keplerian motion underneath was correct
+    # and completely invisible.
+    #
+    # Short enough now (0.42 s to the threshold) that a body pulls a comet
+    # tail rather than painting its whole orbit, which is what makes the
+    # ellipse legible: you see where it has just been, not everywhere it has
+    # ever been.
+    buf *= float(np.exp(-max(ctx.dt, 0.0) / 0.16))
 
     # Speed is the brightness. Normalised against each body's own mean rate so
     # a slow outer orbit still lights up at its own periapsis rather than being
@@ -811,7 +825,7 @@ def orbit(ctx: Ctx):
         np.broadcast_to(np.minimum(vals + 0.25, 1.0)[:, None], hy.shape)[ok].astype(np.float32),
     )
 
-    dots = buf > 0.04
+    dots = buf > 0.07
     codes = pack_braille(dots)
     cidx = ctx.ramp(cell_max(buf))
     return codes, cidx

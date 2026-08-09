@@ -1297,3 +1297,101 @@ def valentine(ctx: Ctx):
     codes = pack_braille(field > 0.0)
     idx = ctx.ramp(np.clip(cell_max(field), 0.0, 1.0))
     return codes, idx
+
+
+@mode("Locket", group="fields", blurb="a heart-shaped window with the spectrum playing inside it")
+def locket(ctx: Ctx):
+    """The heart is the frame, not the subject.
+
+    ``Valentine`` draws a heart and beats it. This inverts that: the heart is
+    a window cut in an opaque field, and everything audio-reactive happens
+    *behind* it — a bar spectrum rising from the bottom of the cavity, a
+    waveform threaded across the middle, and nothing at all outside the
+    outline. The shape never moves, so what you watch is the music inside it
+    rather than the heart itself, which is the opposite of what Valentine
+    asks you to look at.
+
+    Because the mask is fixed, everything that varies is clipped by it, and
+    the clipping is what makes the mode work: a bar that would overflow the
+    frame instead runs out of heart, so the silhouette reads as a container
+    with a level in it rather than as a chart that happens to be heart-shaped.
+    The bars are measured against the heart's own local height at each column,
+    not against the frame, so a bar at the narrow point of the lobe fills its
+    available space at the same level as one in the middle.
+
+    The rim is drawn from the same signed field as the mask — the band just
+    inside the zero contour — so the outline is always lit even in silence and
+    the window never disappears. Braille dots make it a clean curve rather
+    than a staircase.
+    """
+    dr, dc = ctx.dot_rows, ctx.dot_cols
+    if dr < 12 or dc < 16:
+        return empty(ctx.w, ctx.h)
+
+    def geo():
+        cx, cy = (dc - 1) / 2.0, (dr - 1) / 2.0
+        x = (np.arange(dc, dtype=np.float32) - np.float32(cx)) / np.float32(max(cx, 1.0))
+        y = (np.float32(cy) - np.arange(dr, dtype=np.float32)) / np.float32(max(cy, 1.0))
+        # The signed heart field, evaluated once: the mask never moves, so
+        # this is a constant for the life of the grid and has no business
+        # being recomputed sixty times a second.
+        hx = x[None, :] / np.float32(0.86)
+        hy = (y[:, None] + np.float32(0.06)) / np.float32(0.86) * np.float32(1.18)
+        q = hx * hx + hy * hy - np.float32(1.0)
+        fld = (q * q * q - hx * hx * hy * hy * hy).astype(np.float32)
+        inside = fld <= 0.0
+        # Rim: just inside the contour. Scaled by the local gradient so the
+        # band stays an even thickness around the curve instead of bulging
+        # where the field is flat.
+        gy_, gx_ = np.gradient(fld)
+        grad = np.sqrt(gx_ * gx_ + gy_ * gy_).astype(np.float32) + np.float32(1e-6)
+        rim = inside & ((-fld / grad) < np.float32(1.6))
+        # How much heart there is above and below each column, so bars can be
+        # measured against the cavity rather than against the frame.
+        rows = np.arange(dr, dtype=np.float32)[:, None]
+        big = np.float32(dr * 4)
+        top = np.where(inside, rows, big).min(axis=0)
+        bot = np.where(inside, rows, np.float32(-1.0)).max(axis=0)
+        return {"inside": inside, "rim": rim, "top": top, "bot": bot,
+                "rows": rows, "x": x[None, :]}
+
+    g = ctx.scratch("locket_geo", geo)
+    inside, rim = g["inside"], g["rim"]
+    top, bot, rows = g["top"], g["bot"], g["rows"]
+
+    # ── the spectrum, as a level inside the cavity ──
+    prof = resample_bands(ctx.bands, dc).astype(np.float32)
+    prof = (prof + np.roll(prof, 1) + np.roll(prof, -1)) * np.float32(1.0 / 3.0)
+    depth_avail = np.maximum(bot - top, 1.0)
+    # Bar top, per column, in absolute rows: measured down from the cavity's
+    # own floor by the band level.
+    bar_top = bot - prof * depth_avail * np.float32(0.96)
+    bars = inside & (rows >= bar_top[None, :])
+
+    # ── the waveform, threaded across the middle ──
+    # Sampled to the grid width and hung about the cavity's vertical centre,
+    # so it stays inside the shape wherever the shape is narrow.
+    wave = ctx.wave
+    if wave.size:
+        idxw = np.linspace(0, wave.size - 1, dc).astype(np.int32)
+        w = np.asarray(wave, dtype=np.float32)[idxw]
+    else:
+        w = np.zeros(dc, dtype=np.float32)
+    mid = (top + bot) * np.float32(0.5)
+    wrow = mid + w * depth_avail * np.float32(0.30)
+    trace = inside & (np.abs(rows - wrow[None, :]) < np.float32(0.9))
+
+    lit = rim | bars | trace
+
+    # Colour: the rim brightest, the bar body stepping with its own height so
+    # a tall column sits higher in the ramp, the waveform in between.
+    val = np.zeros((dr, dc), dtype=np.float32)
+    np.maximum(val, np.where(bars, np.float32(0.30) + np.float32(0.45) * prof[None, :],
+                             np.float32(0.0)), out=val)
+    np.maximum(val, np.where(trace, np.float32(0.80), np.float32(0.0)), out=val)
+    np.maximum(val, np.where(rim, np.float32(0.62) + np.float32(0.38) * ctx.energy,
+                             np.float32(0.0)), out=val)
+
+    codes = pack_braille(lit)
+    idx = ctx.ramp(np.clip(cell_max(val), 0.0, 1.0))
+    return codes, idx
