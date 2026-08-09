@@ -1299,30 +1299,41 @@ def valentine(ctx: Ctx):
     return codes, idx
 
 
-@mode("Locket", group="fields", blurb="a heart-shaped window with the spectrum playing inside it")
+#: Concurrent heart rings in Locket.
+_LOCKET_RINGS = 10
+
+
+@mode("Locket", group="fields", blurb="a heart-shaped tunnel — outlines rushing out of the centre on the beat")
 def locket(ctx: Ctx):
-    """The heart is the frame, not the subject.
+    """``Tunnel In``, with a heart for a cross-section.
 
-    ``Valentine`` draws a heart and beats it. This inverts that: the heart is
-    a window cut in an opaque field, and everything audio-reactive happens
-    *behind* it — a bar spectrum rising from the bottom of the cavity, a
-    waveform threaded across the middle, and nothing at all outside the
-    outline. The shape never moves, so what you watch is the music inside it
-    rather than the heart itself, which is the opposite of what Valentine
-    asks you to look at.
+    Same construction and the same reason for it: rings are discrete and
+    beat-spawned rather than an endless regular pattern, each holds a depth
+    ``z`` that falls at a steady rate, and its on-screen size is ``k / z`` —
+    so a ring crawls while it is far away and tears past as it arrives. That
+    acceleration is what reads as depth. A shape growing at a constant rate
+    reads as a shape growing, which is the tell that a mode is only pretending
+    to have a third dimension.
 
-    Because the mask is fixed, everything that varies is clipped by it, and
-    the clipping is what makes the mode work: a bar that would overflow the
-    frame instead runs out of heart, so the silhouette reads as a container
-    with a level in it rather than as a chart that happens to be heart-shaped.
-    The bars are measured against the heart's own local height at each column,
-    not against the frame, so a bar at the narrow point of the lobe fills its
-    available space at the same level as one in the middle.
+    The difficulty is that a heart is not a circle, so "how big is this ring
+    here" is not simply the distance from the centre. What makes it cheap is
+    that the heart is star-shaped about its own centre: along any ray from the
+    origin the outline sits at one radius ``r_h(theta)``, and scaling the whole
+    heart by ``s`` scales that radius by exactly ``s``. So a dot at radius
+    ``R`` on the ray ``theta`` lies on the outline of the heart scaled to
+    ``R / r_h(theta)`` — one division, given a table of ``r_h``.
 
-    The rim is drawn from the same signed field as the mask — the band just
-    inside the zero contour — so the outline is always lit even in silence and
-    the window never disappears. Braille dots make it a clean curve rather
-    than a staircase.
+    That table is built once per grid size by walking each ray outward and
+    keeping the last radius still inside the implicit curve
+    ``(u^2 + v^2 - 1)^3 <= u^2 v^3``. Taking the *outermost* crossing rather
+    than the first is what handles the notch at the top of the heart, where a
+    ray leaves the shape and re-enters it; the first crossing would trace the
+    cleft instead of the silhouette.
+
+    With that field precomputed, a ring is ``abs(scale_field - s) < w`` — a
+    comparison over the grid and nothing more, no implicit curve evaluated per
+    ring per frame. Rings thicken and brighten as they near, because a contour
+    subtends more of your view the closer it gets.
     """
     dr, dc = ctx.dot_rows, ctx.dot_cols
     if dr < 12 or dc < 16:
@@ -1330,68 +1341,87 @@ def locket(ctx: Ctx):
 
     def geo():
         cx, cy = (dc - 1) / 2.0, (dr - 1) / 2.0
-        x = (np.arange(dc, dtype=np.float32) - np.float32(cx)) / np.float32(max(cx, 1.0))
-        y = (np.float32(cy) - np.arange(dr, dtype=np.float32)) / np.float32(max(cy, 1.0))
-        # The signed heart field, evaluated once: the mask never moves, so
-        # this is a constant for the life of the grid and has no business
-        # being recomputed sixty times a second.
-        hx = x[None, :] / np.float32(0.86)
-        hy = (y[:, None] + np.float32(0.06)) / np.float32(0.86) * np.float32(1.18)
-        q = hx * hx + hy * hy - np.float32(1.0)
-        fld = (q * q * q - hx * hx * hy * hy * hy).astype(np.float32)
-        inside = fld <= 0.0
-        # Rim: just inside the contour. Scaled by the local gradient so the
-        # band stays an even thickness around the curve instead of bulging
-        # where the field is flat.
-        gy_, gx_ = np.gradient(fld)
-        grad = np.sqrt(gx_ * gx_ + gy_ * gy_).astype(np.float32) + np.float32(1e-6)
-        rim = inside & ((-fld / grad) < np.float32(1.6))
-        # How much heart there is above and below each column, so bars can be
-        # measured against the cavity rather than against the frame.
-        rows = np.arange(dr, dtype=np.float32)[:, None]
-        big = np.float32(dr * 4)
-        top = np.where(inside, rows, big).min(axis=0)
-        bot = np.where(inside, rows, np.float32(-1.0)).max(axis=0)
-        return {"inside": inside, "rim": rim, "top": top, "bot": bot,
-                "rows": rows, "x": x[None, :]}
+        x = (np.arange(dc, dtype=np.float64) - cx) / max(cx, 1.0)
+        y = (cy - np.arange(dr, dtype=np.float64)) / max(cy, 1.0)
+        gx = x[None, :]
+        gy = y[:, None]
+        ang = np.arctan2(gy, gx)                       # -pi..pi
+        rad = np.sqrt(gx * gx + gy * gy)
+
+        # r_h(theta): the outermost radius still inside the unit heart along
+        # each ray. Walked outward on a fixed grid of radii; the last radius
+        # inside is the silhouette, which steps over the top notch instead of
+        # stopping at it.
+        na = 1024
+        th = np.linspace(-math.pi, math.pi, na, endpoint=False)
+        rs = np.linspace(0.02, 1.60, 320)[:, None]
+        u = (rs * np.cos(th)[None, :]) / 0.92
+        v = (rs * np.sin(th)[None, :]) / 0.92 * 1.18 + 0.06
+        q = u * u + v * v - 1.0
+        insidey = (q * q * q - u * u * v * v * v) <= 0.0
+        idx = insidey.shape[0] - 1 - np.argmax(insidey[::-1], axis=0)
+        r_h = np.where(insidey.any(axis=0), rs[:, 0][idx], 0.02)
+
+        ai = ((ang + math.pi) / (2 * math.pi) * na).astype(np.int32) % na
+        scale = (rad / np.maximum(r_h[ai], 1e-3)).astype(np.float32)
+        return {"scale": scale, "ang": ang.astype(np.float32)}
 
     g = ctx.scratch("locket_geo", geo)
-    inside, rim = g["inside"], g["rim"]
-    top, bot, rows = g["top"], g["bot"], g["rows"]
+    sfield = g["scale"]
 
-    # ── the spectrum, as a level inside the cavity ──
-    prof = resample_bands(ctx.bands, dc).astype(np.float32)
-    prof = (prof + np.roll(prof, 1) + np.roll(prof, -1)) * np.float32(1.0 / 3.0)
-    depth_avail = np.maximum(bot - top, 1.0)
-    # Bar top, per column, in absolute rows: measured down from the cavity's
-    # own floor by the band level.
-    bar_top = bot - prof * depth_avail * np.float32(0.96)
-    bars = inside & (rows >= bar_top[None, :])
+    st = ctx.scratch("locket", lambda: {
+        "z": np.zeros(_LOCKET_RINGS, dtype=np.float32),
+        "amp": np.zeros(_LOCKET_RINGS, dtype=np.float32),
+        "acc": 0.0, "last_seq": ctx.onset_seq,
+    })
+    seen = st["last_seq"]
+    st["last_seq"] = ctx.onset_seq
+    onsets = max(0, ctx.onset_seq - seen)
 
-    # ── the waveform, threaded across the middle ──
-    # Sampled to the grid width and hung about the cavity's vertical centre,
-    # so it stays inside the shape wherever the shape is narrow.
-    wave = ctx.wave
-    if wave.size:
-        idxw = np.linspace(0, wave.size - 1, dc).astype(np.int32)
-        w = np.asarray(wave, dtype=np.float32)[idxw]
-    else:
-        w = np.zeros(dc, dtype=np.float32)
-    mid = (top + bot) * np.float32(0.5)
-    wrow = mid + w * depth_avail * np.float32(0.30)
-    trace = inside & (np.abs(rows - wrow[None, :]) < np.float32(0.9))
+    # A heart per beat, plus a slow clock so a passage the detector reads
+    # poorly still has something arriving.
+    st["acc"] += (0.30 + ctx.energy * 1.3) * max(ctx.dt, 0.0)
+    want = onsets
+    if st["acc"] >= 1.0:
+        st["acc"] -= 1.0
+        want += 1
+    # Never an empty corridor. The clock needs about a second to release the
+    # first heart at a moderate level, so without this the mode opens on bare
+    # ribs and reads as broken -- and under a drone, where no onset arrives,
+    # it would stay that way.
+    if not want and not (st["z"] > 0.0).any():
+        want = 1
+    if want:
+        free = np.flatnonzero(st["z"] <= 0.0)[:want]
+        for i in free:
+            st["z"][i] = np.float32(1.0)
+            st["amp"][i] = np.float32(0.5 + 0.5 * min(1.0, ctx.onset_strength + ctx.energy))
 
-    lit = rim | bars | trace
+    live = st["z"] > 0.0
+    if live.any():
+        st["z"][live] -= (0.28 + ctx.energy * 0.80) * np.float32(max(ctx.dt, 0.0))
+        st["z"][st["z"] <= 0.05] = 0.0
 
-    # Colour: the rim brightest, the bar body stepping with its own height so
-    # a tall column sits higher in the ramp, the waveform in between.
-    val = np.zeros((dr, dc), dtype=np.float32)
-    np.maximum(val, np.where(bars, np.float32(0.30) + np.float32(0.45) * prof[None, :],
-                             np.float32(0.0)), out=val)
-    np.maximum(val, np.where(trace, np.float32(0.80), np.float32(0.0)), out=val)
-    np.maximum(val, np.where(rim, np.float32(0.62) + np.float32(0.38) * ctx.energy,
-                             np.float32(0.0)), out=val)
+    glow = np.zeros((dr, dc), dtype=np.float32)
+    for i in np.flatnonzero(st["z"] > 0.0):
+        z = float(st["z"][i])
+        s = 0.13 / z
+        if s > 2.2:
+            continue
+        w = 0.014 + 0.045 * (1.0 - z)
+        band = np.abs(sfield - np.float32(s)) < np.float32(w)
+        if not band.any():
+            continue
+        a = float(st["amp"][i]) * (0.35 + 0.65 * (1.0 - z))
+        np.maximum(glow, np.where(band, np.float32(a), np.float32(0.0)), out=glow)
+
+    # The corridor the hearts arrive through: a few fixed ribs running out
+    # along the heart's own rays, so the rings have structure to pass.
+    spoke = g["ang"] * np.float32(8.0 / (2 * math.pi))
+    ribs = (spoke - np.floor(spoke)) < np.float32(0.05)
+    lit = (glow > 0.18) | (ribs & (sfield > 0.12) & (sfield < 2.0))
+    np.maximum(glow, np.where(ribs, np.float32(0.14), np.float32(0.0)), out=glow)
 
     codes = pack_braille(lit)
-    idx = ctx.ramp(np.clip(cell_max(val), 0.0, 1.0))
+    idx = ctx.ramp(np.clip(cell_max(glow), 0.0, 1.0))
     return codes, idx
