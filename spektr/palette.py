@@ -484,6 +484,29 @@ BUILTIN: dict[str, Theme] = dict(
         # facets as the peak — deep and saturated across the whole range
         # rather than brightening by shifting hue toward yellow.
         _t("ruby", "#5c0714", "#9b111e", "#ff2b4d", "#0d0206", "#ffd3da", "#e0115f"),
+        # Four more cut stones, on ruby's construction rather than its hue.
+        #
+        # The rule that makes a gemstone read as one is that the hue holds from
+        # shadow to peak and only saturation and lightness move. Most of the
+        # older ramps here brighten by *travelling*: ember and infrared and
+        # magma all climb red into orange into yellow, which reads as heat, not
+        # as a stone. So each of these keeps one hue and spends its range on
+        # depth — a dark inclusion at the bottom, the stone's own colour in the
+        # middle, and at the top the bright flash a facet throws back.
+        #
+        # They fill real gaps rather than crowding the set. There was no
+        # saturated violet at all; the greens were muted (osaka-jade, everforest)
+        # or scientific (viridis); the blues were all atmospheric — deep-sea,
+        # ice, polar, oceanic are cold and desaturated where sapphire is
+        # jewel-bright; and nothing was a plain vivid orange, only heat ramps
+        # passing through it on the way to yellow.
+        _t("emerald", "#05532a", "#0f9b5a", "#3ff08d", "#02120a", "#cdf5e0", "#2ee6a0"),
+        _t("sapphire", "#071a4a", "#0f52ba", "#4d9bff", "#030818", "#d0e0ff", "#2f7fe0"),
+        _t("amethyst", "#2a0b47", "#7b2fbe", "#c77dff", "#100320", "#ecd9ff", "#9d4edd"),
+        _t("citrine", "#4a2c04", "#c68a12", "#ffd447", "#140c02", "#fff0cc", "#e8a317"),
+        # Not a gemstone and deliberately so — the one warm hue the set never
+        # held still. Every other orange here is a waypoint in a heat ramp.
+        _t("tangerine", "#4a1c02", "#e2560d", "#ff9f45", "#150701", "#ffe2cc", "#ff6b1a"),
         # red -> yellow -> green -> blue -> violet -> magenta, and back to red:
         # a closed loop around the colour wheel. Three anchors can't do this —
         # the red→green seam dries to olive and the green→violet one washes

@@ -8,7 +8,7 @@
 [![License](https://img.shields.io/badge/license-MIT-00c853)](https://github.com/MrEmoji27/spektr/blob/main/LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20·%20Linux%20·%20macOS-546e7a)](#how-it-captures-audio)
 [![Modes](https://img.shields.io/badge/render%20modes-44-ff6d00)](#modes)
-[![Themes](https://img.shields.io/badge/themes-49-7c4dff)](#themes)
+[![Themes](https://img.shields.io/badge/themes-54-7c4dff)](#themes)
 [![Built with Textual](https://img.shields.io/badge/built%20with-Textual-5e35b1)](https://textual.textualize.io/)
 
 </div>
@@ -21,7 +21,7 @@ spektr draws it: overlapped FFTs across 32 log-spaced bands (settable) from 50 H
 out the way cava does it, rendered with braille sub-characters so the picture moves at
 four times the vertical resolution of a text cell.
 
-**Forty-four render modes. Forty-nine themes. 60 fps, or your display's.**
+**Forty-four render modes. Fifty-four themes. 60 fps, or your display's.**
 
 ## Install
 
@@ -142,14 +142,15 @@ edited or newly added frames without restarting.
 
 ## Themes
 
-Forty-nine built in, previewed live from the `t` picker: `classic`, `gruvbox`, `catppuccin`
+Fifty-four built in, previewed live from the `t` picker: `classic`, `gruvbox`, `catppuccin`
 (+`-latte`), `dracula`, `nord`, `tokyo-night` (+`-day`), `rose-pine`, `everforest`,
 `kanagawa`, `ayu-mirage`, `monokai`, `solarized`, `nightfox`, `oxocarbon`, `miasma`,
 `osaka-jade`, `ristretto`, `flexoki-light`, `nightfly`, `material`, `gotham`, `oceanic`,
 `gruvbox-light`, `hackerman`, `ember`, `ethereal`, `synthwave`, `blade-runner`,
 `nostromo`, `plasma`, `viridis`, `ice`, `vaporwave`, `infrared`, `deep-sea`, `magma`,
 `matte-black`, `vantablack`, `rainbow`, `phosphor-amber`, `sakura`, `toxic`, `copper`,
-`polar`, `bubblegum`, `hot-pink`, `ruby` — plus `auto`, which derives a ramp from whatever Textual theme your
+`polar`, `bubblegum`, `hot-pink`, `ruby`, `emerald`, `sapphire`, `amethyst`, `citrine`,
+`tangerine` — plus `auto`, which derives a ramp from whatever Textual theme your
 terminal is wearing.
 
 `rainbow` is animated — its colour loop drifts continuously across the bands instead of
@@ -202,7 +203,7 @@ def nightrider(ctx):
 ```
 
 You return codepoints and *heat* — never colours — so every plugin works with all
-forty-nine themes for free.
+fifty-four themes for free.
 
 > [!WARNING]
 > **Plugins are Python and run with your privileges.** spektr can't sandbox them, and
