@@ -1145,7 +1145,14 @@ def dither(ctx: Ctx):
             kq = np.float32(dc) * np.float32(0.06 + 0.28 * (q / 7.0))
             wx = np.cos(thq) * twopi * kq
             wy = np.sin(thq) * twopi * kq
-            ph.append((wx * x[None, :] + wy * y[:, None]).astype(np.float32))
+            # Stored already evaluated. The wave's geometry depends only on
+            # the grid, so sin() of it is a constant for the whole life of
+            # this size — but it was being recomputed every frame, eight
+            # times over the dot grid. At 400x100 that is 2.56 million
+            # transcendentals a frame and it was most of the mode's cost.
+            # Only the band weights change, so the per-frame work is a
+            # weighted sum of fixed fields, with no sin() in it at all.
+            ph.append(np.sin(wx * x[None, :] + wy * y[:, None]).astype(np.float32))
         # The ordered-dither threshold: an s x s Bayer matrix (the standard
         # recursion, normalized to [0, 1)) tiled by ABSOLUTE dot position on
         # both axes, so the cross-hatch runs continuously across the whole
@@ -1158,7 +1165,11 @@ def dither(ctx: Ctx):
             size *= 2
         b = b / np.float32(size * size)
         th = b[np.arange(dr, dtype=np.int32) % s][:, np.arange(dc, dtype=np.int32) % s]
-        return {"ph": ph, "th": th, "th_rowmax": th.max(axis=1).astype(np.float32),
+        # One contiguous (8, dr, dc) block so the per-frame combine is a
+        # single tensordot rather than eight separate multiply-adds each
+        # walking the whole grid.
+        return {"sinph": np.ascontiguousarray(np.stack(ph)),
+                "th": th, "th_rowmax": th.max(axis=1).astype(np.float32),
                 "th_argmax": np.argmax(th, axis=1).astype(np.int32)}
 
     g = ctx.scratch("dither_grid", grid)
@@ -1167,9 +1178,7 @@ def dither(ctx: Ctx):
     # band total so the spectrum's SHAPE steers the texture while the
     # overall level steers its depth and density.
     lvl = resample_bands(ctx.bands, 8).astype(np.float32)
-    acc = lvl[0] * np.sin(g["ph"][0])
-    for q in range(1, 8):
-        acc = acc + lvl[q] * np.sin(g["ph"][q])
+    acc = np.tensordot(lvl, g["sinph"], axes=(0, 0))
     norm = acc / np.float32(0.15 + float(lvl.sum()))
     # Centre the field near the middle of the threshold matrix, and let it
     # swing past both ends of it.
