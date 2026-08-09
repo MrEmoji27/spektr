@@ -1324,6 +1324,12 @@ def locket(ctx: Ctx):
     Tunnel In uses. Constant growth would read as a shape inflating in place
     rather than as something travelling outward past you.
 
+    Each pulse carries its own birth radius, fixed at release. Deriving it from
+    the heart's current size every frame instead — which is what this did — ties
+    every ring in flight to a heart that breathes with the bass and the beat,
+    so a beat jerks the entire field outward at once and a shrinking heart
+    drags the rings back in. A ring's path has to be its own.
+
     Sizing a heart outline anywhere on the grid would normally cost an
     implicit curve evaluation per pulse per frame. It does not, because the
     heart is star-shaped about its own centre: along any ray the outline sits
@@ -1376,24 +1382,42 @@ def locket(ctx: Ctx):
         # gather. Two full-grid gathers plus a multiply-add per dot cost
         # 10.4 ms at 400x100; one gather is most of that back.
         nt = 256
-        fold = np.abs(turn * 2.0 - 1.0)
+        # Distance from the *point*, so band 0 lands on the heart's tip as the
+        # note above says. Measured from the cleft instead — which is what
+        # ``abs(turn * 2 - 1)`` gives — the bass sits on the notch at the top,
+        # and the bass is both the loudest band and the one that swings most.
+        # The notch is the only feature that makes the silhouette read as a
+        # heart rather than as a blob, so it is the last part of the outline
+        # that should be pushed around.
+        fold = 1.0 - np.abs(turn * 2.0 - 1.0)
         aidx = np.clip((fold * (nt - 1)).astype(np.int32), 0, nt - 1)
-        return {"scale": (rad / np.maximum(r_h[ai], 1e-3)).astype(np.float32),
-                "aidx": aidx, "nt": nt}
+        scale = (rad / np.maximum(r_h[ai], 1e-3)).astype(np.float32)
+        # The widest heart the grid can still show any part of. A pulse past
+        # it cannot light a single dot, so it is finished — see the retirement
+        # below. Measured rather than guessed: the coordinates are normalised,
+        # so this is 2.024 at every terminal size.
+        return {"scale": scale, "aidx": aidx, "nt": nt,
+                "rmax": float(scale.max())}
 
     _g = ctx.scratch("locket_geo", geo)
     sfield = _g["scale"]
 
     st = ctx.scratch("locket", lambda: {
         "z": np.zeros(_LOCKET_RINGS, dtype=np.float32),
+        # Birth radius, held per pulse. See the release below for why this
+        # cannot be recomputed from the current heart.
+        "r0": np.zeros(_LOCKET_RINGS, dtype=np.float32),
         "amp": np.zeros(_LOCKET_RINGS, dtype=np.float32),
         "spd": np.ones(_LOCKET_RINGS, dtype=np.float32),
-        "beat": 0.0, "acc": 0.0, "last_seq": ctx.onset_seq,
+        "beat": 0.0, "acc": 0.0, "since": 0.0,
         "rng": np.random.default_rng(214),
     })
-    seen = st["last_seq"]
-    st["last_seq"] = ctx.onset_seq
-    onsets = max(0, ctx.onset_seq - seen)
+    # ctx.onsets, not a private difference of ctx.onset_seq. Scratch survives a
+    # mode switch, so a mode that keeps its own ``last_seq`` comes back from a
+    # minute away holding every beat that played while it was not drawing and
+    # releases them in one frame. Measured here before the fix: ninety-one
+    # onsets on the first frame back, against the one that had just happened.
+    onsets = ctx.onsets
     bass = ctx.range(0.0, 0.22)
 
     # ── the resting heart ──
@@ -1444,7 +1468,16 @@ def locket(ctx: Ctx):
     # legible.
 
     # ── pulses, released from inside it ──
-    st["acc"] += (0.25 + ctx.energy * 1.0) * max(ctx.dt, 0.0)
+    # The free-running release is a fallback for music with no attack to find
+    # — a pad, a held chord — not a second source of pulses running alongside
+    # the beats. It only accumulates once nothing has hit for a while, because
+    # a stream of rings that owe nothing to the music is exactly what stops
+    # the rings that do from reading as the beat.
+    st["since"] = 0.0 if onsets else st["since"] + max(ctx.dt, 0.0)
+    if onsets:
+        st["acc"] = 0.0
+    elif st["since"] > 1.2:
+        st["acc"] += (0.25 + ctx.energy * 0.75) * max(ctx.dt, 0.0)
     want = onsets
     if st["acc"] >= 1.0:
         st["acc"] -= 1.0
@@ -1452,9 +1485,32 @@ def locket(ctx: Ctx):
     if not want and not (st["z"] > 0.0).any():
         want = 1
     if want:
-        free = np.flatnonzero(st["z"] <= 0.0)[:want]
-        for i in free:
+        slots = list(np.flatnonzero(st["z"] <= 0.0)[:want])
+        # A beat with no free slot takes the ring nearest the edge rather than
+        # being dropped. Twelve slots sounds generous and is not: a pulse lives
+        # about two seconds, so a fast enough beat fills them and the rest draw
+        # nothing at all — four of forty-eight at 6 Hz before this, and the gap
+        # widens with the rate. The mode's one promise is that a beat produces
+        # a pulse, and a beat that silently produces nothing is worse than one
+        # that cuts a ring already on its way out of frame. Smallest z is
+        # furthest out. Retiring off-screen rings below covers the ordinary
+        # rates on its own; this never fires under 6 Hz and carries drum rolls.
+        short = want - len(slots)
+        if short > 0:
+            busy = np.flatnonzero(st["z"] > 0.0)
+            if busy.size:
+                slots.extend(busy[np.argsort(st["z"][busy])][:short])
+        # Born at a fraction of the resting heart's size, so a pulse starts
+        # inside it and grows out through the outline rather than appearing on
+        # it. Held per pulse from here on: ``core`` breathes with the bass and
+        # the beat, and re-deriving the birth radius every frame moved every
+        # ring in flight with it. Each onset teleported the whole field
+        # outward — a step 10.6x a normal frame's on average, and backwards
+        # whenever the heart shrank.
+        born = np.float32(core * 0.30)
+        for i in slots:
             st["z"][i] = np.float32(1.0)
+            st["r0"][i] = born
             st["amp"][i] = np.float32(0.55 + 0.45 * min(1.0, ctx.onset_strength))
             # A little spread in speed, so two pulses released close together
             # separate as they travel instead of moving as one thick ring.
@@ -1465,15 +1521,15 @@ def locket(ctx: Ctx):
         st["z"][live] -= (np.float32(0.26 + ctx.energy * 0.70)
                           * st["spd"][live] * np.float32(max(ctx.dt, 0.0)))
         st["z"][st["z"] <= 0.045] = 0.0
+        # Retire anything wider than the grid instead of holding its slot until
+        # z runs out. ``r0 / z > rmax`` is the same test as "off screen",
+        # written without the divide.
+        gone = (st["z"] > 0.0) & (st["r0"] > st["z"] * np.float32(_g["rmax"]))
+        st["z"][gone] = np.float32(0.0)
 
-    # Released at a fraction of the resting heart's size, so a pulse is born
-    # inside it and grows out through the outline rather than appearing on it.
-    born = np.float32(core * 0.30)
     for i in np.flatnonzero(st["z"] > 0.0):
         z = float(st["z"][i])
-        sc = float(born) / z
-        if sc > 2.5:
-            continue
+        sc = float(st["r0"][i]) / z
         w = 0.014 + 0.055 * (1.0 - z)
         band = np.abs(sfield - np.float32(sc)) < np.float32(w)
         if not band.any():
