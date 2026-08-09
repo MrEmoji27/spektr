@@ -732,23 +732,6 @@ def vu(ctx: Ctx):
     return codes, cidx
 
 
-# ── rhythm helpers ───────────────────────────────────────────────────────────
-
-def _onsets_since(ctx: Ctx, st: dict) -> int:
-    """Onsets since the previous frame, by differencing the monotonic count.
-
-    The rhythm contract for :attr:`Ctx.onset_seq` is explicit: key on it
-    *changing*, never on ``onset_strength > 0`` — the analyser drops two
-    analyses in three at 60 fps and a boolean would be missed most of the
-    times it was true, while a counter cannot be. The count also survives
-    silence, so a pause cannot masquerade as a burst of beats. A negative
-    delta is a detector bug, not a beat; it reads as nothing.
-    """
-    n = ctx.onset_seq - st["last_seq"]
-    st["last_seq"] = ctx.onset_seq
-    return max(n, 0)
-
-
 @mode("Kaleidoscope", group="fields", blurb="radial mirror symmetry — the wedge count follows the spectrum")
 def kaleidoscope(ctx: Ctx):
     """A real mirror array behind the visuals, not a spun copy of a picture.
@@ -843,8 +826,11 @@ def kaleidoscope(ctx: Ctx):
     centroid = float((bands8 * np.arange(8)).sum() / total / 7.0) if total > 1e-9 else 0.0
     bass = ctx.range(0.0, 0.18)
 
-    st = ctx.scratch("kaleido", lambda: {"kc": 4.0, "spin": 0.0, "last_seq": ctx.onset_seq})
-    onsets = _onsets_since(ctx, st)
+    st = ctx.scratch("kaleido", lambda: {"kc": 4.0, "spin": 0.0})
+    # ctx.onsets, not a private difference of ctx.onset_seq. Scratch survives
+    # a mode switch, so differencing here would replay every beat that played
+    # while the mode was not drawing, all in a single frame.
+    onsets = ctx.onsets
 
     # The wedge count eases toward the centroid and snaps on a beat; it only
     # ever lands on a multiple of four, which is what keeps the vertical
@@ -1191,7 +1177,7 @@ def valentine(ctx: Ctx):
     gx, gy = ctx.scratch("valentine_geo", geo)
 
     st = ctx.scratch("valentine", lambda: {
-        "beat": 0.0, "dub": -1.0, "acc": 0.0, "last_seq": ctx.onset_seq,
+        "beat": 0.0, "dub": -1.0, "acc": 0.0,
         "hx": np.zeros(_VAL_HEARTS, dtype=np.float32),
         "hy": np.full(_VAL_HEARTS, 9.0, dtype=np.float32),   # 9 == dead
         "hs": np.zeros(_VAL_HEARTS, dtype=np.float32),
@@ -1199,7 +1185,10 @@ def valentine(ctx: Ctx):
         "rng": np.random.default_rng(214),
     })
     rng = st["rng"]
-    onsets = _onsets_since(ctx, st)
+    # ctx.onsets, not a private difference of ctx.onset_seq. Scratch survives
+    # a mode switch, so differencing here would replay every beat that played
+    # while the mode was not drawing, all in a single frame.
+    onsets = ctx.onsets
 
     bass = ctx.range(0.0, 0.22)
 

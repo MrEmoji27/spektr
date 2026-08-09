@@ -723,11 +723,11 @@ def tunnel_in(ctx: Ctx):
         "z": np.zeros(_TIN_RINGS, dtype=np.float32),      # 0 == free
         "amp": np.zeros(_TIN_RINGS, dtype=np.float32),
         "acc": 0.0,
-        "last_seq": ctx.onset_seq,
     })
-    seen = st["last_seq"]
-    st["last_seq"] = ctx.onset_seq
-    onsets = max(0, ctx.onset_seq - seen)
+    # ctx.onsets, not a private difference of ctx.onset_seq. Scratch survives
+    # a mode switch, so differencing here would replay every beat that played
+    # while the mode was not drawing, all in a single frame.
+    onsets = ctx.onsets
 
     # A ring per beat, plus a slow clock so a passage the detector reads
     # poorly still has something arriving — the same reasoning as Pulse's
