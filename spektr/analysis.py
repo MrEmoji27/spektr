@@ -349,7 +349,14 @@ class OnsetDetector:
     #: in the same place every bar, giving exactly two detections per beat.
     #: Requiring a candidate to be a real fraction of how hard things have
     #: recently hit is what a bare median cannot express.
-    PEAK_FRAC = 0.65
+    #:
+    #: The bar sat at 0.65 until the region gates arrived. Those gates now
+    #: carry the precision — they reject exactly the decay-era ripples, held
+    #: notes and pads the fraction was hedging against — so the bar can drop
+    #: to 0.3 and stop throwing away marginal attacks. Measured with the
+    #: gates in place: 0.65 -> 0.3 takes the corpus from 156 to 158 true
+    #: positives and still zero false positives.
+    PEAK_FRAC = 0.3
 
     #: How much of the detection function comes from per-band whitening
     #: rather than from the flat sum of flux. See :meth:`feed`.
@@ -364,6 +371,103 @@ class OnsetDetector:
     #: frame's mean. Without it, a band that has been silent divides its own
     #: numerical noise by nearly zero and manufactures detections.
     WHITEN_FLOOR = 0.8
+
+    #: Seconds of linear band-sum history kept for the region gates. Long
+    #: enough for the past-quietness window (REGION_PAST_HI) plus the peak
+    #: span, with slack; entries are pruned from the front as they age out.
+    SPEC_HISTORY_S = 0.7
+
+    #: Half-width of the *region* around the loudest rising band, in bands.
+    #:
+    #: The region gates compare frequency regions rather than whole-spectrum
+    #: level, because a sustained pad defeats level: measured on the corpus,
+    #: a pad under four-on-the-floor spans total level 0.93-1.14 while the
+    #: melody's sustained notes span 1.02-1.16, so no whole-spectrum ratio
+    #: separates them. A region is what the ear does: "something in this
+    #: frequency range just started".
+    REGION_HALF = 2
+
+    #: The candidate's region must have risen this much against the previous
+    #: hop. Real attacks measure 2.0-2.6 here; the false positives this gate
+    #: exists to kill — a whitened-noise blip after a click, the pad-kick
+    #: whose change concentrates in the pad's own band — sit at 1.0-1.4.
+    REGION_RISE_RATIO = 2.0
+
+    #: The candidate's region must also be this fraction of the loudest
+    #: frame in the preceding REGION_RISE_S. Without it, a band drifting
+    #: quietly upward while everything else sits still satisfies the rise
+    #: ratio without being an attack.
+    REGION_RISE_MIN = 0.15
+
+    #: Lower bound on the rise ratio for an attack that is layered over a
+    #: steady bed. See :meth:`_region_ok`: when the candidate is a broadband
+    #: transient with real energy, a rise of this much on the loudest band is
+    #: accepted even though it clears neither REGION_RISE_RATIO nor the
+    #: past-quietness gate.
+    #:
+    #: Measured on pad_under_kick: the kick under a constant pad whose own band
+    #: is the *loudest* riser registers rises of only 1.24-1.38 in that region,
+    #: because the pad mass inside the region dilutes the hop-to-hop ratio.
+    #: (The pad at bands 4-8, the kick's leakage at 0-3.) The bare gate at 2.0
+    #: rejected those three kicks outright, dropping recall from 0.938 to
+    #: 0.750. The attacks that still fail the full gate only pass here when a
+    #: spread test confirms they are broadband, so held notes and pitch moves -
+    #: which rise narrowly - stay out.
+    REGION_RISE_RATIO_LO = 1.2
+
+    #: An attack on a steady bed must also be holding at least this fraction
+    #: of the loudest recent frame. This is the REGION_RISE_MIN equivalent for
+    #: the low-rise arm: without it, the pad's own fade-in ripple (which rises
+    #: slowly but measures 1.26 on the rise ratio and lights several bands)
+    #: would sail through. Measured: the ripple sits at 0.29 here, the kicks
+    #: at 0.71-0.79, and the accepted kicks that clear the full gate as low as
+    #: 0.46 - so 0.45 keeps every kick and drops every ripple.
+    REGION_RISE_FILL = 0.45
+
+    #: How many bands must be lit at once for the low-rise arm to admit an
+    #: attack. A transient layered on a bed is broadband - it lights many
+    #: bands for a few hops - while a note moving to the next pitch moves one
+    #: narrow region. Counted on the same hop-to-hop diff as the rise gate:
+    #: bands at or above half the loudest band's rise.
+    #:
+    #: Measured: pad_under_kick kicks light 5-6 bands this way (with the
+    #: breakbeat at 10-13), while note_stream's pitch moves - the false
+    #: positive this arm must not admit - light at most 3. Four is the split.
+    REGION_SPREAD_MIN = 4
+
+    #: How far back the region-rise gate looks for the spectrum it
+    #: differences the candidate against, seconds. The previous hop is the
+    #: strongest comparison: an attack's band gains energy at every hop of
+    #: its 85 ms window slide, a held note's does not.
+    REGION_RISE_S = 0.040
+
+    #: The candidate's region must be this many times louder than the
+    #: quietest it was in the window between REGION_PAST_LO and
+    #: REGION_PAST_HI seconds ago.
+    #:
+    #: This is the gate that separates a real attack from a note stepping
+    #: to the next pitch. Both clear the rise gate: the boundary between
+    #: two held notes keeps both tones inside the analysis window for
+    #: ~186 ms, so its flux hump is as loud as a beat's. But a note that
+    #: stepped *from somewhere* has its region still lit 0.2-0.6 s back —
+    #: measured 2.0-2.9x the past minimum — while a fresh attack finds
+    #: silence there. The 0.2-0.6 s span is deliberately narrow: shorter
+    #: and the window still contains the 85 ms slide, longer and a melody
+    #: that returns to a band re-lights it (1-2 s lookbacks measured worse).
+    REGION_PAST_RATIO = 3.0
+    REGION_PAST_LO = 0.20
+    REGION_PAST_HI = 0.60
+
+    #: Half-width for the past-quietness gate, adaptive on the rising band
+    #: ``b0``: ``(threshold, half at or above the threshold, half below)``.
+    #:
+    #: The melody walks the 440-784 Hz bands (~12-17 of 32), so a rising
+    #: band up there needs a region wide enough that the *previous* note of
+    #: the walk is inside it — otherwise the walk re-lights the min window
+    #: and the gate cannot see the gap. The pad sits around bands 5-9 and
+    #: the kick at 0-2, so a low rising band keeps a tight region and the
+    #: pad cannot leak into the comparison.
+    REGION_PAST_HALF = (6, 4, 1)
 
     def __init__(self) -> None:
         self.seq = 0
@@ -386,6 +490,11 @@ class OnsetDetector:
         self._last_t = -1e9
         self._beats: list[float] = []
         self._span = self.PEAK_SPAN * 2 + 1
+        #: (time, linear band sums) for every open hop, for the region gates.
+        #: The linear spectrum, not the compressed one: the gates ask "how
+        #: much energy is in these bands", and the log compression exists
+        #: only to make flux proportional, which a sum of magnitudes is not.
+        self._spec_hist: list[tuple[float, np.ndarray]] = []
 
     def feed(self, spectrum: np.ndarray, now: float) -> None:
         """Consume one hop's magnitude spectrum, taken at time ``now``.
@@ -394,6 +503,14 @@ class OnsetDetector:
         owns the timeline — an offline harness drives this on the signal's
         clock, and onsets are judged to within tens of milliseconds.
         """
+        # Remember the linear spectrum for the region gates, which compare
+        # the candidate against what the same bands held up to ~0.6 s ago.
+        # Appended before the early returns so the history covers every
+        # open hop, including ones too early to produce flux.
+        self._spec_hist.append((now, spectrum.copy()))
+        while self._spec_hist and now - self._spec_hist[0][0] > self.SPEC_HISTORY_S:
+            self._spec_hist.pop(0)
+
         # Normalise before compressing, or the compression is not compression.
         #
         # log1p(GAMMA * x) only behaves logarithmically once GAMMA * x is
@@ -514,7 +631,13 @@ class OnsetDetector:
             # plateau resolves to its first sample rather than firing twice.
             left = all(b > v for _, v in self._win[: self.PEAK_SPAN])
             right = all(b >= v for _, v in self._win[self.PEAK_SPAN + 1 :])
-            if left and right and b > thresh and t_mid - self._last_t >= self.REFRACTORY_S:
+            if (
+                left
+                and right
+                and b > thresh
+                and t_mid - self._last_t >= self.REFRACTORY_S
+                and self._region_ok(spectrum, t_mid)
+            ):
                 self._last_t = t_mid
                 self.seq += 1
                 self.strength = min(1.0, b / self._peak) if self._peak > 0 else 0.0
@@ -525,6 +648,116 @@ class OnsetDetector:
         self._filled = min(self._filled + 1, len(self._hist))
 
         self._update_phase(now)
+
+    # ── region gates ──
+    def _region_ok(self, spectrum: np.ndarray, t_mid: float) -> bool:
+        """True when the loudest rising band is a real attack.
+
+        Two comparisons, each of a *region* of bands around the loudest
+        change rather than the whole spectrum:
+
+        Rise. The band where the spectrum moved most in the last hop, plus
+        REGION_HALF either side, must have grown more than REGION_RISE_RATIO
+        since the previous hop, and be more than REGION_RISE_MIN of the
+        loudest frame in the preceding REGION_RISE_S. This is what separates
+        an attack — whose bands climb at every hop of the analysis window
+        sliding over it — from a pad swelling or a whitened-noise blip,
+        which climb little hop to hop.
+
+        A fallback arm admits attacks that fail the strict rise test because
+        their own region is diluted by a steady bed (a kick landing inside a
+        pad region, where the pad's mass holds the hop-to-hop ratio near
+        1.3). The fallback requires a smaller rise, a strong fill of the
+        recent loudest frame, and a minimum number of bands lit at once —
+        the signature of a broadband transient, which a note moving to the
+        next pitch does not have. See the constants for the measured split.
+
+        Past quietness. The same region must have been much quieter
+        REGION_PAST_LO to REGION_PAST_HI seconds ago. Both a real attack
+        and a note crossing to the next pitch clear the rise gate; only the
+        attack finds its region silent a fraction of a second earlier. The
+        region width adapts via REGION_PAST_HALF so a bass attack is not
+        compared against the pad sitting next to it, while a melody note
+        is compared against a window wide enough to include the note it
+        stepped from.
+
+        Both gates default open at the start of a track, where there is no
+        history to judge against; a detector that says nothing on the first
+        beat of a song is worse than one that risks a false positive on it.
+        """
+        step = 1.0 / 187.5
+        hi_t = t_mid - step
+        lo_t = t_mid - self.REGION_RISE_S - step
+        base = 0.0
+        old = None
+        for t, sp in self._spec_hist:
+            if lo_t <= t <= hi_t:
+                old = sp                       # newest entry in range
+                if sp.sum() > base:
+                    base = float(sp.sum())
+        if old is None or old.shape != spectrum.shape:
+            return True
+
+        diff = spectrum - old
+        b0 = int(np.argmax(diff))
+        lo = max(0, b0 - self.REGION_HALF)
+        hi = min(spectrum.size, b0 + self.REGION_HALF + 1)
+        now_sum = float(spectrum[lo:hi].sum())
+        before = float(old[lo:hi].sum())
+
+        # The rise gate, with one fallback.
+        #
+        # An attack normally registers as its loudest region jumping well over
+        # REGION_RISE_RATIO since the previous hop while holding at least
+        # REGION_RISE_MIN of the loudest recent frame. But when the attack
+        # lands on a steady bed - a kick whose leakage is inside a region
+        # filled by the pad - the bed's mass dilutes the hop-to-hop ratio to
+        # ~1.3 even though the kick is unmistakably there (it lights most of
+        # the spectrum at once). Those candidates are admitted by the low-rise
+        # arm instead: a rise of REGION_RISE_RATIO_LO, a strong fill
+        # (REGION_RISE_FILL, replacing REGION_RISE_MIN - a *weak* ripple that
+        # also lights several bands sits at 0.29 here, the kicks at 0.71+),
+        # and a minimum number of bands lit simultaneously
+        # (REGION_SPREAD_MIN) so anything narrow - a note moving to the next
+        # pitch, a single held tone - stays rejected even though its rise
+        # ratio is comfortably high.
+        #
+        # The low-rise arm also skips the past-quietness gate below, and
+        # deliberately: that gate asks whether the region was started from
+        # silence, and the whole point of an attack on a bed is that its
+        # region is never silent - the pad was there 0.2-0.6 s ago too. The
+        # spread test is the discrimination in its place; a pitch step lights
+        # too few bands to pass it even though it clears the past gate's
+        # barn-door ratio.
+        def _rise_pass(ratio: float, fill: float) -> bool:
+            return (now_sum > ratio * max(before, 1e-12)
+                    and now_sum > fill * max(base, 1e-12))
+
+        if _rise_pass(self.REGION_RISE_RATIO, self.REGION_RISE_MIN):
+            pass
+        else:
+            diff_max = float(diff.max())
+            spread = int((diff > 0.5 * max(diff_max, 1e-9)).sum())
+            if _rise_pass(self.REGION_RISE_RATIO_LO, self.REGION_RISE_FILL) \
+                    and spread >= self.REGION_SPREAD_MIN:
+                return True
+            return False
+
+        threshold, high_half, low_half = self.REGION_PAST_HALF
+        half = high_half if b0 >= threshold else low_half
+        lo = max(0, b0 - half)
+        hi = min(spectrum.size, b0 + half + 1)
+        lo_t = t_mid - self.REGION_PAST_HI - step
+        hi_t = t_mid - self.REGION_PAST_LO
+        mn = None
+        for t, sp in self._spec_hist:
+            if lo_t <= t <= hi_t:
+                v = float(sp[lo:hi].sum())
+                if mn is None or v < mn:
+                    mn = v
+        if mn is None:
+            return True
+        return float(spectrum[lo:hi].sum()) > self.REGION_PAST_RATIO * max(mn, 1e-12)
 
     # ── tempo ──
     def _note_beat(self, t: float) -> None:
