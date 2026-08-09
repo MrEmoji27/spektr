@@ -8,7 +8,7 @@ import numpy as np
 
 from ..analysis import resample_bands
 from ..palette import RAMP_STEPS
-from ..render import SHADES, SPACE, cell_max, pack_braille
+from ..render import SHADES, SPACE, cell_max, cell_mean, pack_braille
 from . import Ctx, empty, mode, spread
 
 #: Spectro's scroll rate, in columns per second. Paced in seconds rather than
@@ -1171,9 +1171,25 @@ def dither(ctx: Ctx):
     for q in range(1, 8):
         acc = acc + lvl[q] * np.sin(g["ph"][q])
     norm = acc / np.float32(0.15 + float(lvl.sum()))
-    base = np.float32(0.64 + 0.16 * ctx.energy)
-    depth = np.float32(0.10 + 0.14 * ctx.energy)
-    field = (base + depth * 2.2 * norm).astype(np.float32)
+    # Centre the field near the middle of the threshold matrix, and let it
+    # swing past both ends of it.
+    #
+    # The Bayer matrix spans 0..1, so where the field sits inside that range
+    # *is* the picture: a field centred at 0.64-0.80 lies above most of the
+    # matrix and lights roughly seven dots in every eight everywhere, which
+    # is a uniform grey haze rather than a halftone. Measured that way the
+    # whole grid held 5.25 to 6.36 lit dots per cell from silence to full
+    # level, with only 3 dots of spread between the lightest and darkest
+    # cell anywhere on screen — no gradient for the eye to read.
+    #
+    # A halftone needs the field to cross the matrix, not clear it. Centred
+    # near 0.5 and swinging wider than the matrix, the crests saturate, the
+    # troughs go empty, and the structured dot patterns appear in between,
+    # which is the entire point of ordered dithering. Level moves the centre
+    # so a loud passage genuinely fills in.
+    base = np.float32(0.34 + 0.30 * ctx.energy)
+    depth = np.float32(0.46 + 0.16 * ctx.energy)
+    field = (base + depth * norm).astype(np.float32)
     lit = field > g["th"]
     # guard: a row whose field stays above its own row-max threshold would
     # saturate every dot. The top threshold cell of such a row is forced
@@ -1185,9 +1201,29 @@ def dither(ctx: Ctx):
         lit[hot, cols[hot]] = False
     codes = pack_braille(lit)
 
-    # colour follows the lit density: the ramp is walked by the cell-max of
-    # the field where it is lit, so bright patches sit higher in the ramp
-    col = cell_max(np.where(lit, np.clip(field, 0.0, 1.0), 0.0))
-    idx = ctx.ramp(np.clip(col, 0.0, 1.0))
+    # Colour follows the underlying field, not the dithered result.
+    #
+    # Reading it off the lit dots looks equivalent and is not, for two
+    # reasons. Visually, the dither pattern is already carrying the texture;
+    # colouring by lit density paints per-cell noise on top of it and fights
+    # the halftone the mode exists to draw. And structurally it is the worst
+    # possible input to the strip builder: neighbouring cells almost never
+    # agree, so run-length encoding finds no runs and emits a segment per
+    # cell. Measured at 400x100 that was 24.61 ms in make_strips alone,
+    # against 15.79 ms to build the frame -- the mode was over the 16.7 ms
+    # budget almost entirely on colour it did not need.
+    #
+    # Sampling the smooth field instead gives neighbours the same ramp index
+    # over stretches, which is what run-length encoding is for.
+    # Quantised to a few buckets before ramping, the same lesson Chladni's
+    # docstring records. The field is a sum of eight waves, so even sampled
+    # smoothly it crosses ramp buckets almost every cell, and neighbours that
+    # never agree are neighbours run-length encoding cannot merge. Eight
+    # levels is invisible against a one-bit texture -- the dither is already
+    # doing the shading -- and collapses the segment count enough to bring
+    # make_strips from 15.4 ms back to something ordinary.
+    col = cell_mean(np.clip(field, 0.0, 1.0))
+    np.rint(col * 8.0, out=col)
+    idx = ctx.ramp(np.clip(col * 0.125, 0.0, 1.0))
     return codes, idx
 
