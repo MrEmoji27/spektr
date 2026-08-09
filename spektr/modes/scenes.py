@@ -674,3 +674,107 @@ def boot(ctx: Ctx):
     return codes, cidx
 
 
+
+
+#: Concurrent rings in Tunnel In. Bounded so a dense passage cannot grow the
+#: arrays; at 8 the oldest is always well past the frame edge before reuse.
+_TIN_RINGS = 8
+
+
+@mode("Tunnel In", group="scenes", blurb="rings thrown out of the centre on the beat, rushing past you")
+def tunnel_in(ctx: Ctx):
+    """``Tunnel`` run the other way — and not by flipping a sign.
+
+    Tunnel's ribs march *into* the distance: a rib sits where
+    ``frac(depth * 0.55 - phase)`` is near zero, so as the phase grows each
+    rib's depth grows with it, which on an inverse-distance axis walks it
+    toward the centre. Negating that term would reverse the direction and
+    leave the mode otherwise identical — the same endless corridor of evenly
+    spaced ribs, read backwards.
+
+    Coming *at* you is a different thing to watch, so it is built differently.
+    Rings are discrete and beat-spawned rather than an infinite regular
+    pattern: one leaves the centre on each onset, and between beats nothing
+    new appears. What you are watching is the track throwing rings at you,
+    not a corridor scrolling.
+
+    The rush comes from perspective, not from a speed constant. Each ring
+    holds a depth ``z`` that falls at a steady rate, and its screen radius is
+    ``k / z`` — so it crawls while it is far away and tears across the frame
+    as it passes, which is what approaching actually looks like. A ring
+    moving outward at constant *radial* speed reads as a growing circle
+    instead, which is the tell that a mode is faking depth.
+
+    Rings also thicken and brighten as they near, because a rib subtends more
+    of your view the closer it gets. The spokes stay pinned to the walls and
+    do not travel, so there is a fixed corridor for the rings to arrive
+    through; without them the rings read as flat circles on a black field
+    rather than as structure in a pipe.
+    """
+    dr, dc = ctx.dot_rows, ctx.dot_cols
+    if dr < 8 or dc < 8:
+        return empty(ctx.w, ctx.h)
+
+    dist, turn, max_r = _polar(ctx)
+    n = min(16, ctx.n_display)
+    nrg = _angular_bands(ctx, turn, n, ctx.t * 0.024)
+
+    st = ctx.scratch("tunnel_in", lambda: {
+        "z": np.zeros(_TIN_RINGS, dtype=np.float32),      # 0 == free
+        "amp": np.zeros(_TIN_RINGS, dtype=np.float32),
+        "acc": 0.0,
+        "last_seq": ctx.onset_seq,
+    })
+    seen = st["last_seq"]
+    st["last_seq"] = ctx.onset_seq
+    onsets = max(0, ctx.onset_seq - seen)
+
+    # A ring per beat, plus a slow clock so a passage the detector reads
+    # poorly still has something arriving — the same reasoning as Pulse's
+    # rate term, and not a second detector: it cannot tell where a beat is.
+    st["acc"] += (0.35 + ctx.energy * 1.5) * max(ctx.dt, 0.0)
+    want = onsets
+    if st["acc"] >= 1.0:
+        st["acc"] -= 1.0
+        want += 1
+    if want:
+        free = np.flatnonzero(st["z"] <= 0.0)[:want]
+        for i in free:
+            st["z"][i] = np.float32(1.0)
+            st["amp"][i] = np.float32(0.45 + 0.55 * min(1.0, ctx.onset_strength + ctx.energy))
+
+    # Depth falls at a steady rate; the radius is 1/z, so the motion across
+    # the frame accelerates on its own.
+    live = st["z"] > 0.0
+    if live.any():
+        st["z"][live] -= (0.30 + ctx.energy * 0.85) * np.float32(max(ctx.dt, 0.0))
+        st["z"][st["z"] <= 0.06] = 0.0
+
+    # The corridor: fixed spokes, so the rings arrive through something.
+    spokes = frac(turn * 16.0) < 0.075
+    lit = spokes & (dist > 1.5)
+    glow = np.where(lit, 0.16, 0.0).astype(np.float32)
+
+    near_r = dist / max_r
+    for i in np.flatnonzero(st["z"] > 0.0):
+        z = float(st["z"][i])
+        r = 0.16 / z                      # perspective radius, in max_r units
+        if r > 1.9:
+            continue
+        # Thickness grows as it approaches, so a near ring is a band and a
+        # far one is a hairline.
+        w = 0.012 + 0.075 * (1.0 - z)
+        band = np.abs(near_r - r) < w
+        if not band.any():
+            continue
+        a = float(st["amp"][i]) * (0.35 + 0.65 * (1.0 - z))
+        np.maximum(glow, np.where(band, np.float32(a), np.float32(0.0)), out=glow)
+
+    lit |= glow > 0.2
+    lit &= dist > 1.2
+    # Dither the far field only: near the edge the rings should be solid.
+    lit &= noise((dr, dc), ctx.frame) < (0.35 + near_r * 0.8)
+
+    codes = pack_braille(lit)
+    cidx = ctx.ramp(cell_max(np.where(lit, glow * (0.55 + 0.45 * nrg), 0.0)))
+    return codes, cidx

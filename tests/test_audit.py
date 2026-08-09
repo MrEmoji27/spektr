@@ -67,7 +67,7 @@ SELF_ANIMATING = {
     "Vinyl", "Rain", "Ember",
     # continuous spin (Kaleidoscope rotates its mirror array; the
     # scrollwork curls turn on their anchors even at a frozen spectrum)
-    "Kaleidoscope", "Valentine",
+    "Kaleidoscope", "Valentine", "Tunnel In", "Dither",
 }
 
 #: Modes driven by the waveform rather than the band levels.

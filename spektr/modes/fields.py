@@ -849,11 +849,11 @@ def kaleidoscope(ctx: Ctx):
     # The wedge count eases toward the centroid and snaps on a beat; it only
     # ever lands on a multiple of four, which is what keeps the vertical
     # axis a mirror line.
-    st["kc"] += (4.0 + centroid * 4.0 - st["kc"]) * min(1.0, ctx.dt / 1.2)
+    st["kc"] += (8.0 + centroid * 10.0 - st["kc"]) * min(1.0, ctx.dt / 1.2)
     if onsets:
-        st["kc"] = float(4.0 if bass < 0.5 else 8.0)
+        st["kc"] = float(8.0 + 10.0 * min(1.0, bass * 1.5))
     k = 4 * int(round(st["kc"] / 4.0))
-    k = max(4, min(k, 8))
+    k = max(8, min(k, 20))
 
     # Spin moves the SOURCE inside the wedge; the mirror lines never move.
     st["spin"] = (st["spin"] + (0.22 + ctx.energy * 0.8) * max(ctx.dt, 0.0)) % (2 * math.pi)
@@ -890,14 +890,29 @@ def kaleidoscope(ctx: Ctx):
     r_axis = (np.arange(nr, dtype=np.float32) + 0.5) * np.float32(1.0 / nr)
     table = np.zeros((nr, nu), dtype=np.float32)
     lv = bands8.astype(np.float32)
-    for i in range(8):
-        au = ((i + 0.5) / 8.0 + (lv[i % 8] - 0.5) * 0.16) % 1.0
-        ar = min(0.92, 0.30 + lv[(i + 2) % 8] * 0.55)
-        sdot = 1.2 + lv[(i + 1) % 8] * 1.2
-        sdot = max(0.6, sdot * float(rmax) / 24.0)
-        arc = 2 * math.pi * float(ar) * float(rmax) / k
-        wu = min(0.9, sdot / max(arc, 0.5))
-        wr = sdot / max(float(rmax), 2.0)
+    # Twelve shards rather than eight, at staggered radii, so the wedge holds
+    # a chain of facets instead of a few blobs. Two per band, offset, which
+    # is what gives the repeat its intricacy once it is mirrored around.
+    for i in range(12):
+        b = i % 8
+        au = ((i + 0.5) / 12.0 + (lv[b] - 0.5) * 0.10) % 1.0
+        ar = 0.22 + 0.70 * ((i * 5) % 12) / 11.0
+        ar = min(0.94, ar * (0.75 + 0.35 * float(lv[(b + 2) % 8])))
+        # Width as a FRACTION OF THE WEDGE, not a fixed number of dots.
+        #
+        # This was sdot/arc, a dot-sized shard divided by the arc the wedge
+        # spans -- which couples the shard's share of its wedge to the sector
+        # count, because arc shrinks as sectors are added. Past about eight
+        # sectors the quotient hit its 0.9 clamp and every shard filled nine
+        # tenths of its wedge, so the facets merged into one solid ring with
+        # a hole in it. Raising the sector count made the mode worse, which
+        # is the opposite of how a kaleidoscope works.
+        #
+        # Held as a fraction, a shard occupies the same slice of its wedge at
+        # any count, so more sectors means more facets rather than fatter
+        # ones -- and the count is then free to follow the music.
+        wu = 0.055 + 0.050 * float(lv[(b + 1) % 8])
+        wr = 0.030 + 0.045 * float(lv[(b + 3) % 8])
         du = np.abs(u_axis - np.float32(au))
         du = np.minimum(du, 1.0 - du)
         gu = np.exp(-((du / np.float32(wu)) ** 2)).astype(np.float32)
@@ -935,7 +950,7 @@ def kaleidoscope(ctx: Ctx):
     return codes, idx
 
 
-@mode("Dither", group="fields", blurb="the spectrum as a dithered field — directional waves in one-bit crosshatch")
+@mode("Dither", group="fields", blurb="the spectrum printed as a newspaper halftone, in one-bit crosshatch")
 def dither(ctx: Ctx):
     """The spectrum as a continuous two-dimensional field, thresholded to one
     bit by an ordered dither — so the whole frame is one textured surface,
@@ -1038,37 +1053,54 @@ def dither(ctx: Ctx):
         # One contiguous (8, dr, dc) block so the per-frame combine is a
         # single tensordot rather than eight separate multiply-adds each
         # walking the whole grid.
-        return {"sinph": np.ascontiguousarray(np.stack(ph)),
+        driftx = (np.arange(dc, dtype=np.float32) / np.float32(max(dc - 1, 1)))[None, :] * np.float32(1.5)
+        return {"sinph": np.ascontiguousarray(np.stack(ph)), "driftx": driftx,
                 "th": th, "th_rowmax": th.max(axis=1).astype(np.float32),
                 "th_argmax": np.argmax(th, axis=1).astype(np.int32)}
 
     g = ctx.scratch("dither_grid", grid)
 
-    # The field: the spectrum-weighted sum of the waves, normalized by the
-    # band total so the spectrum's SHAPE steers the texture while the
-    # overall level steers its depth and density.
-    lvl = resample_bands(ctx.bands, 8).astype(np.float32)
-    acc = np.tensordot(lvl, g["sinph"], axes=(0, 0))
-    norm = acc / np.float32(0.15 + float(lvl.sum()))
-    # Centre the field near the middle of the threshold matrix, and let it
-    # swing past both ends of it.
+    # The field is the spectrum's own silhouette, not a wave interference
+    # pattern.
     #
-    # The Bayer matrix spans 0..1, so where the field sits inside that range
-    # *is* the picture: a field centred at 0.64-0.80 lies above most of the
-    # matrix and lights roughly seven dots in every eight everywhere, which
-    # is a uniform grey haze rather than a halftone. Measured that way the
-    # whole grid held 5.25 to 6.36 lit dots per cell from silence to full
-    # level, with only 3 dots of spread between the lightest and darkest
-    # cell anywhere on screen — no gradient for the eye to read.
+    # This mode used to sum eight directional plane waves. That produced a
+    # texture, and the texture was the problem: an interference field is what
+    # Plasma, Chladni and Maelstrom already draw, so dithering one only
+    # changed how it was shaded, not what it was. A halftone is a printing
+    # technique, and a printing technique needs a subject.
     #
-    # A halftone needs the field to cross the matrix, not clear it. Centred
-    # near 0.5 and swinging wider than the matrix, the crests saturate, the
-    # troughs go empty, and the structured dot patterns appear in between,
-    # which is the entire point of ordered dithering. Level moves the centre
-    # so a loud passage genuinely fills in.
-    base = np.float32(0.34 + 0.30 * ctx.energy)
-    depth = np.float32(0.46 + 0.16 * ctx.energy)
-    field = (base + depth * norm).astype(np.float32)
+    # The subject here is the spectrum, drawn the way a newspaper would print
+    # it: the band profile as a filled silhouette, given a vertical tone ramp
+    # so it is dense along the floor and thins toward its own upper edge, and
+    # then thresholded to pure black and white. What survives is a picture of
+    # the spectrum made entirely of crosshatch, which nothing else in the set
+    # does.
+    prof = resample_bands(ctx.bands, dc).astype(np.float32)
+    # A little horizontal smoothing so band boundaries do not read as steps;
+    # the halftone exaggerates any hard vertical edge into a visible seam.
+    prof = (prof + np.roll(prof, 1) + np.roll(prof, -1)) * np.float32(1.0 / 3.0)
+
+    v = (np.arange(dr - 1, -1, -1, dtype=np.float32) / np.float32(max(dr - 1, 1)))[:, None]
+    # Height above the floor, in the same 0..1 units as the profile. Soft
+    # rather than a hard cut, so the top edge of the silhouette dissolves
+    # into dots instead of terminating in a line -- that dissolve is the
+    # halftone's signature and the reason the edge reads as tone.
+    edge = np.clip((prof[None, :] * np.float32(1.05) - v) * np.float32(6.0), 0.0, 1.0)
+
+    # Tone inside the silhouette: densest at the floor, lighter toward the
+    # top, so the fill carries a gradient for the dither to resolve rather
+    # than being one flat grey.
+    shade = np.float32(0.30) + np.float32(0.62) * (np.float32(1.0) - v)
+
+    # A slow drift keeps the crosshatch from looking like a frozen print, and
+    # gives quiet passages something to do. Integrated through ctx.dt, and
+    # the wave that carries it is a single low-frequency swell rather than a
+    # field of them -- it is lighting, not subject.
+    ph = ctx.scratch("dither_drift", lambda: {"v": 0.0})
+    ph["v"] += (0.05 + ctx.energy * 0.20) * max(ctx.dt, 0.0)
+    swell = np.sin((g["driftx"] + np.float32(ph["v"])) * np.float32(2 * math.pi)) * np.float32(0.10)
+
+    field = (edge * (shade + swell)).astype(np.float32)
     lit = field > g["th"]
     # guard: a row whose field stays above its own row-max threshold would
     # saturate every dot. The top threshold cell of such a row is forced
