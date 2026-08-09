@@ -1299,42 +1299,44 @@ def valentine(ctx: Ctx):
     return codes, idx
 
 
-#: Concurrent emitted hearts in Locket.
-_LOCKET_RINGS = 10
+#: Concurrent pulses in Locket.
+_LOCKET_RINGS = 12
 
 
-@mode("Locket", group="fields", blurb="a tunnel with a heart at the vanishing point, throwing hearts on the beat")
+@mode("Locket", group="fields", blurb="an outlined heart, pulsing rings of hearts outward on the beat")
 def locket(ctx: Ctx):
-    """A tunnel, a heart at the far end of it, and a heart thrown at you on
-    every beat.
+    """Nothing but hearts.
 
-    Three layers, and keeping them distinct is the point. The corridor is an
-    ordinary perspective tunnel — ribs receding toward the vanishing point on
-    an inverse-distance axis, spokes running out along the walls — and it is
-    deliberately plain, because it exists to give the hearts somewhere to
-    arrive from. The heart at the centre is fixed, small, and always there,
-    breathing gently with the low end so the far end of the tunnel reads as a
-    heart rather than as a hole. And on an onset that heart *emits*: a copy of
-    its own outline leaves the centre and rushes outward past you.
+    A single outlined heart sits at the centre and is always drawn, so the
+    mode has a subject in silence. On an onset it pulses: a ring leaves from
+    *inside* it, passes out through the outline, and expands away — so the
+    resting heart reads as the source of everything rather than as a frame
+    the pulses happen to start near.
 
-    The emitted hearts use the same trick as ``Tunnel In``: each holds a depth
-    ``z`` that falls at a steady rate and an on-screen size of ``k / z``, so
-    it crawls while small and tears past as it arrives. Constant growth would
-    read as a circle inflating rather than a shape approaching.
+    There is no corridor, no spokes, no ribs. An earlier version had all
+    three, and they fought the pulses: the ribs receded toward the centre
+    while the hearts expanded away from it, so two conflicting flows shared
+    one frame and neither read cleanly. Removing them leaves the pulses as
+    the only motion, which is what makes the direction legible.
 
-    Sizing a heart outline anywhere on the grid would normally mean evaluating
-    the implicit curve once per heart per frame. It does not here, because the
+    Expansion is ``k / z`` with ``z`` falling at a steady rate, so a pulse
+    crawls while small and accelerates as it grows — the same perspective
+    Tunnel In uses. Constant growth would read as a shape inflating in place
+    rather than as something travelling outward past you.
+
+    Sizing a heart outline anywhere on the grid would normally cost an
+    implicit curve evaluation per pulse per frame. It does not, because the
     heart is star-shaped about its own centre: along any ray the outline sits
     at one radius ``r_h(theta)``, and scaling the heart by ``s`` scales that
-    radius by exactly ``s``. So a dot at radius ``R`` on ray ``theta`` is on
-    the outline of the heart scaled to ``R / r_h(theta)`` — precompute that
-    quotient once per grid size and every heart, emitted or central, is a
-    comparison against it.
+    radius by exactly ``s``. A dot at radius ``R`` on ray ``theta`` is
+    therefore on the outline of the heart scaled to ``R / r_h(theta)`` —
+    computed once per grid size, after which every heart here, resting or
+    travelling, is one comparison against that field.
 
-    The ``r_h`` table walks each ray outward and keeps the *outermost* radius
-    still inside the curve. Taking the first crossing instead would trace the
-    notch at the top of the heart, where a ray leaves the shape and re-enters
-    it, and the silhouette would have a bite out of it.
+    The ``r_h`` table keeps the *outermost* radius still inside the curve
+    along each ray. The first crossing would trace the notch at the top of
+    the heart, where a ray leaves the shape and re-enters, and every
+    silhouette would have a bite out of it.
     """
     dr, dc = ctx.dot_rows, ctx.dot_cols
     if dr < 12 or dc < 16:
@@ -1357,77 +1359,70 @@ def locket(ctx: Ctx):
         ins = (q * q * q - u * u * v * v * v) <= 0.0
         idx = ins.shape[0] - 1 - np.argmax(ins[::-1], axis=0)
         r_h = np.where(ins.any(axis=0), rs[:, 0][idx], 0.02)
-
         ai = ((ang + math.pi) / (2 * math.pi) * na).astype(np.int32) % na
-        scale = (rad / np.maximum(r_h[ai], 1e-3)).astype(np.float32)
-        return {"scale": scale,
-                "rad": rad.astype(np.float32),
-                "ang": ang.astype(np.float32),
-                "depth": (1.0 / np.maximum(rad, 0.045)).astype(np.float32)}
+        return {"scale": (rad / np.maximum(r_h[ai], 1e-3)).astype(np.float32)}
 
-    g = ctx.scratch("locket_geo", geo)
-    sfield, rad, depth = g["scale"], g["rad"], g["depth"]
+    sfield = ctx.scratch("locket_geo", geo)["scale"]
 
     st = ctx.scratch("locket", lambda: {
         "z": np.zeros(_LOCKET_RINGS, dtype=np.float32),
         "amp": np.zeros(_LOCKET_RINGS, dtype=np.float32),
-        "phase": 0.0, "beat": 0.0, "last_seq": ctx.onset_seq,
+        "beat": 0.0, "acc": 0.0, "last_seq": ctx.onset_seq,
     })
     seen = st["last_seq"]
     st["last_seq"] = ctx.onset_seq
     onsets = max(0, ctx.onset_seq - seen)
     bass = ctx.range(0.0, 0.22)
 
-    # ── layer 1: the corridor ──
-    # Ribs recede toward the vanishing point. The phase accumulates through
-    # ctx.dt rather than being ctx.t times a speed, because the speed follows
-    # the music: multiplying a varying rate by absolute time retroactively
-    # rewrites the whole history it represents, which is the bug Tunnel's
-    # docstring documents at length.
-    st["phase"] += (0.45 + ctx.energy * 1.7) * max(ctx.dt, 0.0)
-    ring = np.minimum(depth, np.float32(9.0)) * np.float32(0.20) - np.float32(st["phase"])
-    ribs = (ring - np.floor(ring)) < np.float32(0.055)
-    spoke = g["ang"] * np.float32(8.0 / (2 * math.pi))
-    walls = (spoke - np.floor(spoke)) < np.float32(0.030)
-    corridor = (ribs | walls) & (rad > np.float32(0.06))
-    glow = np.where(corridor, np.float32(0.10) + np.float32(0.10) * rad, np.float32(0.0))
-
-    # ── layer 2: the heart at the vanishing point ──
-    # Always present, so the far end of the tunnel is a heart and not a hole.
-    # It breathes with the low end and flares on the beat it is about to throw.
-    st["beat"] *= math.exp(-max(ctx.dt, 0.0) / 0.13)
+    # ── the resting heart ──
+    # Outline, not a filled shape: the pulses are outlines too, so a solid
+    # centre would read as a different object rather than as their source.
+    st["beat"] *= math.exp(-max(ctx.dt, 0.0) / 0.14)
     if onsets:
         st["beat"] = min(1.5, st["beat"] + 0.8 + 0.5 * ctx.onset_strength)
-    core = np.float32(0.26 + 0.06 * bass + 0.09 * st["beat"])
-    heart = sfield < core
-    np.maximum(glow, np.where(heart, np.float32(0.55) + np.float32(0.45) * st["beat"],
-                              np.float32(0.0)), out=glow)
+    core = float(0.30 + 0.05 * bass + 0.07 * st["beat"])
+    rim_w = 0.024 + 0.020 * st["beat"]
+    glow = np.where(np.abs(sfield - np.float32(core)) < np.float32(rim_w),
+                    np.float32(0.62) + np.float32(0.38) * st["beat"],
+                    np.float32(0.0)).astype(np.float32)
 
-    # ── layer 3: hearts thrown out of it ──
-    if onsets:
-        free = np.flatnonzero(st["z"] <= 0.0)[:onsets]
+    # ── pulses, released from inside it ──
+    st["acc"] += (0.25 + ctx.energy * 1.0) * max(ctx.dt, 0.0)
+    want = onsets
+    if st["acc"] >= 1.0:
+        st["acc"] -= 1.0
+        want += 1
+    if not want and not (st["z"] > 0.0).any():
+        want = 1
+    if want:
+        free = np.flatnonzero(st["z"] <= 0.0)[:want]
         for i in free:
             st["z"][i] = np.float32(1.0)
             st["amp"][i] = np.float32(0.55 + 0.45 * min(1.0, ctx.onset_strength))
 
     live = st["z"] > 0.0
     if live.any():
-        st["z"][live] -= (0.30 + ctx.energy * 0.75) * np.float32(max(ctx.dt, 0.0))
-        st["z"][st["z"] <= 0.05] = 0.0
+        st["z"][live] -= (0.26 + ctx.energy * 0.70) * np.float32(max(ctx.dt, 0.0))
+        st["z"][st["z"] <= 0.045] = 0.0
 
+    # Released at a fraction of the resting heart's size, so a pulse is born
+    # inside it and grows out through the outline rather than appearing on it.
+    born = np.float32(core * 0.30)
     for i in np.flatnonzero(st["z"] > 0.0):
         z = float(st["z"][i])
-        sc = float(core) / z                    # leaves the centre at the core's size
-        if sc > 2.4:
+        sc = float(born) / z
+        if sc > 2.5:
             continue
-        w = 0.016 + 0.065 * (1.0 - z)
+        w = 0.014 + 0.055 * (1.0 - z)
         band = np.abs(sfield - np.float32(sc)) < np.float32(w)
         if not band.any():
             continue
-        a = float(st["amp"][i]) * (0.40 + 0.60 * (1.0 - z))
+        # Fade as it goes, so the ring dissolves outward instead of hitting
+        # the frame edge at full strength.
+        a = float(st["amp"][i]) * (0.30 + 0.70 * z)
         np.maximum(glow, np.where(band, np.float32(a), np.float32(0.0)), out=glow)
 
-    lit = glow > np.float32(0.08)
+    lit = glow > np.float32(0.10)
     codes = pack_braille(lit)
     idx = ctx.ramp(np.clip(cell_max(glow), 0.0, 1.0))
     return codes, idx

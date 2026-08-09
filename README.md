@@ -116,7 +116,7 @@ Listed in the order the picker cycles them.
 | **Needle** | analogue VU — one sweeping needle, one red zone | **Chladni Extreme** | the plate driven past its modes — morphs and escalates |
 | **Kaleidoscope** | radial mirror symmetry — the wedge count follows the spectrum | **Dither** | the spectrum printed as a newspaper halftone |
 | **Valentine** | a heart that beats with the track, trailing smaller ones upward | **Tunnel In** | rings thrown out of the centre on the beat, rushing past you |
-| **Locket** | a tunnel with a heart at the vanishing point, throwing hearts on the beat | | |
+| **Locket** | an outlined heart, pulsing rings of hearts outward on the beat | | |
 
 Vinyl, Rain and Ember are the lofi group — a
 shared *look* (warm objects, soft edges, nothing strobing) rather than a
