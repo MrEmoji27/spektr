@@ -996,9 +996,19 @@ def sterling(ctx: Ctx):
     st["punch"] *= math.exp(-max(ctx.dt, 0.0) / 0.18)
 
     # growth swells the whole composition from the centre. Dividing the
-    # coordinates by the eased level scales the shapes outward; the range is
-    # tuned so the base bar stays on screen at full loudness.
-    st["growth"] += (0.55 + ctx.energy * 0.45 - st["growth"]) * min(1.0, ctx.dt / 0.6)
+    # coordinates by the eased level scales the shapes outward.
+    #
+    # The range was 0.55..1.00, which drew the emblem at about a third of the
+    # available width -- 34 of 100 columns at a normal terminal size, 8% of
+    # the frame lit, a small object adrift in a large empty rectangle. The
+    # silverwork is the mode; it should occupy the frame the way a hallmark
+    # occupies the metal it is struck into. Roughly doubled, it now uses
+    # about two thirds of the width and most of the height.
+    #
+    # At full level the topmost spire reaches the top edge. That is the
+    # composition filling its frame on a peak rather than a bug, and the base
+    # bar -- the thing the original range was protecting -- stays inside.
+    st["growth"] += (1.10 + ctx.energy * 0.55 - st["growth"]) * min(1.0, ctx.dt / 0.6)
     g = st["growth"]
     aa = a / g
     bb = b / g
@@ -1142,7 +1152,21 @@ def dither(ctx: Ctx):
         ph = []
         for q in range(8):
             thq = np.float32(math.pi * q / 8.0)
-            kq = np.float32(dc) * np.float32(0.06 + 0.28 * (q / 7.0))
+            # Cycles across the field, not a fraction of the dot count.
+            #
+            # This read ``dc * (0.06 + 0.28 * q/7)``, which at a 400x100
+            # terminal is 48 cycles for the lowest band and 272 for the
+            # highest -- three dots per cycle. Nothing at that frequency is
+            # visible as structure; it is the speckle failure recorded in
+            # Plasma's docstring, and it is why the mode read as static.
+            # The comment above it described the intent correctly ("a
+            # twentieth of the width up to a quarter") and the arithmetic
+            # did something else entirely.
+            #
+            # Three to seventeen cycles is broad swells for the bass through
+            # fine grain for the treble, all of it coarse enough to see, and
+            # it is resolution-independent because x and y are normalised.
+            kq = np.float32(1.4 + 5.2 * (q / 7.0))
             wx = np.cos(thq) * twopi * kq
             wy = np.sin(thq) * twopi * kq
             # Stored already evaluated. The wave's geometry depends only on
