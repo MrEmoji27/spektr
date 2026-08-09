@@ -122,8 +122,6 @@ def _state() -> dict:
         "vy": np.zeros((_SIM_H, _SIM_W), dtype=np.float64),
         "vx": np.zeros((_SIM_H, _SIM_W), dtype=np.float64),
         "dye": np.zeros((_SIM_H, _SIM_W), dtype=np.float64),
-        "fast": 0.0,
-        "slow": 0.0,
         "rng": np.random.default_rng(131),
     }
 
@@ -142,9 +140,12 @@ def maelstrom(ctx: Ctx):
     bass = ctx.range(0.0, 0.15)
     treble = ctx.range(0.6, 1.0)
 
-    st["fast"] += (bass - st["fast"]) * min(1.0, dt / 0.03)
-    st["slow"] += (bass - st["slow"]) * min(1.0, dt / 0.4)
-    hit = (st["fast"] - st["slow"]) > 0.12
+    # A real onset drops a radial burst into the sim. The old fast/slow
+    # envelope pair over the bass band fired on any rise in level — a swell
+    # stirred the pot exactly as hard as a drum hit — where the analyser's
+    # spectral-flux detector fires on transients wherever they sit in the
+    # band plan, so a snare bursts as well as a kick.
+    hit = bool(ctx.onsets)
 
     # ── 1. force / emit — every input is a forcing term, nothing is drawn
     # directly. Bass is a hose straight up the middle; the spread spectrum both

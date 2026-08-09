@@ -102,13 +102,16 @@ def vinyl(ctx: Ctx):
     dist, turn, max_r = _polar(ctx)
     sv = ctx.scratch("vinyl_static", lambda: _vinyl_static(dist, turn, max_r, dr, dc))
 
-    st = ctx.scratch("vinyl", lambda: {"warm": 0.0, "fast": 0.0, "slow": 0.0, "skip_t": -99.0})
+    st = ctx.scratch("vinyl", lambda: {"warm": 0.0, "skip_t": -99.0})
     st["warm"] += (ctx.energy - st["warm"]) * min(1.0, ctx.dt / 0.12)
 
     bass = ctx.range(0.0, 0.2)
-    st["fast"] += (bass - st["fast"]) * min(1.0, ctx.dt / 0.03)
-    st["slow"] += (bass - st["slow"]) * min(1.0, ctx.dt / 0.4)
-    if (st["fast"] - st["slow"]) > 0.15 and (ctx.t - st["skip_t"]) > 1.2:
+    # A real onset is the needle skip. The old fast/slow envelope over the
+    # bass band could not tell a kick from the groove simply swelling; the
+    # analyser's spectral-flux detector can. The 1.2 s refractory stays — a
+    # skip is a rare jog, not a per-beat habit, and one per bar at most is
+    # what makes it read as the needle catching.
+    if ctx.onsets and (ctx.t - st["skip_t"]) > 1.2:
         st["skip_t"] = ctx.t
     skip = (ctx.t - st["skip_t"]) < 0.10
 
@@ -120,6 +123,9 @@ def vinyl(ctx: Ctx):
     lv = ctx.display_bands(_VINYL_BANDS)
     groove_level = lv[sv["band_at_r"]]
 
+    # float32 throughout the heat pipeline, the same deal Flame's docstring
+    # makes: at 400x100 this is several passes over a 320k-cell grid, and
+    # every float64 one moves twice the memory of a float32 one.
     # groove rings ripple outward; the ripple rides the smoothed level so the
     # whole surface breathes rather than jittering ring to ring
     period = 2.6
@@ -132,7 +138,7 @@ def vinyl(ctx: Ctx):
     spin = frac(turn - sp["v"])
     glint = sv["glint_zone"] & (np.abs(spin - 0.5) < 0.010)
 
-    heat = np.zeros((dr, dc), dtype=np.float64)
+    heat = np.zeros((dr, dc), dtype=np.float32)
     heat[groove_lit] = (0.12 + 0.80 * groove_level)[groove_lit]
     heat[sv["label"]] = 0.35 + 0.5 * bass
     heat[sv["dust"]] = np.maximum(heat[sv["dust"]], 0.55)
@@ -283,7 +289,7 @@ def _ember_state() -> dict:
         "y": np.full(_EMBER_CAP, -1.0), "x": np.zeros(_EMBER_CAP),
         "spd": np.zeros(_EMBER_CAP), "wfreq": np.zeros(_EMBER_CAP), "wph": np.zeros(_EMBER_CAP),
         "wamp": np.zeros(_EMBER_CAP), "age": np.zeros(_EMBER_CAP), "life": np.zeros(_EMBER_CAP),
-        "acc": 0.0, "fast": 0.0, "slow": 0.0, "pop_t": -99.0,
+        "acc": 0.0, "pop_t": -99.0,
         "rng": np.random.default_rng(89),
     }
 
@@ -307,10 +313,12 @@ def ember(ctx: Ctx):
     st = ctx.scratch("ember", _ember_state)
     rng = st["rng"]
 
-    bass = ctx.range(0.0, 0.2)
-    st["fast"] += (bass - st["fast"]) * min(1.0, ctx.dt / 0.03)
-    st["slow"] += (bass - st["slow"]) * min(1.0, ctx.dt / 0.45)
-    pop = (st["fast"] - st["slow"]) > 0.16 and (ctx.t - st["pop_t"]) > 0.4
+    # A real onset pops a handful of sparks off the coals. The old fast/slow
+    # envelope over the bass band fired on any rise in level, so a pad swell
+    # showered embers as hard as a drum hit; the analyser's detector answers
+    # "did a transient actually land". The refractory stays so a fast roll
+    # pops once rather than emptying the cap in a frame.
+    pop = bool(ctx.onsets) and (ctx.t - st["pop_t"]) > 0.4
 
     bed_h = max(3, int(dr * 0.20))
     field = np.zeros((dr, dc), dtype=np.float64)

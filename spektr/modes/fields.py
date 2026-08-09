@@ -444,13 +444,12 @@ def chladni_extreme(ctx: Ctx):
     total = float(bands8.sum())
     centroid = float((bands8 * np.arange(8)).sum() / total / 7.0) if total > 1e-9 else 0.0
     highs = ctx.range(0.6, 1.0)
-    bass = ctx.range(0.0, 0.18)
 
     st = ctx.scratch(
         "chladni_x",
         lambda: {
             "c": centroid, "e": highs, "charge": 0.0, "spin": 0.0,
-            "fast": bass, "slow": bass, "punch": 0.0, "hit_t": -99.0,
+            "punch": 0.0, "hit_t": -99.0,
             "level": ctx.energy,
         },
     )
@@ -459,18 +458,19 @@ def chladni_extreme(ctx: Ctx):
     st["e"] += (highs - st["e"]) * min(1.0, ctx.dt / 0.12)
 
     # -- the beat --
-    # A 20 ms attack against a 300 ms reference. Faster than the 30 ms the rest
-    # of the codebase uses, because at 188 analyses/sec there is the resolution
-    # for it, and on this mode a kick that lands late reads as lag.
-    st["fast"] += (bass - st["fast"]) * min(1.0, ctx.dt / 0.02)
-    st["slow"] += (bass - st["slow"]) * min(1.0, ctx.dt / 0.30)
-    onset = st["fast"] - st["slow"]
-    # Percussion is spectrally flat, a pad is not. The same kick energy under a
-    # sustained chord should not throw the plate around.
+    # A detected onset is the hit. The analyser picks peaks in the spectral
+    # flux across the whole band plan, so a snare snaps the plate as well as
+    # a kick, and a swell in level — the thing the old fast/slow envelope
+    # pair over the bass band fired on — does not. The refractory keeps a
+    # single hit from paying for the plate twice at a low frame rate.
+    # Percussion is spectrally flat, a pad is not. The same kick energy under
+    # a sustained chord should not throw the plate around.
     groove = float(np.clip((ctx.flatness - 0.35) / 0.45, 0.0, 1.0))
-    if onset > 0.09 and (ctx.t - st["hit_t"]) > 0.09:
+    if ctx.onsets and (ctx.t - st["hit_t"]) > 0.09:
         st["hit_t"] = ctx.t
-        st["punch"] = min(1.4, st["punch"] + (0.45 + onset * 1.6) * (0.35 + groove))
+        st["punch"] = min(
+            1.4, st["punch"] + (0.45 + ctx.onset_strength * 1.6) * (0.35 + groove)
+        )
     # Decay in seconds. 160 ms clears well before the next sixteenth at any
     # tempo worth watching, so hits read as separate cracks rather than smear.
     st["punch"] *= math.exp(-max(ctx.dt, 0.0) / 0.16)

@@ -50,23 +50,6 @@ def _fit(ah: int, aw: int, sh: int, sw: int):
     return sy, sx, np.ones((sh, sw), dtype=bool)
 
 
-def _onset(ctx: Ctx) -> tuple[bool, float]:
-    """Fast/slow envelope over the low end — a rising edge is a hit.
-
-    ``ctx.energy`` is spring-smoothed (see widget.py) and would smear a hit
-    across several frames if thresholded directly, the same reasoning
-    ``Fireworks`` uses its own copy of in particles.py. Each
-    caller rolling this itself rather than sharing one implementation across
-    files is deliberate — it's four lines, and the alternative is a new
-    render.py primitive for something this small.
-    """
-    st = ctx.scratch("flipbook_onset", lambda: {"fast": 0.0, "slow": 0.0})
-    bass = ctx.range(0.0, 0.15)
-    st["fast"] += (bass - st["fast"]) * min(1.0, ctx.dt / 0.03)
-    st["slow"] += (bass - st["slow"]) * min(1.0, ctx.dt / 0.4)
-    return (st["fast"] - st["slow"]) > 0.12, bass
-
-
 def _dissolve_state(sh: int, sw: int) -> dict:
     rng = np.random.default_rng(97)
     ang = rng.uniform(0.0, 2 * math.pi, (sh, sw)).astype(np.float32)
@@ -93,7 +76,12 @@ def flipbook(ctx: Ctx):
     codes_all, density_all = reel.frames()
     n_frames, ah, aw = codes_all.shape
 
-    hit, _bass = _onset(ctx)
+    # A detected onset jumps the playhead; the loudness-driven clock below it
+    # advances the reel steadily, so the animation keeps playing on dense
+    # material the analyser reads poorly. The old fast/slow envelope over the
+    # bass band fired on any rise in level; the analyser's spectral-flux
+    # detector answers "did a transient actually land".
+    hit = bool(ctx.onsets)
 
     pos_st = ctx.scratch("flipbook_pos", lambda: {"pos": 0.0})
     pos_st["pos"] += ctx.dt * 12.0 * (0.25 + ctx.energy * 2.5)
