@@ -730,3 +730,464 @@ def vu(ctx: Ctx):
     if gap:
         codes[band_h] = SPACE
     return codes, cidx
+
+
+# ── rhythm helpers ───────────────────────────────────────────────────────────
+
+def _onsets_since(ctx: Ctx, st: dict) -> int:
+    """Onsets since the previous frame, by differencing the monotonic count.
+
+    The rhythm contract for :attr:`Ctx.onset_seq` is explicit: key on it
+    *changing*, never on ``onset_strength > 0`` — the analyser drops two
+    analyses in three at 60 fps and a boolean would be missed most of the
+    times it was true, while a counter cannot be. The count also survives
+    silence, so a pause cannot masquerade as a burst of beats. A negative
+    delta is a detector bug, not a beat; it reads as nothing.
+    """
+    n = ctx.onset_seq - st["last_seq"]
+    st["last_seq"] = ctx.onset_seq
+    return max(n, 0)
+
+
+@mode("Kaleidoscope", group="fields", blurb="radial mirror symmetry — the wedge count follows the spectrum")
+def kaleidoscope(ctx: Ctx):
+    """A real mirror array behind the visuals, not a spun copy of a picture.
+
+    The premise comes from a physical kaleidoscope: a ring of mirrors around
+    the centre — 4 or 8 of them, eased by the spectral centroid — each one
+    showing the same source slice, reflected left-right alternately. Every
+    dot's angle is wrapped into its sector, then even sectors read the source
+    forward and odd sectors read it reversed, so adjacent sectors mirror each
+    other across the shared boundary and the picture is symmetric about every
+    mirror line. Only a sector count that is a multiple of four puts a mirror
+    line on the vertical axis, so the count snaps between 4 and 8 rather than
+    running through every integer.
+
+    The mirror lines are fixed in screen space. The spin shown below rotates
+    the *source* inside the wedge: the fold coordinate stays put, and only
+    the lookup shifts by the accumulated phase, so the picture stays
+    bilaterally symmetric at every angle of rotation — a property that comes
+    out of the construction rather than being close enough for the eye.
+
+    That construction is the important part. The fold runs on a grid of
+    absolute columns: the geometry is evaluated on ``|x|`` measured from the
+    centre line between the two middle dot columns, so a dot and its L/R
+    mirror compute exactly the same angle, radius and folded coordinate, and
+    any function of those coordinates — the shard field, the brightness, the
+    colour — is bit-for-bit identical between the two dots. No averaging, no
+    tolerance: the rendered frame is symmetric by construction.
+
+    The source slice is a handful of bright shards, each a small 2-D
+    Gaussian in the (radius, wedge-angle) plane, gathered from the *source*
+    coordinate so the spin visibly rotates them inside the wedge while the
+    mirror lines stay fixed, and sampled on a small (radius, angle) table
+    once per frame — a few thousand exp() calls instead of one per dot. The
+    band levels are cos-blended into the table along the angle axis, so the
+    per-dot path is one gather that returns the brightness profile already
+    modulated by the band ramp — two gathers and a per-dot multiply avoided
+    at 320k dots a frame. The widths are clamped in dot terms so a shard
+    stays a handful of dots across at any terminal size. The field stays
+    sparse: bright, narrow features on a dark ground, so the braille dot
+    grid keeps a real silhouette instead of the aliased noise a smooth
+    sinusoid over the whole field degrades into — the Plasma mode's
+    docstring discusses why a pattern needs to be representable by the dot
+    grid at all.
+
+    The fold itself never depends on the spin and only on the sector count,
+    which takes two values, so the per-frame path is just the phase shift,
+    the table gather, and the threshold — the wrap into sectors, the radius
+    field and the mirror mapping are recomputed only when the count snaps or
+    the terminal resizes. That is what keeps a 400x100 terminal inside the
+    frame budget.
+
+    A beat arrives as an onset in the current frame; the same beat kicks the
+    rotation once and snaps the sector count, and the count then eases back
+    toward the spectral centroid. The rotation rate is re-integrated through
+    ``ctx.dt`` rather than read from ``ctx.t``, so pausing the audio locks
+    the rotation in place without disturbing the phase.
+
+    Colour: the ramp is walked by a blend of radius and the cell-max of the
+    lit field, so the shards take on density rather than hue — the silver
+    look comes from the shading, not from a fixed palette.
+    """
+    dr, dc = ctx.dot_rows, ctx.dot_cols
+    if dr < 8 or dc < 8:
+        return empty(ctx.w, ctx.h)
+
+    from ..render import frac
+
+    # Geometry on the |x|-folded grid: dot (x, y) and its L/R mirror
+    # (dc - 1 - x, y) compute identical turn and radius, so any function of
+    # them is bit-for-bit symmetric. The pole sits on the boundary between
+    # the two centre dot columns, so no dot straddles the mirror axis. The
+    # radius field is folded into the factory so the per-frame path never
+    # re-divides a static grid.
+    def geo():
+        cx, cy = (dc - 1) / 2.0, (dr - 1) / 2.0
+        x_scale = cy / max(cx, 1.0)
+        ax = np.abs(np.arange(dc, dtype=np.float32) - np.float32(cx)) * np.float32(x_scale)
+        ys = np.arange(dr, dtype=np.float32) - np.float32(cy)
+        dx = ax[None, :]
+        dy = ys[:, None]
+        dist = np.sqrt(dx * dx + dy * dy).astype(np.float32)
+        ang = np.arctan2(dy, dx).astype(np.float32)
+        ang = np.where(ang < 0, ang + np.float32(2 * math.pi), ang).astype(np.float32)
+        turn = (ang / np.float32(2 * math.pi)).astype(np.float32)
+        r = (dist / max(cy - 1.0, 1.0)).astype(np.float32)
+        return dist, turn, r, np.float32(cy - 1.0)
+
+    dist, turn, r, rmax = ctx.scratch("kaleido_geo", geo)
+
+    bands8 = ctx.display_bands(8).astype(np.float64)
+    total = float(bands8.sum())
+    centroid = float((bands8 * np.arange(8)).sum() / total / 7.0) if total > 1e-9 else 0.0
+    bass = ctx.range(0.0, 0.18)
+
+    st = ctx.scratch("kaleido", lambda: {"kc": 4.0, "spin": 0.0, "last_seq": ctx.onset_seq})
+    onsets = _onsets_since(ctx, st)
+
+    # The wedge count eases toward the centroid and snaps on a beat; it only
+    # ever lands on a multiple of four, which is what keeps the vertical
+    # axis a mirror line.
+    st["kc"] += (4.0 + centroid * 4.0 - st["kc"]) * min(1.0, ctx.dt / 1.2)
+    if onsets:
+        st["kc"] = float(4.0 if bass < 0.5 else 8.0)
+    k = 4 * int(round(st["kc"] / 4.0))
+    k = max(4, min(k, 8))
+
+    # Spin moves the SOURCE inside the wedge; the mirror lines never move.
+    st["spin"] = (st["spin"] + (0.22 + ctx.energy * 0.8) * max(ctx.dt, 0.0)) % (2 * math.pi)
+    if onsets:
+        st["spin"] = (st["spin"] + 0.3 * min(onsets, 3)) % (2 * math.pi)
+    spin = st["spin"]
+
+    # The fold: wrap the angle into its sector, then read even sectors
+    # forward and odd sectors backward, so the array alternates orientation
+    # around the ring exactly like physical mirror tubes. The fold depends
+    # only on the sector count (two values), so it is cached; the per-frame
+    # path is just the phase shift below.
+    fd = ctx.scratch("kaleido_fold", lambda: {"k": None, "folded": None})
+    if fd["k"] != k:
+        wedge = turn * np.float32(k)
+        m = np.floor(wedge).astype(np.int32)
+        u = wedge - np.float32(m)
+        fd["folded"] = np.where((m & 1) == 0, u, np.float32(1.0) - u)
+        fd["k"] = k
+    folded = fd["folded"]
+
+    src = frac(folded + np.float32(spin * k / (2 * math.pi)))
+
+    # The source slice: bright shards, each a small 2-D Gaussian in the
+    # (radius, wedge-angle) plane, sampled on a (radius, angle) table once
+    # per frame. The band ramp — cos-blended between neighbours like the
+    # shared _angular_bands helper — is multiplied into the table along the
+    # angle axis, so the per-dot brightness profile arrives from a single
+    # gather. The widths are clamped in dot terms so a shard stays a handful
+    # of dots across at any terminal size; the angular width is derived from
+    # the arc the wedge covers at the shard's radius.
+    nu, nr = 512, 128
+    u_axis = (np.arange(nu, dtype=np.float32) + 0.5) * np.float32(1.0 / nu)
+    r_axis = (np.arange(nr, dtype=np.float32) + 0.5) * np.float32(1.0 / nr)
+    table = np.zeros((nr, nu), dtype=np.float32)
+    lv = bands8.astype(np.float32)
+    for i in range(8):
+        au = ((i + 0.5) / 8.0 + (lv[i % 8] - 0.5) * 0.16) % 1.0
+        ar = min(0.92, 0.30 + lv[(i + 2) % 8] * 0.55)
+        sdot = 1.2 + lv[(i + 1) % 8] * 1.2
+        sdot = max(0.6, sdot * float(rmax) / 24.0)
+        arc = 2 * math.pi * float(ar) * float(rmax) / k
+        wu = min(0.9, sdot / max(arc, 0.5))
+        wr = sdot / max(float(rmax), 2.0)
+        du = np.abs(u_axis - np.float32(au))
+        du = np.minimum(du, 1.0 - du)
+        gu = np.exp(-((du / np.float32(wu)) ** 2)).astype(np.float32)
+        gr = np.exp(-(((r_axis - np.float32(ar)) / np.float32(wr)) ** 2)).astype(np.float32)
+        table += gu[None, :] * gr[:, None]
+
+    # the band ramp blended into the table along the angle axis (a smooth
+    # cosine blend between adjacent band levels, exactly like _angular_bands)
+    pos = np.linspace(0.0, 8, nu, endpoint=False, dtype=np.float32)
+    bi = pos.astype(np.int32) % 8
+    bf = pos - np.floor(pos)
+    tm = (1.0 - np.cos(bf * np.float32(math.pi))) * np.float32(0.5)
+    lut = lv[bi] * (1.0 - tm) + lv[(bi + 1) % 8] * tm
+    table *= (0.55 + lut * 0.9)[None, :]
+
+    iu = (src * np.float32(nu)).astype(np.int32) & (nu - 1)
+    ir = np.minimum((r * np.float32(nr)).astype(np.int32), nr - 1)
+    bright = (table.ravel()[ir * nu + iu] * (0.55 + ctx.energy * 0.9)).astype(np.float32)
+    dots = bright > 0.5
+    codes = pack_braille(dots)
+
+    # colour from radius and band level; the cell radius is cached on resize
+    # so the per-frame path never re-reduces a static grid
+    def cell_r():
+        cx, cy = (dc - 1) / 2.0, (dr - 1) / 2.0
+        x_scale = cy / max(cx, 1.0)
+        xs = (np.arange(dc, dtype=np.float32) - cx) * x_scale
+        ys = np.arange(dr, dtype=np.float32) - cy
+        rr = (np.sqrt(xs[None, :] ** 2 + ys[:, None] ** 2) / max(1.0, cy - 1.0)).astype(np.float32)
+        return cell_max(rr)
+
+    cr = ctx.scratch("kaleido_r", cell_r)
+    col = cell_max(np.where(dots, bright, 0.0))
+    idx = ctx.ramp(np.clip(col * 0.5 + cr * 0.5, 0.0, 1.0))
+    return codes, idx
+
+
+@mode("Sterling", group="fields", blurb="engraved silver — a mirrored gothic emblem with a hard specular edge")
+def sterling(ctx: Ctx):
+    """Polished metal, not a soft gradient: a hard specular ramp on a dark ground.
+
+    The picture is an ornamental emblem — dagger, cross, and slowly turning
+    fleur-de-lis scrollwork — drawn in a mirror: every feature is a function
+    of ``|x|``, so the composition is bilaterally symmetric by construction
+    rather than by accident of layout. The aesthetic is heavy jewellery:
+    deep black ground, the metal body a dark silver, and a narrow band of
+    near-white along the edge that faces the light.
+
+    The silver is the point, and it is a shading model, not a colour choice.
+    The ornament is an implicit surface — each shape is a Gaussian ridge
+    whose height falls to zero away from the centre line — and the frame
+    computes the surface's gradient by central differences, then lights it
+    from the upper left. Squaring the clamped light term is what makes the
+    highlight *hard*: most of each ridge's slope is dark, and only the
+    steepest gradient facing the light escapes the square, so the picture
+    reads as polished sterling with a single sharp glint rather than as a
+    smoothed glow. A beat flash multiplies the same term, so a kick glints
+    off the metal instead of brightening it evenly.
+
+    The emblem grows and retreats with the smoothed level — the whole
+    composition scales from the centre, so a loud bar swells the silverwork
+    and a quiet one lets it recede — and the two base curls turn slowly on
+    their anchors in seconds, which is what keeps a held tone alive without
+    breaking the frame-rate rule (a fixed rate read against ``ctx.t`` is
+    fine; only audio-driven rates need to accumulate through ``ctx.dt``).
+    """
+    dr, dc = ctx.dot_rows, ctx.dot_cols
+    if dr < 16 or dc < 16:
+        return empty(ctx.w, ctx.h)
+
+    def geo():
+        cx, cy = dc / 2.0, dr / 2.0
+        x_scale = cy / max(cx, 1.0)      # braille dots are ~2x taller than wide
+        a = (np.abs(np.arange(dc, dtype=np.float32) - cx) * x_scale)[None, :] / cy
+        b = (np.arange(dr, dtype=np.float32) - cy)[:, None] / cy
+        return a, b
+
+    a, b = ctx.scratch("sterling_geo", geo)
+
+    bass = ctx.range(0.0, 0.18)
+
+    st = ctx.scratch("sterling", lambda: {
+        "growth": 0.6, "last_seq": ctx.onset_seq,
+        "fast": bass, "slow": bass, "hit_t": -99.0, "punch": 0.0,
+    })
+    onsets = _onsets_since(ctx, st)
+
+    # A beat punch on the same fast/slow bass envelope as Chladni Extreme,
+    # OR'd with the rhythm counter so it also fires once the real detector
+    # lands; decays over ~180 ms so hits read as separate glints.
+    st["fast"] += (bass - st["fast"]) * min(1.0, ctx.dt / 0.02)
+    st["slow"] += (bass - st["slow"]) * min(1.0, ctx.dt / 0.30)
+    if (st["fast"] - st["slow"] > 0.09 and (ctx.t - st["hit_t"]) > 0.09) or onsets:
+        st["hit_t"] = ctx.t
+        st["punch"] = min(1.4, st["punch"] + 0.45 + 0.25 * min(onsets, 3))
+    st["punch"] *= math.exp(-max(ctx.dt, 0.0) / 0.18)
+
+    # growth swells the whole composition from the centre. Dividing the
+    # coordinates by the eased level scales the shapes outward; the range is
+    # tuned so the base bar stays on screen at full loudness.
+    st["growth"] += (0.55 + ctx.energy * 0.45 - st["growth"]) * min(1.0, ctx.dt / 0.6)
+    g = st["growth"]
+    aa = a / g
+    bb = b / g
+
+    # Every ridge is several dots wide, so the surface is drawn on a
+    # half-resolution grid and upsampled before lighting: a quarter of the
+    # exp()/hypot() work per frame, and the bilinear upsample keeps the
+    # specular edge where the full-res surface would put it.
+    ph = dr % 2
+    pw = dc % 2
+    if ph or pw:
+        aa = np.pad(aa, ((0, ph), (0, pw)), mode="edge")
+        bb = np.pad(bb, ((0, ph), (0, pw)), mode="edge")
+    aa = aa[::2, ::2]
+    bb = bb[::2, ::2]
+
+    def ridge(t, w):
+        return np.exp(-(t / w) ** 2)
+
+    # a ring, not a filled disc: the Gaussian peaks at radius r0, but the
+    # squared argument would also light the interior, so a ramp clips the
+    # disc out — the annulus keeps a soft inner edge that the light catches.
+    def ring(t, r0, w):
+        return ridge(t - r0, w) * np.clip((t - 0.5 * r0) * (2.0 / r0), 0.0, 1.0)
+
+    # the dagger stands on the base bar, reading top to bottom: an orb
+    # finial, the blade tapering from its base to a point, a small ring low
+    # on the blade, the long crossguard, a curl wrapped under each guard
+    # end, the pommel spike, and the base. The whole composition scales by
+    # g, so a loud bar swells the metal toward the screen edges.
+    base = ridge(bb - 0.85, 0.028) * ridge(aa, 0.26)
+    pommel = ridge(aa, 0.03) * np.clip((0.78 - bb) * 4.0, 0.0, 1.0) * np.clip((bb - 0.50) * 4.0, 0.0, 1.0)
+    guard = ridge(bb - 0.34, 0.045) * ridge(aa, 0.20)
+    blade_w = 0.02 + 0.075 * (bb + 0.78) / 1.08
+    blade = ridge(aa / np.maximum(blade_w, 0.005), 1.0) * np.clip(0.30 - bb, 0.0, 1.0) * np.clip((bb + 0.78) * 2.0, 0.0, 1.0)
+    finial = ring(np.hypot(aa, bb + 0.86), 0.06, 0.026)
+
+    # fleur-de-lis scrollwork: a curl below each guard end and a small ring
+    # low on the blade, the curls turning slowly on their anchors; the
+    # mirror does the other side
+    turn = ctx.t * 0.5
+    ca = 0.28 + 0.05 * math.cos(turn)
+    cb = 0.62 + 0.05 * math.sin(turn)
+    curl = ring(np.hypot(aa - np.float32(ca), bb - np.float32(cb)), 0.075, 0.026)
+    ringlet = ring(np.hypot(aa - 0.13, bb + 0.02), 0.05, 0.02)
+
+    h = np.maximum.reduce([base, pommel, guard, blade, finial, curl, ringlet])
+
+    # bilinear 2x upsample back to the dot grid, edge-clamped: even rows
+    # hold the surface, odd rows and columns are the linear middles, so the
+    # gradient below is a smooth function of the true surface
+    h0 = h
+    h = np.empty((2 * h0.shape[0], 2 * h0.shape[1]), dtype=np.float32)
+    h[0::2, 0::2] = h0
+    h[0::2, 1:-1:2] = 0.5 * (h0[:, :-1] + h0[:, 1:])
+    h[0::2, -1] = h0[:, -1]
+    h[1:-1:2, :] = 0.5 * (h[0:-2:2, :] + h[2::2, :])
+    h[-1, :] = h[-2, :]
+    h = h[:dr, :dc]
+
+    # gradient by central differences — the surface the light hits
+    hx = np.empty_like(h)
+    hx[:, :-1] = h[:, 1:] - h[:, :-1]
+    hx[:, -1] = hx[:, -2]
+    hy = np.empty_like(h)
+    hy[:-1, :] = h[1:, :] - h[:-1, :]
+    hy[-1, :] = hy[-2, :]
+
+    # one hard light from the upper left: the surfaces that rise toward it
+    # (hx, hy > 0) catch it, and the square is what makes the specular
+    # narrow — see the docstring. The body is a dim silver so the metal
+    # reads as metal even where the light misses it.
+    spec = np.clip((hx + hy) * (1.0 + st["punch"] * 1.6), 0.0, 1.0) ** 2.0
+    body = np.clip((h - 0.10) * 2.4, 0.0, 1.0) * 0.42
+    v = np.clip(body + spec, 0.0, 1.0)
+
+    dots = v > 0.045
+    codes = pack_braille(dots)
+    idx = ctx.ramp(cell_max(np.where(dots, v, 0.0)))
+    return codes, idx
+@mode("Dither", group="fields", blurb="the spectrum as a dithered field — directional waves in one-bit crosshatch")
+def dither(ctx: Ctx):
+    """The spectrum as a continuous two-dimensional field, thresholded to one
+    bit by an ordered dither — so the whole frame is one textured surface,
+    not a row of bars.
+
+    The field is the sum of eight directional plane waves, one per band, at
+    angles spreading around the circle. Each wave's amplitude is that band's
+    level, so the *shape* of the spectrum steers the texture: heavy bass
+    swells the low-frequency waves into broad slow undulations while the
+    high bands draw fine grain on top, and the sum is normalized by the band
+    total so the mix rotates with the music instead of saturating. The
+    wavelengths run from a twentieth of the width up to a quarter of it, so
+    every braille cell sees a different slice of the wave mix and the
+    cross-hatch pattern varies across the frame instead of repeating. The
+    level drives two scalars — a baseline lift and the texture depth — so a
+    louder signal reads as a denser, deeper field and a quiet one as a flat,
+    even grey. There is no clock in here and no state beyond the cached
+    geometry: a frozen spectrum is a frozen frame, exactly like the bars
+    modes.
+
+    The threshold is an s x s Bayer matrix tiled by *absolute* dot position
+    on both axes. The tile alignment is what makes this a texture rather
+    than stripes: because the threshold varies with the column inside every
+    row, a row whose field is uniform still breaks into the cross-hatch
+    pattern of the matrix, and because the field varies along x as well as
+    y, no row ever resolves to a single solid line. Wherever the field is
+    near the threshold the matrix turns the gradient into structured dots
+    and wedges — the ordered-dither effect — and the density of the pattern
+    stands in for the field's value: a grey-scale rendering of a surface
+    that is only ever lit or unlit.
+
+    One guard on top of that: a row whose field rides high across its whole
+    width would saturate every dot. Each row's maximum threshold is known,
+    so the top threshold cell of any such row is forced dark — a uniformly
+    solid row becomes structurally impossible without dimming anything
+    else, and the baseline keeps every row lit somewhere.
+
+    There is deliberately no left-right mirroring here. A mirror line
+    through the centre is exactly the seam the eye locks onto, splitting
+    one surface into two panels; a dithered field should read as a single
+    continuous skin, and the absolute tiling keeps it that way across the
+    whole frame.
+
+    Colour walks the ramp by the lit density of each cell, so brighter
+    patches of the texture sit higher in the ramp.
+    """
+    dr, dc = ctx.dot_rows, ctx.dot_cols
+    if dr < 8 or dc < 8:
+        return empty(ctx.w, ctx.h)
+
+    def grid():
+        # Eight directional plane waves, one per band. Band q runs at angle
+        # pi*q/8; its wavelength goes from a twentieth of the width (fine
+        # grain, high bands) up to a quarter of the width (broad swells,
+        # low bands), scaled to the terminal so the texture keeps its
+        # structure at any size.
+        x = (np.arange(dc, dtype=np.float32) - np.float32((dc - 1) / 2.0)) / np.float32(max(dc - 1, 1))
+        y = (np.arange(dr, dtype=np.float32) - np.float32((dr - 1) / 2.0)) / np.float32(max(dr - 1, 1))
+        twopi = np.float32(2 * math.pi)
+        ph = []
+        for q in range(8):
+            thq = np.float32(math.pi * q / 8.0)
+            kq = np.float32(dc) * np.float32(0.06 + 0.28 * (q / 7.0))
+            wx = np.cos(thq) * twopi * kq
+            wy = np.sin(thq) * twopi * kq
+            ph.append((wx * x[None, :] + wy * y[:, None]).astype(np.float32))
+        # The ordered-dither threshold: an s x s Bayer matrix (the standard
+        # recursion, normalized to [0, 1)) tiled by ABSOLUTE dot position on
+        # both axes, so the cross-hatch runs continuously across the whole
+        # grid instead of restarting at each row or folding at the centre.
+        s = 8 if (dr >= 16 and dc >= 16) else 4
+        b = np.zeros((1, 1), dtype=np.float32)
+        size = 1
+        while size < s:
+            b = np.block([[4 * b, 4 * b + 2], [4 * b + 3, 4 * b + 1]])
+            size *= 2
+        b = b / np.float32(size * size)
+        th = b[np.arange(dr, dtype=np.int32) % s][:, np.arange(dc, dtype=np.int32) % s]
+        return {"ph": ph, "th": th, "th_rowmax": th.max(axis=1).astype(np.float32),
+                "th_argmax": np.argmax(th, axis=1).astype(np.int32)}
+
+    g = ctx.scratch("dither_grid", grid)
+
+    # The field: the spectrum-weighted sum of the waves, normalized by the
+    # band total so the spectrum's SHAPE steers the texture while the
+    # overall level steers its depth and density.
+    lvl = resample_bands(ctx.bands, 8).astype(np.float32)
+    acc = lvl[0] * np.sin(g["ph"][0])
+    for q in range(1, 8):
+        acc = acc + lvl[q] * np.sin(g["ph"][q])
+    norm = acc / np.float32(0.15 + float(lvl.sum()))
+    base = np.float32(0.64 + 0.16 * ctx.energy)
+    depth = np.float32(0.10 + 0.14 * ctx.energy)
+    field = (base + depth * 2.2 * norm).astype(np.float32)
+    lit = field > g["th"]
+    # guard: a row whose field stays above its own row-max threshold would
+    # saturate every dot. The top threshold cell of such a row is forced
+    # dark, which makes a uniformly solid row structurally impossible
+    # without dimming anything else.
+    hot = field.max(axis=1) > g["th_rowmax"]
+    if bool(hot.any()):
+        cols = g["th_argmax"]
+        lit[hot, cols[hot]] = False
+    codes = pack_braille(lit)
+
+    # colour follows the lit density: the ramp is walked by the cell-max of
+    # the field where it is lit, so bright patches sit higher in the ramp
+    col = cell_max(np.where(lit, np.clip(field, 0.0, 1.0), 0.0))
+    idx = ctx.ramp(np.clip(col, 0.0, 1.0))
+    return codes, idx
+
