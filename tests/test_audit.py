@@ -65,9 +65,9 @@ SELF_ANIMATING = {
     "Readout", "Helix", "Chladni Flow", "Chladni Extreme", "Orbit", "Keys",
     "Flipbook", "Maelstrom", "Dune", "Fireworks", "Boot", "Murmuration",
     "Vinyl", "Rain", "Ember",
-    # continuous spin (Kaleidoscope rotates its mirror array; Sterling's
+    # continuous spin (Kaleidoscope rotates its mirror array; the
     # scrollwork curls turn on their anchors even at a frozen spectrum)
-    "Kaleidoscope", "Sterling",
+    "Kaleidoscope", "Valentine",
 }
 
 #: Modes driven by the waveform rather than the band levels.

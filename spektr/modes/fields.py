@@ -935,160 +935,6 @@ def kaleidoscope(ctx: Ctx):
     return codes, idx
 
 
-@mode("Sterling", group="fields", blurb="engraved silver — a mirrored gothic emblem with a hard specular edge")
-def sterling(ctx: Ctx):
-    """Polished metal, not a soft gradient: a hard specular ramp on a dark ground.
-
-    The picture is an ornamental emblem — dagger, cross, and slowly turning
-    fleur-de-lis scrollwork — drawn in a mirror: every feature is a function
-    of ``|x|``, so the composition is bilaterally symmetric by construction
-    rather than by accident of layout. The aesthetic is heavy jewellery:
-    deep black ground, the metal body a dark silver, and a narrow band of
-    near-white along the edge that faces the light.
-
-    The silver is the point, and it is a shading model, not a colour choice.
-    The ornament is an implicit surface — each shape is a Gaussian ridge
-    whose height falls to zero away from the centre line — and the frame
-    computes the surface's gradient by central differences, then lights it
-    from the upper left. Squaring the clamped light term is what makes the
-    highlight *hard*: most of each ridge's slope is dark, and only the
-    steepest gradient facing the light escapes the square, so the picture
-    reads as polished sterling with a single sharp glint rather than as a
-    smoothed glow. A beat flash multiplies the same term, so a kick glints
-    off the metal instead of brightening it evenly.
-
-    The emblem grows and retreats with the smoothed level — the whole
-    composition scales from the centre, so a loud bar swells the silverwork
-    and a quiet one lets it recede — and the two base curls turn slowly on
-    their anchors in seconds, which is what keeps a held tone alive without
-    breaking the frame-rate rule (a fixed rate read against ``ctx.t`` is
-    fine; only audio-driven rates need to accumulate through ``ctx.dt``).
-    """
-    dr, dc = ctx.dot_rows, ctx.dot_cols
-    if dr < 16 or dc < 16:
-        return empty(ctx.w, ctx.h)
-
-    def geo():
-        cx, cy = dc / 2.0, dr / 2.0
-        x_scale = cy / max(cx, 1.0)      # braille dots are ~2x taller than wide
-        a = (np.abs(np.arange(dc, dtype=np.float32) - cx) * x_scale)[None, :] / cy
-        b = (np.arange(dr, dtype=np.float32) - cy)[:, None] / cy
-        return a, b
-
-    a, b = ctx.scratch("sterling_geo", geo)
-
-    bass = ctx.range(0.0, 0.18)
-
-    st = ctx.scratch("sterling", lambda: {
-        "growth": 0.6, "last_seq": ctx.onset_seq,
-        "fast": bass, "slow": bass, "hit_t": -99.0, "punch": 0.0,
-    })
-    onsets = _onsets_since(ctx, st)
-
-    # A beat punch on the same fast/slow bass envelope as Chladni Extreme,
-    # OR'd with the rhythm counter so it also fires once the real detector
-    # lands; decays over ~180 ms so hits read as separate glints.
-    st["fast"] += (bass - st["fast"]) * min(1.0, ctx.dt / 0.02)
-    st["slow"] += (bass - st["slow"]) * min(1.0, ctx.dt / 0.30)
-    if (st["fast"] - st["slow"] > 0.09 and (ctx.t - st["hit_t"]) > 0.09) or onsets:
-        st["hit_t"] = ctx.t
-        st["punch"] = min(1.4, st["punch"] + 0.45 + 0.25 * min(onsets, 3))
-    st["punch"] *= math.exp(-max(ctx.dt, 0.0) / 0.18)
-
-    # growth swells the whole composition from the centre. Dividing the
-    # coordinates by the eased level scales the shapes outward.
-    #
-    # The range was 0.55..1.00, which drew the emblem at about a third of the
-    # available width -- 34 of 100 columns at a normal terminal size, 8% of
-    # the frame lit, a small object adrift in a large empty rectangle. The
-    # silverwork is the mode; it should occupy the frame the way a hallmark
-    # occupies the metal it is struck into. Roughly doubled, it now uses
-    # about two thirds of the width and most of the height.
-    #
-    # At full level the topmost spire reaches the top edge. That is the
-    # composition filling its frame on a peak rather than a bug, and the base
-    # bar -- the thing the original range was protecting -- stays inside.
-    st["growth"] += (1.10 + ctx.energy * 0.55 - st["growth"]) * min(1.0, ctx.dt / 0.6)
-    g = st["growth"]
-    aa = a / g
-    bb = b / g
-
-    # Every ridge is several dots wide, so the surface is drawn on a
-    # half-resolution grid and upsampled before lighting: a quarter of the
-    # exp()/hypot() work per frame, and the bilinear upsample keeps the
-    # specular edge where the full-res surface would put it.
-    ph = dr % 2
-    pw = dc % 2
-    if ph or pw:
-        aa = np.pad(aa, ((0, ph), (0, pw)), mode="edge")
-        bb = np.pad(bb, ((0, ph), (0, pw)), mode="edge")
-    aa = aa[::2, ::2]
-    bb = bb[::2, ::2]
-
-    def ridge(t, w):
-        return np.exp(-(t / w) ** 2)
-
-    # a ring, not a filled disc: the Gaussian peaks at radius r0, but the
-    # squared argument would also light the interior, so a ramp clips the
-    # disc out — the annulus keeps a soft inner edge that the light catches.
-    def ring(t, r0, w):
-        return ridge(t - r0, w) * np.clip((t - 0.5 * r0) * (2.0 / r0), 0.0, 1.0)
-
-    # the dagger stands on the base bar, reading top to bottom: an orb
-    # finial, the blade tapering from its base to a point, a small ring low
-    # on the blade, the long crossguard, a curl wrapped under each guard
-    # end, the pommel spike, and the base. The whole composition scales by
-    # g, so a loud bar swells the metal toward the screen edges.
-    base = ridge(bb - 0.85, 0.028) * ridge(aa, 0.26)
-    pommel = ridge(aa, 0.03) * np.clip((0.78 - bb) * 4.0, 0.0, 1.0) * np.clip((bb - 0.50) * 4.0, 0.0, 1.0)
-    guard = ridge(bb - 0.34, 0.045) * ridge(aa, 0.20)
-    blade_w = 0.02 + 0.075 * (bb + 0.78) / 1.08
-    blade = ridge(aa / np.maximum(blade_w, 0.005), 1.0) * np.clip(0.30 - bb, 0.0, 1.0) * np.clip((bb + 0.78) * 2.0, 0.0, 1.0)
-    finial = ring(np.hypot(aa, bb + 0.86), 0.06, 0.026)
-
-    # fleur-de-lis scrollwork: a curl below each guard end and a small ring
-    # low on the blade, the curls turning slowly on their anchors; the
-    # mirror does the other side
-    turn = ctx.t * 0.5
-    ca = 0.28 + 0.05 * math.cos(turn)
-    cb = 0.62 + 0.05 * math.sin(turn)
-    curl = ring(np.hypot(aa - np.float32(ca), bb - np.float32(cb)), 0.075, 0.026)
-    ringlet = ring(np.hypot(aa - 0.13, bb + 0.02), 0.05, 0.02)
-
-    h = np.maximum.reduce([base, pommel, guard, blade, finial, curl, ringlet])
-
-    # bilinear 2x upsample back to the dot grid, edge-clamped: even rows
-    # hold the surface, odd rows and columns are the linear middles, so the
-    # gradient below is a smooth function of the true surface
-    h0 = h
-    h = np.empty((2 * h0.shape[0], 2 * h0.shape[1]), dtype=np.float32)
-    h[0::2, 0::2] = h0
-    h[0::2, 1:-1:2] = 0.5 * (h0[:, :-1] + h0[:, 1:])
-    h[0::2, -1] = h0[:, -1]
-    h[1:-1:2, :] = 0.5 * (h[0:-2:2, :] + h[2::2, :])
-    h[-1, :] = h[-2, :]
-    h = h[:dr, :dc]
-
-    # gradient by central differences — the surface the light hits
-    hx = np.empty_like(h)
-    hx[:, :-1] = h[:, 1:] - h[:, :-1]
-    hx[:, -1] = hx[:, -2]
-    hy = np.empty_like(h)
-    hy[:-1, :] = h[1:, :] - h[:-1, :]
-    hy[-1, :] = hy[-2, :]
-
-    # one hard light from the upper left: the surfaces that rise toward it
-    # (hx, hy > 0) catch it, and the square is what makes the specular
-    # narrow — see the docstring. The body is a dim silver so the metal
-    # reads as metal even where the light misses it.
-    spec = np.clip((hx + hy) * (1.0 + st["punch"] * 1.6), 0.0, 1.0) ** 2.0
-    body = np.clip((h - 0.10) * 2.4, 0.0, 1.0) * 0.42
-    v = np.clip(body + spec, 0.0, 1.0)
-
-    dots = v > 0.045
-    codes = pack_braille(dots)
-    idx = ctx.ramp(cell_max(np.where(dots, v, 0.0)))
-    return codes, idx
 @mode("Dither", group="fields", blurb="the spectrum as a dithered field — directional waves in one-bit crosshatch")
 def dither(ctx: Ctx):
     """The spectrum as a continuous two-dimensional field, thresholded to one
@@ -1260,3 +1106,162 @@ def dither(ctx: Ctx):
     idx = ctx.ramp(np.clip(col * 0.125, 0.0, 1.0))
     return codes, idx
 
+
+
+#: Most hearts a Valentine frame will carry. Bounded so a dense passage
+#: cannot grow the particle arrays without limit.
+_VAL_HEARTS = 24
+
+
+@mode("Valentine", group="fields", blurb="a heart that beats with the track, trailing smaller ones upward")
+def valentine(ctx: Ctx):
+    """A heart that actually beats, rather than a heart that pulses.
+
+    The distinction is the whole mode. A shape scaled by ``ctx.energy`` swells
+    and sags with the music's loudness, which is a throb, not a heartbeat — a
+    real one is two strokes, a loud *lub* and a softer *dub* about a sixth of
+    a second behind it, and then stillness until the next beat. So an onset
+    fires the first stroke and schedules the second, and between beats the
+    heart is still. Recognising it as a heartbeat depends entirely on that
+    second stroke and on the silence after it.
+
+    The shape is the standard implicit heart, ``(x^2 + y^2 - 1)^3 <= x^2 y^3``,
+    which is bilaterally symmetric by construction — its own mirror, with no
+    folding needed. Sampled as a signed field so the edge can be found by
+    thresholding rather than by tracing an outline, and so beating is a matter
+    of scaling the coordinates rather than redrawing anything.
+
+    Smaller hearts rise from it, spawned on beats and released with a sideways
+    drift, shrinking as they climb. They are also what keeps the mode alive
+    when the detector is quiet: a slow rate spawns them under a drone, the
+    same reasoning as Pulse's clock. Neither the rise nor the sway is a
+    function of ``ctx.t`` scaled by anything audio-driven; both integrate
+    ``ctx.dt``, so the drift is the same speed at 30 fps and at 144.
+
+    Colour walks the ramp by depth inside the shape, so the heart reads as
+    solid with a brighter rim rather than as a flat silhouette.
+    """
+    dr, dc = ctx.dot_rows, ctx.dot_cols
+    if dr < 12 or dc < 12:
+        return empty(ctx.w, ctx.h)
+
+    def geo():
+        # Aspect-corrected so the heart is a heart and not an oval: braille
+        # dots are about twice as tall as they are wide, and the cell grid is
+        # itself wider than it is tall.
+        cx, cy = (dc - 1) / 2.0, (dr - 1) / 2.0
+        sx = max(cx, 1.0)
+        sy = max(cy, 1.0)
+        x = (np.arange(dc, dtype=np.float32) - np.float32(cx)) / np.float32(sx)
+        y = (np.float32(cy) - np.arange(dr, dtype=np.float32)) / np.float32(sy)
+        return x[None, :], y[:, None]
+
+    gx, gy = ctx.scratch("valentine_geo", geo)
+
+    st = ctx.scratch("valentine", lambda: {
+        "beat": 0.0, "dub": -1.0, "acc": 0.0, "last_seq": ctx.onset_seq,
+        "hx": np.zeros(_VAL_HEARTS, dtype=np.float32),
+        "hy": np.full(_VAL_HEARTS, 9.0, dtype=np.float32),   # 9 == dead
+        "hs": np.zeros(_VAL_HEARTS, dtype=np.float32),
+        "hv": np.zeros(_VAL_HEARTS, dtype=np.float32),
+        "rng": np.random.default_rng(214),
+    })
+    rng = st["rng"]
+    onsets = _onsets_since(ctx, st)
+
+    bass = ctx.range(0.0, 0.22)
+
+    # ── the two strokes ──
+    # An onset is the lub; the dub is scheduled a sixth of a second later and
+    # lands at a bit over half the amplitude. Both decay on the same short
+    # time constant, integrated in seconds so the beat has the same shape at
+    # any frame rate.
+    if onsets:
+        st["beat"] = min(1.6, st["beat"] + 0.85 + 0.5 * ctx.onset_strength)
+        st["dub"] = ctx.t + 0.17
+    if st["dub"] > 0.0 and ctx.t >= st["dub"]:
+        st["beat"] = min(1.6, st["beat"] + 0.42)
+        st["dub"] = -1.0
+    st["beat"] *= math.exp(-max(ctx.dt, 0.0) / 0.11)
+    beat = st["beat"]
+
+    # Size: a resting heart that swells a little with the track's body, plus
+    # the beat on top. The resting term is deliberately gentle — if loudness
+    # moved the heart much, the beat would stop reading as a beat.
+    scale = 0.44 + 0.07 * bass + 0.15 * beat
+
+    # ── the main heart ──
+    # (x^2 + y^2 - 1)^3 - x^2 y^3 <= 0, on coordinates divided by the size so
+    # a bigger scale means a bigger heart. The y offset lifts it slightly:
+    # the curve's own centroid sits below the origin and it looks dropped
+    # without it.
+    hx = gx / np.float32(scale)
+    hy = (gy + np.float32(0.05)) / np.float32(scale) * np.float32(1.15)
+    q = hx * hx + hy * hy - np.float32(1.0)
+    fld = q * q * q - hx * hx * hy * hy * hy
+    inside = fld <= 0.0
+
+    # Depth inside the shape, normalised, so the rim is bright and the middle
+    # is solid rather than the whole silhouette being one flat value.
+    depth = np.clip(-fld * np.float32(2.4), 0.0, 1.0).astype(np.float32)
+    field = np.where(inside, np.float32(0.45) + np.float32(0.55) * depth, np.float32(0.0))
+
+    # ── rising hearts ──
+    # Spawned on a beat, and on a slow clock so the frame is never empty on
+    # material the detector reads poorly.
+    st["acc"] += (0.25 + ctx.energy * 1.1) * max(ctx.dt, 0.0)
+    want = onsets
+    if st["acc"] >= 1.0:
+        st["acc"] -= 1.0
+        want += 1
+    # Never let the sky above the heart go completely empty. At a moderate
+    # level the clock alone takes over a second to release the first one, so
+    # the mode would open on a motionless heart and read as frozen -- and on
+    # a drone, where no onsets ever arrive, it would stay that way.
+    if not want and not (st["hy"] <= 1.6).any():
+        want = 1
+    if want:
+        free = np.flatnonzero(st["hy"] > 1.6)[:want]
+        for i in free:
+            # Spread wider than the main heart so some rise clear of its
+            # silhouette; the ones launched from inside read as escaping it.
+            st["hx"][i] = np.float32(rng.uniform(-0.95, 0.95))
+            st["hy"][i] = np.float32(-0.25)
+            st["hs"][i] = np.float32(rng.uniform(0.10, 0.19))
+            st["hv"][i] = np.float32(rng.uniform(0.30, 0.62))
+
+    alive = st["hy"] <= 1.6
+    if alive.any():
+        dt = np.float32(max(ctx.dt, 0.0))
+        st["hy"][alive] += st["hv"][alive] * dt
+        # Sway is a function of the heart's own height, not of wall time, so
+        # it traces a fixed path upward instead of shimmying in place.
+        st["hx"][alive] += np.sin(st["hy"][alive] * np.float32(5.0)) * dt * np.float32(0.09)
+        st["hs"][alive] *= np.float32(math.exp(-max(ctx.dt, 0.0) / 1.9))
+
+    for i in np.flatnonzero(alive):
+        s = float(st["hs"][i])
+        if s < 0.035:
+            st["hy"][i] = 9.0
+            continue
+        px, py = float(st["hx"][i]), float(st["hy"][i])
+        # Bound the work to the heart's own box: at 400x100 a small heart is
+        # a few percent of the grid, and evaluating the implicit curve over
+        # the whole field for each of two dozen of them is most of a frame.
+        r = s * 1.6
+        c0 = int(max(0, (px - r + 1.0) * 0.5 * (dc - 1)))
+        c1 = int(min(dc, (px + r + 1.0) * 0.5 * (dc - 1) + 2))
+        r0 = int(max(0, (1.0 - (py + r)) * 0.5 * (dr - 1)))
+        r1 = int(min(dr, (1.0 - (py - r)) * 0.5 * (dr - 1) + 2))
+        if c1 <= c0 or r1 <= r0:
+            continue
+        sx = (gx[:, c0:c1] - np.float32(px)) / np.float32(s)
+        sy = (gy[r0:r1, :] - np.float32(py)) / np.float32(s) * np.float32(1.15)
+        qq = sx * sx + sy * sy - np.float32(1.0)
+        ff = qq * qq * qq - sx * sx * sy * sy * sy
+        sub = field[r0:r1, c0:c1]
+        np.maximum(sub, np.where(ff <= 0.0, np.float32(0.9), np.float32(0.0)), out=sub)
+
+    codes = pack_braille(field > 0.0)
+    idx = ctx.ramp(np.clip(cell_max(field), 0.0, 1.0))
+    return codes, idx

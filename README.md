@@ -7,7 +7,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-00c853)](https://github.com/MrEmoji27/spektr/blob/main/LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20·%20Linux%20·%20macOS-546e7a)](#how-it-captures-audio)
-[![Modes](https://img.shields.io/badge/render%20modes-44-ff6d00)](#modes)
+[![Modes](https://img.shields.io/badge/render%20modes-47-ff6d00)](#modes)
 [![Themes](https://img.shields.io/badge/themes-54-7c4dff)](#themes)
 [![Built with Textual](https://img.shields.io/badge/built%20with-Textual-5e35b1)](https://textual.textualize.io/)
 
@@ -21,7 +21,7 @@ spektr draws it: overlapped FFTs across 32 log-spaced bands (settable) from 50 H
 out the way cava does it, rendered with braille sub-characters so the picture moves at
 four times the vertical resolution of a text cell.
 
-**Forty-four render modes. Fifty-four themes. 60 fps, or your display's.**
+**Forty-seven render modes. Fifty-four themes. 60 fps, or your display's.**
 
 ## Install
 
@@ -114,6 +114,8 @@ Listed in the order the picker cycles them.
 | **VFD** | vacuum-fluorescent bargraph with phosphor afterglow | **Ember** | a coal bed burning by band, sparks off the hot spots |
 | **Strings** | plucked strings, bowed by their own band | **Murmuration** | a flock wheeling and scattering with the beat |
 | **Needle** | analogue VU — one sweeping needle, one red zone | **Chladni Extreme** | the plate driven past its modes — morphs and escalates |
+| **Kaleidoscope** | radial mirror symmetry — the wedge count follows the spectrum | **Dither** | the spectrum as a dithered field, in one-bit crosshatch |
+| **Valentine** | a heart that beats with the track, trailing smaller ones upward | | |
 
 Vinyl, Rain and Ember are the lofi group — a
 shared *look* (warm objects, soft edges, nothing strobing) rather than a
@@ -121,8 +123,8 @@ shared reactivity budget. Each one maps real band data into its geometry,
 so what the music changes is what the object is doing, not just how bright
 the picture is.
 
-A forty-fifth entry, **None**, is registered as the off switch — it draws nothing.
-That is why the test output counts 45 modes against the forty-four listed here.
+A forty-eighth entry, **None**, is registered as the off switch — it draws nothing.
+That is why the test output counts 48 modes against the forty-seven listed here.
 
 Still frames of a few of them, straight from the render path: **[docs/gallery.md](https://github.com/MrEmoji27/spektr/blob/main/docs/gallery.md)**.
 
