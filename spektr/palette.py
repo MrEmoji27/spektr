@@ -127,6 +127,49 @@ def contrast_ratio(a, b) -> float:
     return (hi + 0.05) / (lo + 0.05)
 
 
+#: A compact set of named colours for the theme editor's colour picker.
+#: Keys are what the picker searches and what ``resolve_colour`` accepts —
+#: CSS-flavoured names with familiar hexes, biased toward colours that read
+#: as anchors on a dark background (the picker's real audience is the three
+#: ramp slots), with a few light neutrals for fg/bg.
+NAMED_COLOURS: dict[str, str] = {
+    "black": "#000000", "grey": "#808080", "silver": "#c0c0c0", "white": "#ffffff",
+    "brown": "#8b4513", "maroon": "#800000", "olive": "#808000",
+    "red": "#ff0000", "crimson": "#dc143c", "scarlet": "#ff2400", "rust": "#b7410e",
+    "tomato": "#ff6347", "coral": "#ff7f50", "salmon": "#fa8072",
+    "orange": "#ff7f00", "amber": "#ffb000", "gold": "#ffd700", "khaki": "#c3b091",
+    "yellow": "#ffff00", "lime": "#7fff00", "chartreuse": "#ccff00",
+    "green": "#00cc33", "emerald": "#00c853", "mint": "#00ff7f",
+    "teal": "#00b8a8", "turquoise": "#40e0d0", "cyan": "#00ffff",
+    "sky": "#3aa0ff", "azure": "#1e90ff", "royal": "#4169e1", "blue": "#0000ff",
+    "navy": "#000080", "indigo": "#4b0082", "violet": "#8a2be2",
+    "purple": "#a020f0", "orchid": "#da70d6", "magenta": "#ff00ff",
+    "pink": "#ff69b4", "hot pink": "#ff1493", "rose": "#ff2e88", "wine": "#722f37",
+    "lavender": "#b57edc", "slate": "#708090", "champagne": "#f7e7ce",
+}
+
+
+def resolve_colour(text: str) -> str | None:
+    """Free text -> a canonical ``#rrggbb``, or None if it is not a colour.
+
+    Accepts a name from :data:`NAMED_COLOURS`, ``#rrggbb``, ``#rgb``, or bare
+    ``rrggbb``/``rgb``. This is the hex entry's validator — None keeps the
+    prompt open rather than committing garbage. Unlike ``hex_to_rgb`` there
+    is no fallback colour: a typo is a typo, not a new favourite white.
+    """
+    t = str(text).strip()
+    if not t:
+        return None
+    low = t.lower()
+    if low in NAMED_COLOURS:
+        return NAMED_COLOURS[low]
+    if t.startswith("#"):
+        t = t[1:]
+    if len(t) in (3, 6) and all(c in "0123456789abcdefABCDEF" for c in t):
+        return "#" + (t if len(t) == 6 else "".join(c * 2 for c in t)).lower()
+    return None
+
+
 #: A ramp anchor closer than this to its own background renders as background.
 #: ``infrared`` shipped at 0.18 against every other theme's 0.27 or higher.
 MIN_ANCHOR_DISTANCE = 0.18
@@ -852,6 +895,16 @@ class ThemeDraft:
         values = [h, s, lum]
         values[i] = (values[i] + delta) % 1.0 if i == 0 else min(1.0, max(0.0, values[i] + delta))
         self._hsl[slot] = (values[0], values[1], values[2])
+
+    def set_slot(self, slot: str, colour: str) -> None:
+        """Replace one slot outright from a hex value — the picker's path.
+
+        The editor is otherwise all nudges; a picked colour has to land
+        somewhere, and converting once here means the nudge rows pick up from
+        exactly the chosen colour (see the docstring for why the draft lives
+        in HSL rather than hex).
+        """
+        self._hsl[slot] = hex_to_hsl(colour)
 
     def to_theme(self, name: str | None = None) -> "Theme":
         return Theme(

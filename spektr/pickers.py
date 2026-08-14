@@ -23,6 +23,8 @@ from textual.containers import Vertical
 from textual.widget import Widget
 from textual.widgets import Input, Label, OptionList
 
+from .palette import resolve_colour
+
 
 def _fuzzy(query: str, candidate: str) -> bool:
     """Subsequence match — 'ctp' finds 'catppuccin'."""
@@ -109,8 +111,13 @@ class Picker(Widget):
         line = f"{mark}{name}"
         return f"{line}\n    [dim]{extra}[/dim]" if extra else line
 
+    def _match(self, query: str, item: str) -> bool:
+        """Whether an item survives the filter. ColourPicker overrides this
+        to also match a colour's display name."""
+        return _fuzzy(query, item)
+
     def _repopulate(self, query: str = "") -> None:
-        self._shown = [i for i in self._items if _fuzzy(query, i)]
+        self._shown = [i for i in self._items if self._match(query, i)]
         ol = self.query_one("#list", OptionList)
         ol.clear_options()
         if self._shown:
@@ -159,6 +166,40 @@ class Picker(Widget):
         if cb is not None:
             self._on_done = None
             cb(value)
+
+
+class ColourPicker(Picker):
+    """A :class:`Picker` over hex colours, shown with names and a swatch.
+
+    The items are the hex strings themselves, so ``on_done`` hands back the
+    exact colour to apply; ``names`` maps each hex to a display name, which
+    the filter also searches — typing "red" finds ``#ff0000``. The swatch is
+    a marked-up inline block that OptionList renders as a real colour patch:
+    the point of a colour picker is to see the colour before choosing it.
+    """
+
+    def __init__(
+        self,
+        title: str,
+        colours: Sequence[str],
+        names: dict[str, str],
+        current: str | None = None,
+        on_preview: Callable[[str], None] | None = None,
+        on_done: Callable[[str | None], None] | None = None,
+    ):
+        super().__init__(
+            title, list(colours), current=current,
+            on_preview=on_preview, on_done=on_done,
+        )
+        self._names = dict(names)
+
+    def _match(self, query: str, item: str) -> bool:
+        return _fuzzy(query, item) or _fuzzy(query, self._names.get(item, ""))
+
+    def _label_for(self, colour: str) -> str:
+        name = self._names.get(colour, colour)
+        mark = "▸ " if colour == self._current else "  "
+        return f"{mark}{name:<10} [on {colour}]      [/on] {colour}"
 
 
 class Setting:
@@ -309,6 +350,11 @@ class SettingsPanel(Widget):
             cb()
 
 
+#: Sentinel: ``NamePrompt._resolve`` returns it to keep the prompt open
+#: rather than committing anything.
+_KEEP_OPEN = object()
+
+
 class NamePrompt(Widget):
     """A single text field for naming something new — save-as, not pick-one.
 
@@ -344,7 +390,22 @@ class NamePrompt(Widget):
         self.query_one("#name", Input).focus()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        self._finish(event.value.strip() or None)
+        value = self._resolve(event.value)
+        if value is _KEEP_OPEN:
+            return
+        self._finish(value)
+
+    def _resolve(self, text: str) -> str | None | object:
+        """Hook: what to commit for the typed text.
+
+        Returns the value to commit, ``None`` for commit-nothing (enter on an
+        empty field), or :data:`_KEEP_OPEN` to keep the prompt open. Textual
+        runs a message handler on every MRO class that defines it, so the
+        validation lives here instead of in a subclass ``on_input_submitted``
+        — otherwise the parent's handler commits whatever the subclass
+        rejected.
+        """
+        return text.strip() or None
 
     def action_cancel(self) -> None:
         self._finish(None)
@@ -354,3 +415,34 @@ class NamePrompt(Widget):
         if cb is not None:
             self._on_done = None
             cb(value)
+
+
+class HexPrompt(NamePrompt):
+    """A colour entry field — #rrggbb, #rgb, or a colour name.
+
+    NamePrompt's shape and ``on_done`` contract, with validation via the
+    ``_resolve`` hook: the input is resolved to a canonical hex before it is
+    handed back, and text that is not a colour keeps the prompt open with an
+    error rather than committing nothing. Same docked-overlay shape, so it
+    drops into ``_open_overlay`` unchanged.
+    """
+
+    def __init__(
+        self,
+        title: str,
+        current: str = "",
+        on_done: Callable[[str | None], None] | None = None,
+    ):
+        placeholder = f"#rrggbb — e.g. {current}" if current else "#rrggbb or a colour name"
+        super().__init__(title, placeholder=placeholder, on_done=on_done)
+
+    def _resolve(self, text: str) -> str | None | object:
+        colour = resolve_colour(text)
+        if colour is None and text.strip():
+            self.notify(
+                f"{text.strip()!r} is not a colour — try #rrggbb or a name",
+                severity="error",
+                timeout=3,
+            )
+            return _KEEP_OPEN
+        return colour

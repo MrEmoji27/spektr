@@ -13,7 +13,7 @@ from . import __version__, asciiart, config, nowplaying
 from . import modes as mode_registry
 from . import palette as palette_mod
 from . import presets as presets_module
-from .pickers import NamePrompt, Picker, Setting, SettingsPanel
+from .pickers import ColourPicker, HexPrompt, NamePrompt, Picker, Setting, SettingsPanel
 from .widget import AudioVisualizer
 
 #: How often shuffle picks a new mode, in seconds — long enough to actually
@@ -287,11 +287,14 @@ class Spektr(App):
         of its own. Everything that configures spektr lives behind ``c``; a
         second entry point would be one more thing to know about for no gain.
 
-        Deliberately not a colour-picker widget. The visualiser is already
-        running behind the panel with real audio in it, so the feature is
-        *applying every change immediately* — you judge a theme by watching
-        bars move in it, not by looking at six swatches. Every keypress rebuilds
-        the draft and pushes it straight at the palette.
+        Colour *selection* rides the same live-preview rule as the nudges.
+        The "swatches" row opens a named-colour picker for whichever slot the
+        colour row is on, and the "hex" row opens a text field that takes
+        ``#rrggbb``, ``#rgb`` or a colour name — both push straight into the
+        draft and repaint the visualiser behind the panel, so you judge a
+        pick the same way you judge a nudge: by watching bars move in it,
+        not by looking at six swatches. Selection replaces the walk; the
+        three nudge rows stay for the fine adjustment after it.
 
         Four slots, not six. A theme has six, but low/mid/high/accent is what
         someone who has not read the ramp documentation can pick meaningfully;
@@ -349,33 +352,52 @@ class Spektr(App):
             state["slot"] = min(state["slot"], len(draft.slots) - 1)
             apply()
 
-        rows = [
-            Setting(
-                "slot", "colour", [], show_slot, None,
-                "which colour the rows below change",
-                step=step_slot,
-                live=lambda: None,
-            ),
-            Setting("hue", "hue", [], component("h"), None, "",
-                    step=nudge("h", 0.02), live=lambda: None),
-            Setting("sat", "saturation", [], component("s"), None, "",
-                    step=nudge("s", 0.04), live=lambda: None),
-            Setting("lum", "lightness", [], component("l"), None, "",
-                    step=nudge("l", 0.03), live=lambda: None),
-            Setting(
-                "slots", "slots", [], show_slots, None,
-                "four is enough for a working theme; six if you want the "
-                "background and text picked by hand",
-                step=step_slots,
-                live=lambda: None,
-            ),
-            Setting(
-                "visible", "check", [], show_warning, None,
-                "the same rule the test suite applies to built-in themes",
-                step=lambda _d: None,
-                live=lambda: None,
-            ),
-        ]
+        def swatches() -> list[tuple[str, str]]:
+            """(hex, label) pairs for the picker: the base theme's own colours
+            first, then the named set, deduped by hex keeping the first label."""
+            seen: dict[str, str] = {}
+            for slot in draft.slots:
+                seen.setdefault(draft.hex_of(slot), f"{draft.name} {slot}")
+            for name, colour in palette_mod.NAMED_COLOURS.items():
+                seen.setdefault(colour, name)
+            return list(seen.items())
+
+        def open_picker() -> None:
+            def preview(colour: str) -> None:
+                draft.set_slot(slot_name(), colour)
+                apply()
+
+            def picked(colour: str | None) -> None:
+                if colour is not None:
+                    draft.set_slot(slot_name(), colour)
+                    apply()
+                self.call_after_refresh(show_panel)
+
+            self._open_overlay(
+                ColourPicker(
+                    f"colour — {slot_name()}",
+                    [h for h, _ in swatches()],
+                    dict(swatches()),
+                    current=draft.hex_of(slot_name()),
+                    on_preview=preview,
+                ),
+                picked,
+            )
+
+        def open_hex() -> None:
+            def got(colour: str | None) -> None:
+                if colour is not None:
+                    draft.set_slot(slot_name(), colour)
+                    apply()
+                self.call_after_refresh(show_panel)
+
+            self._open_overlay(
+                HexPrompt(
+                    f"hex — {slot_name()}",
+                    current=draft.hex_of(slot_name()),
+                ),
+                got,
+            )
 
         def done() -> None:
             def named(name: str | None) -> None:
@@ -396,8 +418,53 @@ class Spektr(App):
 
             self._open_overlay(NamePrompt("name this theme", draft.name), named)
 
+        def rows() -> list[Setting]:
+            return [
+                Setting(
+                    "slot", "colour", [], show_slot, None,
+                    "which colour the rows below change",
+                    step=step_slot,
+                    live=lambda: None,
+                ),
+                Setting("hue", "hue", [], component("h"), None, "",
+                        step=nudge("h", 0.02), live=lambda: None),
+                Setting("sat", "saturation", [], component("s"), None, "",
+                        step=nudge("s", 0.04), live=lambda: None),
+                Setting("lum", "lightness", [], component("l"), None, "",
+                        step=nudge("l", 0.03), live=lambda: None),
+                Setting(
+                    "swatches", "swatches", [], str, None,
+                    "named colours for the selected slot — the nudge rows "
+                    "above still fine-tune",
+                    step=lambda delta: self.call_after_refresh(open_picker) if delta > 0 else None,
+                    live=lambda: f"→ pick for {slot_name()}",
+                ),
+                Setting(
+                    "hex", "hex", [], str, None,
+                    "#rrggbb, #rgb, or a colour name",
+                    step=lambda delta: self.call_after_refresh(open_hex) if delta > 0 else None,
+                    live=lambda: "→ type a colour",
+                ),
+                Setting(
+                    "slots", "slots", [], show_slots, None,
+                    "four is enough for a working theme; six if you want the "
+                    "background and text picked by hand",
+                    step=step_slots,
+                    live=lambda: None,
+                ),
+                Setting(
+                    "visible", "check", [], show_warning, None,
+                    "the same rule the test suite applies to built-in themes",
+                    step=lambda _d: None,
+                    live=lambda: None,
+                ),
+            ]
+
+        def show_panel() -> None:
+            self._open_overlay(SettingsPanel(rows(), {}), done)
+
         apply()
-        self._open_overlay(SettingsPanel(rows, {}), done)
+        show_panel()
 
     # ── shuffle ──────────────────────────────────────────────────────────────
     # A screensaver toggle: pick a random mode every SHUFFLE_MODE_SECONDS, and
