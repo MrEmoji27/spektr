@@ -767,13 +767,13 @@ def tunnel_in(ctx: Ctx):
         band = np.abs(near_r - r) < w
         if not band.any():
             continue
-        a = float(st["amp"][i]) * (0.35 + 0.65 * (1.0 - z))
+        a = float(st["amp"][i]) * (0.50 + 0.50 * (1.0 - z))
         np.maximum(glow, np.where(band, np.float32(a), np.float32(0.0)), out=glow)
 
     lit |= glow > 0.2
     lit &= dist > 1.2
     # Dither the far field only: near the edge the rings should be solid.
-    lit &= noise((dr, dc), ctx.frame) < (0.35 + near_r * 0.8)
+    lit &= noise((dr, dc), ctx.frame) < (0.55 + near_r * 0.45)
 
     codes = pack_braille(lit)
     cidx = ctx.ramp(cell_max(np.where(lit, glow * (0.55 + 0.45 * nrg), 0.0)))
