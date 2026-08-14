@@ -1172,9 +1172,35 @@ def valentine(ctx: Ctx):
         sy = max(cy, 1.0)
         x = (np.arange(dc, dtype=np.float32) - np.float32(cx)) / np.float32(sx)
         y = (np.float32(cy) - np.arange(dr, dtype=np.float32)) / np.float32(sy)
-        return x[None, :], y[:, None]
+        gx, gy = x[None, :], y[:, None]
 
-    gx, gy = ctx.scratch("valentine_geo", geo)
+        # Outline radius per ray of the unit heart, for the depth inside the
+        # main heart. The heart is star-shaped about the origin, so along any
+        # ray the outline sits at one radius r_h(theta), and scaling the heart
+        # by s scales that radius by exactly s -- which makes 1 - rad/r_h a
+        # clean interior depth. Built in the offset space (u = gx, w = gy +
+        # 0.05), where the heart is the fixed curve (u^2 + (1.15 w)^2 - 1)^3 -
+        # u^2 (1.15 w)^3 <= 0: the per-frame scale divides BOTH coordinates,
+        # so the scaled heart is exactly the unit curve scaled by s.
+        na = 1024
+        th = np.linspace(-math.pi, math.pi, na, endpoint=False)
+        rs = np.linspace(0.02, 1.60, 640)[:, None]
+        u = rs * np.cos(th)[None, :]
+        v = rs * np.sin(th)[None, :] * np.float32(1.15)
+        q = u * u + v * v - np.float32(1.0)
+        ins = (q * q * q - u * u * v * v * v) <= 0.0
+        # Outermost radius still inside along each ray, not the first
+        # crossing: the convention Locket uses, and the safe one if a ray
+        # ever grazes the notch at the top of the heart.
+        idx = ins.shape[0] - 1 - np.argmax(ins[::-1], axis=0)
+        r_h = np.where(ins.any(axis=0), rs[:, 0][idx], 0.02)
+
+        w = gy + np.float32(0.05)
+        rad = np.sqrt(gx * gx + w * w)
+        ai = ((np.arctan2(w, gx) + math.pi) / (2.0 * math.pi) * na).astype(np.int32) % na
+        return gx, gy, r_h, rad, ai
+
+    gx, gy, _rh, _rad, _ai = ctx.scratch("valentine_geo", geo)
 
     st = ctx.scratch("valentine", lambda: {
         "beat": 0.0, "dub": -1.0, "acc": 0.0,
