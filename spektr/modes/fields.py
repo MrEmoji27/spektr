@@ -767,8 +767,11 @@ def kaleidoscope(ctx: Ctx):
     once per frame — a few thousand exp() calls instead of one per dot. The
     band levels are cos-blended into the table along the angle axis, so the
     per-dot path is one gather that returns the brightness profile already
-    modulated by the band ramp — two gathers and a per-dot multiply avoided
-    at 320k dots a frame. The widths are clamped in dot terms so a shard
+    modulated by the band ramp — two gathers and a per-dot multiply avoided.
+    The gather runs on the left half of the |x|-symmetric grid and is
+    mirrored for the right, so it sees half the dots: the two halves compute
+    the same values bit-for-bit, and mirroring costs a copy, not a recompute.
+    The widths are clamped in dot terms so a shard
     stays a handful of dots across at any terminal size, and the field stays
     sparse — bright, narrow features on a dark ground — so the half-blocks
     read as distinct solid shards rather than the aliased noise a smooth
@@ -863,8 +866,6 @@ def kaleidoscope(ctx: Ctx):
         fd["k"] = k
     folded = fd["folded"]
 
-    src = frac(folded + np.float32(spin * k / (2 * math.pi)))
-
     # The source slice: bright shards, each a small 2-D Gaussian in the
     # (radius, wedge-angle) plane, sampled on a (radius, angle) table once
     # per frame. The band ramp — cos-blended between neighbours like the
@@ -916,9 +917,23 @@ def kaleidoscope(ctx: Ctx):
     lut = lv[bi] * (1.0 - tm) + lv[(bi + 1) % 8] * tm
     table *= (0.55 + lut * 0.9)[None, :]
 
+    # The source slice is sampled on the LEFT half of the symmetric grid and
+    # mirrored: dot (x, y) and its L/R mirror (dc - 1 - x, y) gather the same
+    # table cell bit-for-bit, so the right half of the brightness field is a
+    # reversed copy of the left. That halves the per-dot path — the frac,
+    # the index arithmetic and the gather — without averaging, and the
+    # rendered frame stays symmetric by construction.
+    hw = dc // 2
+    src = frac(folded[:, :hw] + np.float32(spin * k / (2 * math.pi)))
     iu = (src * np.float32(nu)).astype(np.int32) & (nu - 1)
-    ir = np.minimum((r * np.float32(nr)).astype(np.int32), nr - 1)
-    bright = (table.ravel()[ir * nu + iu] * (0.55 + ctx.energy * 0.9)).astype(np.float32)
+    ir = ctx.scratch(
+        "kaleido_ir",
+        lambda: np.minimum((r[:, :hw] * np.float32(nr)).astype(np.int32), nr - 1),
+    )
+    b_half = table.ravel()[ir * nu + iu] * (0.55 + ctx.energy * 0.9)
+    bright = np.empty((dr, dc), dtype=np.float32)
+    bright[:, :hw] = b_half
+    bright[:, hw:] = b_half[:, ::-1]
 
     # Two colour samples per text cell, one per half-row: the top half is the
     # max over the cell's top two dot rows, the bottom half over its bottom
