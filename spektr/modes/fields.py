@@ -1145,9 +1145,9 @@ def valentine(ctx: Ctx):
 
     The shape is the standard implicit heart, ``(x^2 + y^2 - 1)^3 <= x^2 y^3``,
     which is bilaterally symmetric by construction — its own mirror, with no
-    folding needed. Sampled as a signed field so the edge can be found by
-    thresholding rather than by tracing an outline, and so beating is a matter
-    of scaling the coordinates rather than redrawing anything.
+    folding needed. Tested against a radius table built from the curve once
+    per grid size, so beating is a matter of scaling the radius rather than
+    redrawing anything.
 
     Smaller hearts rise from it, spawned on beats and released with a sideways
     drift, shrinking as they climb. They are also what keeps the mode alive
@@ -1242,6 +1242,16 @@ def valentine(ctx: Ctx):
     # a bigger scale means a bigger heart. The y offset lifts it slightly:
     # the curve's own centroid sits below the origin and it looks dropped
     # without it.
+    #
+    # Depth inside the shape is measured along rays from the origin, not by
+    # rescaling the polynomial: its magnitude is not a distance, it collapses
+    # toward zero down the seam where the lobes meet and explodes away from
+    # it, so a rescaled reading streaks the middle of the heart with a colour
+    # band of its own. The heart is star-shaped about the origin, so each ray
+    # crosses the outline once, at a radius r_h(theta) built in geo() against
+    # these constants, and 1 - rad / (scale * r_h) is smooth everywhere and
+    # zero exactly on the rim. So the middle is solid and the rim recedes
+    # rather than the whole silhouette being one flat value.
     inv = np.float32(1.0) / np.float32(scale)
     t = rad * inv / r_h[ai]
     depth = np.clip(np.float32(1.0) - t, np.float32(0.0), np.float32(1.0)).astype(np.float32)
