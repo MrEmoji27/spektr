@@ -299,6 +299,13 @@ class OnsetDetector:
     spectral change and not a beat, so the negative half is discarded rather
     than taken as magnitude.
 
+    Peaks are picked per sub-band and merged, not from one collapsed curve.
+    A mean over the spectrum is owned by whatever moves the most bands at
+    once, which on dense percussion is the hi-hats, and a kick that moves
+    only the bottom of the spectrum disappears into it however hard it hits.
+    Splitting the bass off and giving it its own threshold is what lets the
+    two be heard at the same time. See :attr:`SUB_SPLITS` and :meth:`feed`.
+
     Log compression before differencing. Raw magnitudes make the flux scale
     with absolute level, so a quiet passage detects nothing and a loud one
     detects everything; comparing log spectra measures *proportional* change,
@@ -371,6 +378,35 @@ class OnsetDetector:
     #: frame's mean. Without it, a band that has been silent divides its own
     #: numerical noise by nearly zero and manufactures detections.
     WHITEN_FLOOR = 0.8
+
+    #: Where the spectrum is cut into sub-bands, as fractions of the band
+    #: index. See :meth:`feed`: each sub-band gets its own detection function,
+    #: its own threshold and its own peak picking, and a hit found in any one
+    #: of them is a hit.
+    #:
+    #: Fractions of the *index* rather than frequencies, because the band plan
+    #: is exponential by construction — a fixed fraction of the index is a
+    #: fixed fraction of the log-frequency range whatever ``set_bands`` was
+    #: asked for. 0.125 lands on band 4 of the default 32, i.e. 97 Hz, just
+    #: under the ``BASS_CUT_HZ`` the band plan itself hands over at: the kick
+    #: fundamental below, everything else above.
+    #:
+    #: One cut, because that is all the corpus supports. Swept over the band
+    #: it falls on: band 2 (65 Hz) costs precision — the bottom two bands are
+    #: too narrow to be anything but rumble, and they fire on breakbeat and
+    #: note_stream alike; bands 3 and 4 both score F 0.884 on breakbeat and
+    #: 0.948 overall; band 5 (118 Hz) gives two hits back and band 6 seven,
+    #: because 118-194 Hz carries as much hi-hat and snare energy as it does
+    #: kick and the separation is lost. Band 4 is taken over band 3 for the
+    #: frequency it names.
+    #:
+    #: Further cuts were measured and do nothing: two, three, five and seven
+    #: of them all score exactly 0.948, because above 97 Hz no sub-band ever
+    #: raises a candidate the whole-spectrum curve missed. They are left out
+    #: rather than kept as insurance — every extra curve is another chance to
+    #: peak on noise, and each one roughly doubles the candidate load the
+    #: region gates have to reject.
+    SUB_SPLITS = (0.125,)
 
     #: Seconds of linear band-sum history kept for the region gates. Long
     #: enough for the past-quietness window (REGION_PAST_HI) plus the peak
@@ -482,11 +518,18 @@ class OnsetDetector:
         self._hist: np.ndarray | None = None      # circular flux history
         self._hi = 0
         self._filled = 0
-        #: last three (time, flux) samples — a peak is picked from the middle
-        #: one, so detection lags by a single hop (~5.3 ms) in exchange for
-        #: not firing on the leading edge of every slow swell.
-        self._win: list[tuple[float, float]] = []
-        self._peak = 1e-9
+        #: last ``_span`` (time, curve) samples — a peak is picked from the
+        #: middle one, so detection lags by ``PEAK_SPAN`` hops (~5.3 ms each)
+        #: in exchange for not firing on the leading edge of every slow swell.
+        #: ``curve`` is one value per detection function: the whole spectrum's
+        #: first, then one per sub-band.
+        self._win: list[tuple[float, np.ndarray]] = []
+        self._peak: np.ndarray | None = None
+        #: Where each sub-band starts, as indices into the band vector, with
+        #: the end appended. Built on the first spectrum, since the band count
+        #: is settable and only the spectrum knows it.
+        self._edges: np.ndarray | None = None
+        self._widths: np.ndarray | None = None
         self._last_t = -1e9
         self._beats: list[float] = []
         self._span = self.PEAK_SPAN * 2 + 1
@@ -548,40 +591,90 @@ class OnsetDetector:
 
         # Two readings of the same flux, mixed.
         #
-        # The flat sum asks "how much did the spectrum move", and whichever
-        # band moves most dominates it. On a breakbeat that is always the
-        # kick, so a hi-hat -- a large jump within its own quiet band, and an
-        # onset by any musical reading -- never clears a bar the kick has set.
-        # Recall on dense fast material was 0.396 that way.
+        # The flat sum asks "how much did the spectrum move", and whatever
+        # moves the most bands at once dominates it -- so an event confined to
+        # a few bands, however hard it hits inside them, never clears a bar
+        # the broadband one has set. Recall on dense fast material was 0.396
+        # that way. (Which instrument loses depends on the material, and it is
+        # worth not guessing: on the corpus's breakbeat the hi-hats are the
+        # broadband ones and the 55 Hz kick is what disappears. See the
+        # sub-band note below, which is what actually fixes this; the mix
+        # below only softens it.)
         #
         # The whitened reading divides each band's flux by a slow mean of its
-        # own, asking instead "how unusual is this, for this band". That finds
-        # the hats. On its own it is much worse overall, though: every quiet
+        # own, asking instead "how unusual is this, for this band". That gives
+        # a narrow event a voice. On its own it is much worse overall: every quiet
         # band gets a vote as loud as the kick's, so the gaps between beats
         # fill with detections. Pure whitening scored F 0.706 against the flat
         # sum's 0.805, with false positives going from 28 to 101.
         #
         # Neither question is the right one alone. A third of the whitened
-        # reading on top of the flat one keeps the kick in charge while
-        # letting a hat be heard: F 0.855, better than either, and better than
-        # the reference detector in the corpus at 0.817.
+        # reading on top of the flat one keeps the loudest mover in charge
+        # while letting a narrow one be heard: F 0.855, better than either,
+        # and better than the reference detector in the corpus at 0.817.
         if self._band_avg is None or self._band_avg.shape != diff.shape:
             self._band_avg = diff.copy()
+        if self._edges is None or self._edges[-1] != diff.size:
+            self._plan_sub_bands(diff.size)
+
+        # ── one curve for the whole spectrum, one per sub-band ──
+        #
+        # Collapsing the spectrum to a single number *before* picking peaks is
+        # what put a ceiling on dense material, and it is a structural ceiling
+        # rather than a threshold that wants lowering. Whichever part of the
+        # spectrum moves most owns the scalar, and on a breakbeat that is the
+        # hats: a hi-hat is a broadband noise burst that lights all thirty-two
+        # bands at once, so its mean flux towers over a 55 Hz kick, which
+        # moves a third of them and leaves the rest untouched.
+        #
+        # Measured on that material: all eight kicks and half the snares
+        # landed *below the track's own median flux* — not marginal candidates
+        # a looser bar would admit, but events the mean had already averaged
+        # away. Lowering the threshold cannot reach them and neither can more
+        # whitening; the information is destroyed by the mean itself.
+        #
+        # So peaks are picked per sub-band and merged. Each sub-band carries
+        # its own history, its own median-plus-deviation threshold and its own
+        # decaying peak, which is what lets a kick be judged against other
+        # bass rather than against a cymbal. A hit found in any of them is a
+        # hit, subject to the one shared refractory and the region gates, so
+        # one drum cannot be reported once per sub-band it happens to touch.
+        #
+        # The whole-spectrum curve is kept as the first of them rather than
+        # replaced. It is the one that hears a broadband transient no single
+        # sub-band owns, it is what :attr:`flux` continues to publish so modes
+        # reading a continuous "how percussive is now" see no change, and
+        # keeping it makes the change purely additive: every onset the scalar
+        # used to find is still on the table.
         flat = float(diff.sum()) / diff.size
         floor = max(flat * self.WHITEN_FLOOR, 1e-6)
         whitened = float(np.mean(diff / np.maximum(self._band_avg, floor)))
+
+        sub_flat = np.add.reduceat(diff, self._edges[:-1]) / self._widths
+        sub_floor = np.maximum(sub_flat * self.WHITEN_FLOOR, 1e-6)
+        ratio = diff / np.maximum(self._band_avg,
+                                  np.repeat(sub_floor, self._widths))
+        sub_whit = np.add.reduceat(ratio, self._edges[:-1]) / self._widths
+
         self._band_avg += (diff - self._band_avg) * 0.02
-        raw = (1.0 - self.WHITEN_MIX) * flat + self.WHITEN_MIX * whitened
+
+        mix = self.WHITEN_MIX
+        curve = np.empty(1 + sub_flat.size)
+        curve[0] = (1.0 - mix) * flat + mix * whitened
+        curve[1:] = (1.0 - mix) * sub_flat + mix * sub_whit
+        raw = float(curve[0])
 
         # Peak decays so ``strength`` means "hard, for this passage" rather
         # than "hard, compared with the loudest thing since startup". Half a
         # second-ish of memory: 0.996 per hop at 187.5 Hz is ~0.47 a second.
-        self._peak = max(raw, self._peak * 0.996)
-        self.flux = min(1.0, raw / self._peak) if self._peak > 0 else 0.0
+        if self._peak is None or self._peak.shape != curve.shape:
+            self._peak = np.full(curve.shape, 1e-9)
+        np.maximum(curve, self._peak * 0.996, out=self._peak)
+        self.flux = min(1.0, raw / self._peak[0]) if self._peak[0] > 0 else 0.0
 
-        if self._hist is None:
+        if self._hist is None or self._hist.shape[1] != curve.size:
             n = max(8, int(self.HISTORY_S * 187.5))
-            self._hist = np.zeros(n, dtype=np.float64)
+            self._hist = np.zeros((n, curve.size), dtype=np.float64)
             self._hi = 0
             self._filled = 0
 
@@ -604,19 +697,30 @@ class OnsetDetector:
             # over the silence behind it.
             step = 1.0 / 187.5
             self._win = [
-                (now - (self.PEAK_SPAN - k) * step, 0.0)
+                (now - (self.PEAK_SPAN - k) * step, np.zeros(curve.size))
                 for k in range(self.PEAK_SPAN)
             ]
 
-        self._win.append((now, raw))
+        self._win.append((now, curve))
         if len(self._win) > self._span:
             self._win.pop(0)
 
         if self._filled >= 8 and len(self._win) == self._span:
             hist = self._hist[: self._filled]
-            med = float(np.median(hist))
-            mad = float(np.mean(np.abs(hist - med)))
-            thresh = max(med + self.K_MAD * mad, self.PEAK_FRAC * self._peak)
+            # The median, by partition rather than np.median. Identical
+            # results — np.median partitions too — but it is asked for one
+            # column per curve now, and np.median's axis machinery costs
+            # 19 us against this 3 us. That is a third of the whole hop's
+            # budget for a number that has not changed.
+            n_h, k_h = hist.shape[0], hist.shape[0] // 2
+            if n_h % 2:
+                med = np.partition(hist, k_h, axis=0)[k_h]
+            else:
+                part = np.partition(hist, (k_h - 1, k_h), axis=0)
+                med = 0.5 * (part[k_h - 1] + part[k_h])
+            mad = np.mean(np.abs(hist - med), axis=0)
+            thresh = np.maximum(med + self.K_MAD * mad,
+                                self.PEAK_FRAC * self._peak)
 
             t_mid, b = self._win[self.PEAK_SPAN]
             # A peak has to dominate a whole neighbourhood, not merely beat its
@@ -629,25 +733,48 @@ class OnsetDetector:
             #
             # Strictly greater on the left and not less on the right, so a
             # plateau resolves to its first sample rather than firing twice.
-            left = all(b > v for _, v in self._win[: self.PEAK_SPAN])
-            right = all(b >= v for _, v in self._win[self.PEAK_SPAN + 1 :])
+            # Every curve is tested at once and any one of them may raise the
+            # candidate; the refractory below is what keeps a drum that shows
+            # up in two sub-bands from being reported twice.
+            win = np.stack([v for _, v in self._win])
+            left = (win[: self.PEAK_SPAN] < b).all(axis=0)
+            right = (win[self.PEAK_SPAN + 1:] <= b).all(axis=0)
+            fired = left & right & (b > thresh)
             if (
-                left
-                and right
-                and b > thresh
+                fired.any()
                 and t_mid - self._last_t >= self.REFRACTORY_S
                 and self._region_ok(spectrum, t_mid)
             ):
                 self._last_t = t_mid
                 self.seq += 1
-                self.strength = min(1.0, b / self._peak) if self._peak > 0 else 0.0
+                # Strength comes from whichever curve found it, measured
+                # against that curve's own peak — a kick heard by the bass
+                # sub-band is a hard hit even when the whole-spectrum reading
+                # it was drowned in says otherwise.
+                self.strength = float(min(
+                    1.0, np.max(b[fired] / np.maximum(self._peak[fired], 1e-12))
+                ))
                 self._note_beat(t_mid)
 
-        self._hist[self._hi] = raw
+        self._hist[self._hi] = curve
         self._hi = (self._hi + 1) % len(self._hist)
         self._filled = min(self._filled + 1, len(self._hist))
 
         self._update_phase(now)
+
+    # ── sub-bands ──
+    def _plan_sub_bands(self, n: int) -> None:
+        """Cut ``n`` bands into the sub-bands named by SUB_SPLITS.
+
+        Runs once per band count, not per hop. Splits that collapse onto each
+        other at a small band count are dropped rather than left empty, so the
+        detector degrades to the whole-spectrum curve alone rather than
+        dividing by zero.
+        """
+        cuts = sorted({int(round(f * n)) for f in self.SUB_SPLITS})
+        edges = [0] + [c for c in cuts if 0 < c < n] + [n]
+        self._edges = np.array(edges, dtype=np.intp)
+        self._widths = np.diff(self._edges)
 
     # ── region gates ──
     def _region_ok(self, spectrum: np.ndarray, t_mid: float) -> bool:
