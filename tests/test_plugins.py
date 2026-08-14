@@ -111,8 +111,6 @@ def make_ctx(w=60, h=20):
 def check_plugin_system() -> list[str]:
     bad: list[str] = []
     tmp = Path(tempfile.mkdtemp(prefix="spektr-test-"))
-    original = palette.config_dir
-    palette.config_dir = lambda: tmp          # redirect the whole config tree
 
     folder = tmp / "plugins"
     folder.mkdir(parents=True)
@@ -126,7 +124,7 @@ def check_plugin_system() -> list[str]:
             write(folder, name, body)
 
         # ── discovery finds everything, trusts nothing ──
-        found = {p.name: p for p in plugins.discover()}
+        found = {p.name: p for p in plugins.discover(config_dir=tmp)}
         if len(found) != 8:
             bad.append(f"discover found {len(found)} plugins, expected 8")
         if any(p.trusted for p in found.values()):
@@ -134,15 +132,15 @@ def check_plugin_system() -> list[str]:
         print(f"    discovered {len(found)}, all untrusted")
 
         # ── nothing loads until trusted ──
-        plugins.load_all()
+        plugins.load_all(config_dir=tmp)
         if registry.get("TestGood") is not None:
             bad.append("an untrusted plugin was loaded")
         print("    untrusted plugins refused to load")
 
         # ── trust and load ──
         for name in found:
-            plugins.trust(name)
-        loaded = {p.name: p for p in plugins.load_all()}
+            plugins.trust(name, config_dir=tmp)
+        loaded = {p.name: p for p in plugins.load_all(config_dir=tmp)}
 
         if not loaded["good"].loaded:
             bad.append(f"good plugin failed: {loaded['good'].error}")
@@ -173,10 +171,10 @@ def check_plugin_system() -> list[str]:
 
         # ── edit invalidates trust ──
         write(folder, "good", GOOD + "\n# edited\n")
-        p = next(x for x in plugins.discover() if x.name == "good")
+        p = next(x for x in plugins.discover(config_dir=tmp) if x.name == "good")
         if p.trusted:
             bad.append("editing a plugin did not invalidate its approval")
-        plugins.trust("good")
+        plugins.trust("good", config_dir=tmp)
         print("    editing invalidated approval, re-trust worked")
 
         # ── output validation ──
@@ -227,7 +225,6 @@ def check_plugin_system() -> list[str]:
     finally:
         for name in list(found):
             registry.unregister_plugin(name)
-        palette.config_dir = original
         shutil.rmtree(tmp, ignore_errors=True)
 
     return bad

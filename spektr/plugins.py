@@ -36,10 +36,12 @@ FAILURE_LIMIT = 3
 TRUST_FILE = ".trust.json"
 
 
-def plugins_dir() -> Path:
+def plugins_dir(config_dir: Path | None = None) -> Path:
     # resolved through the module rather than a bound name, so the config root
-    # can be redirected (tests, and eventually a --config-dir flag)
-    return palette.config_dir() / "plugins"
+    # can be redirected (tests, and eventually a --config-dir flag) — and the
+    # root itself can be handed in directly by a caller that knows it
+    root = config_dir if config_dir is not None else palette.config_dir()
+    return root / "plugins"
 
 
 @dataclass
@@ -91,20 +93,20 @@ def _digest(path: Path) -> tuple[str, int]:
 
 # ── trust store ──────────────────────────────────────────────────────────────
 
-def _trust_path() -> Path:
-    return plugins_dir() / TRUST_FILE
+def _trust_path(config_dir: Path | None = None) -> Path:
+    return plugins_dir(config_dir) / TRUST_FILE
 
 
-def read_trust() -> dict[str, str]:
+def read_trust(config_dir: Path | None = None) -> dict[str, str]:
     try:
-        data = json.loads(_trust_path().read_text(encoding="utf-8"))
+        data = json.loads(_trust_path(config_dir).read_text(encoding="utf-8"))
         return {str(k): str(v) for k, v in data.items()}
     except Exception:
         return {}
 
 
-def write_trust(store: dict[str, str]) -> None:
-    path = _trust_path()
+def write_trust(store: dict[str, str], config_dir: Path | None = None) -> None:
+    path = _trust_path(config_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(store, indent=2, sort_keys=True), encoding="utf-8")
     try:
@@ -113,29 +115,29 @@ def write_trust(store: dict[str, str]) -> None:
         pass  # windows, or a filesystem without unix modes
 
 
-def trust(name: str) -> tuple[bool, str]:
+def trust(name: str, config_dir: Path | None = None) -> tuple[bool, str]:
     """Approve a plugin's current contents. Returns ``(ok, message)``."""
-    found = {p.name: p for p in discover()}
+    found = {p.name: p for p in discover(config_dir)}
     p = found.get(name)
     if p is None:
-        return False, f"no plugin named {name!r} in {plugins_dir()}"
-    store = read_trust()
+        return False, f"no plugin named {name!r} in {plugins_dir(config_dir)}"
+    store = read_trust(config_dir)
     store[name] = p.digest
-    write_trust(store)
+    write_trust(store, config_dir)
     return True, f"trusted {name} ({p.digest[:12]}…)"
 
 
-def untrust(name: str) -> tuple[bool, str]:
-    store = read_trust()
+def untrust(name: str, config_dir: Path | None = None) -> tuple[bool, str]:
+    store = read_trust(config_dir)
     if store.pop(name, None) is None:
         return False, f"{name} was not trusted"
-    write_trust(store)
+    write_trust(store, config_dir)
     return True, f"revoked trust for {name}"
 
 
-def remove(name: str) -> tuple[bool, str]:
+def remove(name: str, config_dir: Path | None = None) -> tuple[bool, str]:
     """Delete a plugin from disk and forget its approval."""
-    found = {p.name: p for p in discover()}
+    found = {p.name: p for p in discover(config_dir)}
     p = found.get(name)
     if p is None:
         return False, f"no plugin named {name!r}"
@@ -148,23 +150,23 @@ def remove(name: str) -> tuple[bool, str]:
             p.path.unlink()
     except OSError as exc:
         return False, f"could not remove {name}: {exc}"
-    untrust(name)
+    untrust(name, config_dir)
     return True, f"removed {name}"
 
 
 # ── discovery ────────────────────────────────────────────────────────────────
 
-def discover() -> list[Plugin]:
+def discover(config_dir: Path | None = None) -> list[Plugin]:
     """Everything that looks like a plugin, whether or not it is trusted."""
     try:
-        folder = plugins_dir()
+        folder = plugins_dir(config_dir)
         if not folder.is_dir():
             return []
         entries = sorted(folder.iterdir())
     except OSError:
         return []
 
-    store = read_trust()
+    store = read_trust(config_dir)
     out: list[Plugin] = []
     seen: set[str] = set()
 
@@ -252,9 +254,9 @@ def _load_one(p: Plugin) -> None:
     p.loaded = True
 
 
-def load_all() -> list[Plugin]:
+def load_all(config_dir: Path | None = None) -> list[Plugin]:
     """Load every trusted plugin. Safe to call once at startup."""
-    found = discover()
+    found = discover(config_dir)
     for p in found:
         if p.error or not p.trusted:
             continue
@@ -262,11 +264,11 @@ def load_all() -> list[Plugin]:
     return found
 
 
-def reload_all() -> list[Plugin]:
+def reload_all(config_dir: Path | None = None) -> list[Plugin]:
     """Drop every plugin mode and load again — for a `plugins reload` action."""
-    for p in discover():
+    for p in discover(config_dir):
         registry.unregister_plugin(p.name)
-    return load_all()
+    return load_all(config_dir)
 
 
 # ── quarantine ───────────────────────────────────────────────────────────────

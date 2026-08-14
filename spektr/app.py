@@ -139,18 +139,22 @@ class Spektr(App):
         device=None,
         settings: config.Settings | None = None,
         allow_mic: bool = False,
+        config_dir=None,
     ):
         super().__init__()
         self._device = device
         self._allow_mic = allow_mic
-        self.settings = settings or config.load()
+        #: where settings, presets, themes, plugins and ascii reels live;
+        #: None means the platform default from palette.config_dir()
+        self._config_dir = config_dir
+        self.settings = settings or config.load(config_dir)
         asciiart.restore(self.settings.ascii_reel, self.settings.ascii_fx)
         #: the picker/settings overlay currently mounted, if any
         self._overlay = None
         #: the shuffle timer, or None when shuffle is off
         self._shuffle_timer = None
         self._shuffle_count = 0
-        self._presets = presets_module.load()
+        self._presets = presets_module.load(config_dir)
         #: the capture/device status text — what the header falls back to
         #: when nothing is playing that the OS will report on
         self._capture_status = self.SUB_TITLE
@@ -190,7 +194,7 @@ class Spektr(App):
         )
 
     def on_unmount(self) -> None:
-        config.save(self.settings)
+        config.save(self.settings, config_dir=self._config_dir)
 
     # ── overlay panels ────────────────────────────────────────────────────────
     # The pickers/settings are docked overlay widgets on the *same* screen as
@@ -404,9 +408,11 @@ class Spektr(App):
                 if name is None:
                     viz.cancel_theme_preview()
                     return
-                final = palette_mod.available_theme_name(name)
+                final = palette_mod.available_theme_name(name, config_dir=self._config_dir)
                 try:
-                    palette_mod.save_user_theme(draft.to_theme(final))
+                    palette_mod.save_user_theme(
+                        draft.to_theme(final), config_dir=self._config_dir
+                    )
                 except OSError as exc:
                     viz.cancel_theme_preview()
                     self.notify(f"could not save theme: {exc}", severity="error", timeout=4)
@@ -558,7 +564,7 @@ class Spektr(App):
                 "sensitivity": s.sensitivity,
                 "gate": s.gate,
             }
-            presets_module.save(self._presets)
+            presets_module.save(self._presets, config_dir=self._config_dir)
             self.notify(f"preset saved — {name}", timeout=2)
 
         self._open_overlay(NamePrompt("save preset as…", placeholder="name"), done)
@@ -610,7 +616,7 @@ class Spektr(App):
         viz.quarantine.clear()
         asciiart.reload()
 
-        loaded = reload_all()
+        loaded = reload_all(config_dir=self._config_dir)
         ok = sum(1 for p in loaded if p.loaded)
         stale = [p.name for p in loaded if not p.trusted]
         broken = [p.name for p in loaded if p.error]
@@ -844,7 +850,7 @@ class Spektr(App):
                     [],
                     live=self._ascii_reel_label,
                     step=self._step_ascii_reel,
-                    note=f"drop .txt frames into {asciiart.ascii_dir()}",
+                    note=f"drop .txt frames into {asciiart.ascii_dir(self._config_dir)}",
                 ),
             )
             rows.append(
@@ -862,11 +868,11 @@ class Spektr(App):
         self._open_overlay(SettingsPanel(rows, values), lambda *a: None)
 
     def _ascii_reel_label(self) -> str:
-        r = asciiart.current()
+        r = asciiart.current(self._config_dir)
         return f"{r.name} ({r.n_frames} frame{'s' if r.n_frames != 1 else ''})" if r else "none found"
 
     def _step_ascii_reel(self, delta: int) -> None:
-        r = asciiart.step_reel(delta)
+        r = asciiart.step_reel(delta, self._config_dir)
         self.settings.ascii_reel = r.name if r else ""
 
     def _set_ascii_fx(self, fx: str) -> None:

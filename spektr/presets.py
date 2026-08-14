@@ -8,6 +8,7 @@ malformed one should cost you your presets, not the app.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from . import palette
 from .config import _clamp_number
@@ -25,11 +26,12 @@ FIELDS = ("mode", "theme", "fps", "bands", "sensitivity", "gate")
 _DEFAULTS = {"fps": 60, "bands": 16, "sensitivity": 1.0, "gate": 8e-5}
 
 
-def _path():
-    return palette.config_dir() / "presets.json"
+def _path(config_dir: Path | None = None):
+    root = config_dir if config_dir is not None else palette.config_dir()
+    return root / "presets.json"
 
 
-def load() -> dict[str, dict]:
+def load(config_dir: Path | None = None) -> dict[str, dict]:
     """Read the presets file, dropping anything malformed rather than failing.
 
     Same posture as :func:`config.load`: a missing file, broken JSON, or a
@@ -37,9 +39,12 @@ def load() -> dict[str, dict]:
     crash. Unknown fields in an entry are dropped rather than kept, so a
     hand-edited file can't smuggle in something :func:`app.py`'s apply-preset
     path isn't expecting.
+
+    ``config_dir`` overrides where the presets file lives; None means the
+    platform default from :func:`palette.config_dir`.
     """
     try:
-        raw = json.loads(_path().read_text(encoding="utf-8"))
+        raw = json.loads(_path(config_dir).read_text(encoding="utf-8"))
         if not isinstance(raw, dict):
             return {}
         out: dict[str, dict] = {}
@@ -64,9 +69,9 @@ def load() -> dict[str, dict]:
         return {}
 
 
-def save(presets: dict[str, dict]) -> None:
+def save(presets: dict[str, dict], config_dir: Path | None = None) -> None:
     try:
-        path = _path()
+        path = _path(config_dir)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(presets, indent=2), encoding="utf-8")
     except Exception:

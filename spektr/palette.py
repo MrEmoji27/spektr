@@ -25,6 +25,8 @@ import numpy as np
 from rich.color import Color
 from rich.style import Style
 
+from . import palette
+
 #: Distinct colour steps in the ramp. Tried 256, to give an animated theme's
 #: per-column spread more buckets for a smoother sweep — measured instead:
 #: make_strips run-length-encodes each row, so its cost tracks how often
@@ -587,8 +589,22 @@ def config_dir() -> Path:
     return Path(base) / "spektr"
 
 
-def load_user_themes() -> dict[str, Theme]:
-    """Read ``<config>/themes/*.toml``. A malformed file is skipped, not fatal."""
+def _root(config_dir: Path | None = None) -> Path:
+    """An injected config root, or the platform default via :func:`config_dir`.
+
+    Resolved through the module rather than a bound name — tests patch
+    ``config_dir`` and every default must follow the patch, while a caller
+    that knows the root passes it straight through.
+    """
+    return config_dir if config_dir is not None else palette.config_dir()
+
+
+def load_user_themes(config_dir: Path | None = None) -> dict[str, Theme]:
+    """Read ``<config>/themes/*.toml``. A malformed file is skipped, not fatal.
+
+    ``config_dir`` overrides where ``<config>`` points; None means the
+    platform default from :func:`config_dir`.
+    """
     try:
         import tomllib
     except ModuleNotFoundError:  # 3.10
@@ -598,7 +614,7 @@ def load_user_themes() -> dict[str, Theme]:
             return {}
 
     try:
-        folder = config_dir() / "themes"
+        folder = _root(config_dir) / "themes"
         if not folder.is_dir():
             return {}
         candidates = sorted(folder.glob("*.toml"))
@@ -631,10 +647,10 @@ def load_user_themes() -> dict[str, Theme]:
     return found
 
 
-def all_themes() -> dict[str, Theme]:
+def all_themes(config_dir: Path | None = None) -> dict[str, Theme]:
     """Built-ins, with user themes of the same name taking priority."""
     merged = dict(BUILTIN)
-    merged.update(load_user_themes())
+    merged.update(load_user_themes(config_dir))
     return dict(sorted(merged.items()))
 
 
@@ -930,7 +946,7 @@ def sanitise_theme_name(name: str) -> str:
     return cleaned[:32] or "custom"
 
 
-def available_theme_name(name: str) -> str:
+def available_theme_name(name: str, config_dir: Path | None = None) -> str:
     """``name``, suffixed until it collides with nothing that already exists.
 
     Suffix rather than reject. A built-in name is a *good* name for a variant
@@ -939,7 +955,7 @@ def available_theme_name(name: str) -> str:
     from the picker with no way back short of deleting a file by hand.
     """
     base = sanitise_theme_name(name)
-    taken = set(all_themes())
+    taken = set(all_themes(config_dir))
     if base not in taken:
         return base
     for n in range(2, 100):
@@ -949,14 +965,14 @@ def available_theme_name(name: str) -> str:
     return f"{base}-{os.getpid()}"
 
 
-def save_user_theme(theme: "Theme") -> Path:
+def save_user_theme(theme: "Theme", config_dir: Path | None = None) -> Path:
     """Write a theme to ``<config>/themes/<name>.toml``, and return the path.
 
     Hand-rolled TOML: the standard library reads it and cannot write it, and
     six quoted hex strings do not justify a dependency. Every value here is a
     ``#rrggbb`` produced by ``rgb_to_hex``, so there is nothing to escape.
     """
-    folder = config_dir() / "themes"
+    folder = _root(config_dir) / "themes"
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / f"{theme.name}.toml"
     body = "\n".join(

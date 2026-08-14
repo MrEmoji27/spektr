@@ -148,12 +148,13 @@ class Reel:
         return self._cache
 
 
-def ascii_dir() -> Path:
-    return palette.config_dir() / "ascii"
+def ascii_dir(config_dir: Path | None = None) -> Path:
+    root = config_dir if config_dir is not None else palette.config_dir()
+    return root / "ascii"
 
 
-def _discover() -> list[Reel]:
-    root = ascii_dir()
+def _discover(config_dir: Path | None = None) -> list[Reel]:
+    root = ascii_dir(config_dir)
     out: list[Reel] = []
     try:
         if not root.is_dir():
@@ -225,11 +226,11 @@ def _builtin_reels() -> list[Reel]:
 _reels_cache: list[Reel] | None = None
 
 
-def reels() -> list[Reel]:
+def reels(config_dir: Path | None = None) -> list[Reel]:
     """Every discovered + built-in reel. Cached until :func:`reload`."""
     global _reels_cache
     if _reels_cache is None:
-        _reels_cache = _discover() + _builtin_reels()
+        _reels_cache = _discover(config_dir) + _builtin_reels()
     return _reels_cache
 
 
@@ -266,8 +267,8 @@ def step_fx(delta: int) -> str:
     return _selected_fx
 
 
-def current() -> Reel | None:
-    all_reels = reels()
+def current(config_dir: Path | None = None) -> Reel | None:
+    all_reels = reels(config_dir)
     if not all_reels:
         return None
     for r in all_reels:
@@ -276,9 +277,9 @@ def current() -> Reel | None:
     return all_reels[0]
 
 
-def step_reel(delta: int) -> Reel | None:
+def step_reel(delta: int, config_dir: Path | None = None) -> Reel | None:
     global _selected_reel_name
-    all_reels = reels()
+    all_reels = reels(config_dir)
     if not all_reels:
         return None
     names = [r.name for r in all_reels]

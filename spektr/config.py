@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, fields
+from pathlib import Path
 
 from . import palette
 
@@ -134,19 +135,23 @@ def _clamp_number(value, low: float, high: float, default: float) -> float:
     return float(min(high, max(low, number)))
 
 
-def _path():
-    return palette.config_dir() / "config.json"
+def _path(config_dir: Path | None = None):
+    root = config_dir if config_dir is not None else palette.config_dir()
+    return root / "config.json"
 
 
-def load() -> Settings:
+def load(config_dir: Path | None = None) -> Settings:
     """Read the settings file, falling back to defaults on anything unusable.
 
     Both the parse and the coercion are guarded: a missing file, malformed
     JSON, a top-level array instead of an object, and a field of the wrong
     type all end at the same place — a usable :class:`Settings`.
+
+    ``config_dir`` overrides where the settings file lives; None means the
+    platform default from :func:`palette.config_dir`.
     """
     try:
-        raw = json.loads(_path().read_text(encoding="utf-8"))
+        raw = json.loads(_path(config_dir).read_text(encoding="utf-8"))
         if not isinstance(raw, dict):
             return Settings()
         known = {f.name for f in fields(Settings)}
@@ -155,9 +160,9 @@ def load() -> Settings:
         return Settings()
 
 
-def save(settings: Settings) -> None:
+def save(settings: Settings, config_dir: Path | None = None) -> None:
     try:
-        path = _path()
+        path = _path(config_dir)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(asdict(settings), indent=2), encoding="utf-8")
     except Exception:

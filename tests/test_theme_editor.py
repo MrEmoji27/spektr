@@ -6,10 +6,10 @@ write into the draft slot the editor's colour row is on, then live-preview —
 and anything picked must still satisfy the same visibility rule the audit
 suite applies to built-in themes, or the editor's check row warns about it.
 
-Redirects palette.config_dir the same way test_app.py does: the app writes
-settings and saved themes on exit, and a test that typed a theme name into
-the real config tree would be a repeat of the preset-leak bug this project
-already had once.
+Redirects the config tree by handing a scratch dir into ``Spektr(config_dir=…)``
+— the app writes settings and saved themes on exit, and a test that typed a
+theme name into the real config tree would be a repeat of the preset-leak bug
+this project already had once.
 
 The integration test drives the real app headlessly the way test_app.py does,
 so it gets the same two concessions: a slow frame rate (the pilot waits for
@@ -25,10 +25,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import spektr.palette as _palette  # noqa: E402
-
 _scratch_dir = Path(tempfile.mkdtemp(prefix="spektr-theme-test-"))
-_palette.config_dir = lambda: _scratch_dir  # type: ignore[attr-defined]
 
 from spektr import config  # noqa: E402
 from spektr.app import Spektr  # noqa: E402
@@ -128,7 +125,7 @@ async def _open_editor(app: Spektr, pilot) -> None:
 
 def test_editor_picker_and_hex_mutate_the_slot() -> None:
     async def run() -> None:
-        app = Spektr(settings=config.Settings(fps=15))
+        app = Spektr(settings=config.Settings(fps=15), config_dir=_scratch_dir)
         app.notify = lambda *a, **k: None  # type: ignore[method-assign]
         async with app.run_test(size=(120, 32)) as pilot:
             viz = app.viz
