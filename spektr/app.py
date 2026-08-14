@@ -167,6 +167,7 @@ class Spektr(App):
             device=self._device,
             settings=self.settings,
             allow_mic=self._allow_mic,
+            config_dir=self._config_dir,
             id="viz",
         )
         yield Footer()
