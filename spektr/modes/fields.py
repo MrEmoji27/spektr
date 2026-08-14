@@ -917,23 +917,57 @@ def kaleidoscope(ctx: Ctx):
     iu = (src * np.float32(nu)).astype(np.int32) & (nu - 1)
     ir = np.minimum((r * np.float32(nr)).astype(np.int32), nr - 1)
     bright = (table.ravel()[ir * nu + iu] * (0.55 + ctx.energy * 0.9)).astype(np.float32)
-    dots = bright > 0.5
-    codes = pack_braille(dots)
 
-    # colour from radius and band level; the cell radius is cached on resize
-    # so the per-frame path never re-reduces a static grid
-    def cell_r():
+    # Two colour samples per text cell, one per half-row: the top half is the
+    # max over the cell's top two dot rows, the bottom half over its bottom
+    # two — the same 2x2-dot reduction as the braille cell_max, split by
+    # half. The bright grid is symmetric about the middle column, so these
+    # reductions are too: every half-row equals its mirror, bit for bit.
+    top = np.maximum(bright[0::4, 0::2], bright[1::4, 0::2])
+    top = np.maximum(top, bright[0::4, 1::2])
+    top = np.maximum(top, bright[1::4, 1::2])
+    bot = np.maximum(bright[2::4, 0::2], bright[3::4, 0::2])
+    bot = np.maximum(bot, bright[2::4, 1::2])
+    bot = np.maximum(bot, bright[3::4, 1::2])
+
+    # Half-row radius, cached on resize like the braille cell radius was.
+    # The layout is (2h, w) to match the ramp below: idx[0::2] is the top
+    # half-row of each cell and idx[1::2] the bottom.
+    def cell_r2():
         cx, cy = (dc - 1) / 2.0, (dr - 1) / 2.0
         x_scale = cy / max(cx, 1.0)
         xs = (np.arange(dc, dtype=np.float32) - cx) * x_scale
         ys = np.arange(dr, dtype=np.float32) - cy
         rr = (np.sqrt(xs[None, :] ** 2 + ys[:, None] ** 2) / max(1.0, cy - 1.0)).astype(np.float32)
-        return cell_max(rr)
+        rt = np.maximum(rr[0::4, 0::2], rr[1::4, 0::2])
+        rt = np.maximum(rt, rr[0::4, 1::2])
+        rt = np.maximum(rt, rr[1::4, 1::2])
+        rb = np.maximum(rr[2::4, 0::2], rr[3::4, 0::2])
+        rb = np.maximum(rb, rr[2::4, 1::2])
+        rb = np.maximum(rb, rr[3::4, 1::2])
+        out = np.empty((2 * rt.shape[0], rt.shape[1]), dtype=np.float32)
+        out[0::2] = rt
+        out[1::2] = rb
+        return out
 
-    cr = ctx.scratch("kaleido_r", cell_r)
-    col = cell_max(np.where(dots, bright, 0.0))
-    idx = ctx.ramp(np.clip(col * 0.5 + cr * 0.5, 0.0, 1.0))
-    return codes, idx
+    cr2 = ctx.scratch("kaleido_r2", cell_r2)
+
+    # Colour is the shard brightness blended with the radius — the same mix
+    # the braille version used — but now for every half-row of every cell,
+    # so the picture is solid colour, not dots. Quantised in place to eight
+    # buckets before ramping: the two-colour ▀ strip builder pays per colour
+    # boundary, and an unquantised field with this many local extrema pushed
+    # Chladni Flow to 9-14 ms a frame (its docstring records the numbers).
+    field = np.empty((2 * top.shape[0], top.shape[1]), dtype=np.float32)
+    field[0::2] = np.clip(top * 0.5 + cr2[0::2] * 0.5, 0.0, 1.0)
+    field[1::2] = np.clip(bot * 0.5 + cr2[1::2] * 0.5, 0.0, 1.0)
+    field *= 8.0
+    np.round(field, 0, out=field)
+    field *= 1.0 / 8.0
+
+    idx = ctx.ramp(field)
+    codes = np.full((ctx.h, ctx.w), _UPPER_HALF, dtype=np.int32)
+    return codes, idx[0::2], idx[1::2]
 
 
 @mode("Dither", group="fields", blurb="the spectrum printed as a newspaper halftone, in one-bit crosshatch")
