@@ -1200,7 +1200,7 @@ def valentine(ctx: Ctx):
         ai = ((np.arctan2(w, gx) + math.pi) / (2.0 * math.pi) * na).astype(np.int32) % na
         return gx, gy, r_h, rad, ai
 
-    gx, gy, _rh, _rad, _ai = ctx.scratch("valentine_geo", geo)
+    gx, gy, r_h, rad, ai = ctx.scratch("valentine_geo", geo)
 
     st = ctx.scratch("valentine", lambda: {
         "beat": 0.0, "dub": -1.0, "acc": 0.0,
@@ -1242,16 +1242,10 @@ def valentine(ctx: Ctx):
     # a bigger scale means a bigger heart. The y offset lifts it slightly:
     # the curve's own centroid sits below the origin and it looks dropped
     # without it.
-    hx = gx / np.float32(scale)
-    hy = (gy + np.float32(0.05)) / np.float32(scale) * np.float32(1.15)
-    q = hx * hx + hy * hy - np.float32(1.0)
-    fld = q * q * q - hx * hx * hy * hy * hy
-    inside = fld <= 0.0
-
-    # Depth inside the shape, normalised, so the rim is bright and the middle
-    # is solid rather than the whole silhouette being one flat value.
-    depth = np.clip(-fld * np.float32(2.4), 0.0, 1.0).astype(np.float32)
-    field = np.where(inside, np.float32(0.45) + np.float32(0.55) * depth, np.float32(0.0))
+    inv = np.float32(1.0) / np.float32(scale)
+    t = rad * inv / r_h[ai]
+    depth = np.clip(np.float32(1.0) - t, np.float32(0.0), np.float32(1.0)).astype(np.float32)
+    field = np.where(t <= np.float32(1.0), np.float32(0.45) + np.float32(0.55) * depth, np.float32(0.0))
 
     # ── rising hearts ──
     # Spawned on a beat, and on a slow clock so the frame is never empty on
