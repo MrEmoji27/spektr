@@ -59,10 +59,16 @@ class AudioVisualizer(Widget):
         device=None,
         settings: Settings | None = None,
         allow_mic: bool = False,
+        config_dir=None,
         **kwargs,
     ):
         super().__init__(**kwargs)
         self.settings = settings or Settings()
+        #: where user themes are read from; None means the platform default
+        #: from palette.config_dir(). Handed straight to all_themes() so an
+        #: injected config root redirects the theme-list read exactly like it
+        #: already redirects the writes.
+        self._config_dir = config_dir
 
         self.capture = Capture(device=device, allow_mic=allow_mic)
         self.analyser = Analyser(self.capture.ring, lambda: self.capture.samplerate)
@@ -71,7 +77,7 @@ class AudioVisualizer(Widget):
             self.analyser.set_bands(self.settings.bands)
 
         self.palette = Palette()
-        self._themes = all_themes()
+        self._themes = all_themes(self._config_dir)
         self._theme_name = self.settings.theme
 
         self._spring = Spring(N_BANDS)
@@ -246,7 +252,7 @@ class AudioVisualizer(Widget):
         else:
             theme = self._themes.get(name)
             if theme is None:
-                self._themes = all_themes()
+                self._themes = all_themes(self._config_dir)
                 theme = self._themes.get(name)
             if theme is None:
                 return self.palette.note
@@ -317,7 +323,7 @@ class AudioVisualizer(Widget):
 
     def reload_themes(self) -> int:
         """Re-read user theme files without restarting."""
-        self._themes = all_themes()
+        self._themes = all_themes(self._config_dir)
         self.apply_theme(self._theme_name, remember=False)
         return len(self._themes)
 
