@@ -592,9 +592,9 @@ def vfd(ctx: Ctx):
 def _vu_level(ctx: Ctx) -> np.ndarray:
     """Per-channel loudness, weighted like a real VU rather than flat.
 
-    Mids weigh more than bass, so the reading tracks perceived loudness instead
-    of whatever the kick drum is doing. Shared by both meter modes so they can
-    never disagree about how loud the signal is.
+    Treble weighs more than bass, so the reading tracks perceived loudness
+    instead of whatever the kick drum is doing. Shared by both meter modes so
+    they can never disagree about how loud the signal is.
     """
     weight = np.linspace(0.55, 1.25, len(ctx.bands_l))
     return np.array(
