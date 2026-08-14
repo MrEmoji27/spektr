@@ -769,12 +769,10 @@ def kaleidoscope(ctx: Ctx):
     per-dot path is one gather that returns the brightness profile already
     modulated by the band ramp — two gathers and a per-dot multiply avoided
     at 320k dots a frame. The widths are clamped in dot terms so a shard
-    stays a handful of dots across at any terminal size. The field stays
-    sparse: bright, narrow features on a dark ground, so the braille dot
-    grid keeps a real silhouette instead of the aliased noise a smooth
-    sinusoid over the whole field degrades into — the Plasma mode's
-    docstring discusses why a pattern needs to be representable by the dot
-    grid at all.
+    stays a handful of dots across at any terminal size, and the field stays
+    sparse — bright, narrow features on a dark ground — so the half-blocks
+    read as distinct solid shards rather than the aliased noise a smooth
+    sinusoid over the whole field degrades into.
 
     The fold itself never depends on the spin and only on the sector count,
     which takes two values, so the per-frame path is just the phase shift,
@@ -789,9 +787,13 @@ def kaleidoscope(ctx: Ctx):
     ``ctx.dt`` rather than read from ``ctx.t``, so pausing the audio locks
     the rotation in place without disturbing the phase.
 
-    Colour: the ramp is walked by a blend of radius and the cell-max of the
-    lit field, so the shards take on density rather than hue — the silver
-    look comes from the shading, not from a fixed palette.
+    Colour: every cell renders as a solid two-colour ``▀`` pair — the top
+    half from the max shard brightness over the cell's top two dot rows, the
+    bottom half from its bottom two — blended 0.5/0.5 with the cell radius
+    and quantised to eight buckets before ramping, so the shards take on
+    density rather than hue. Quantisation is the Chladni Flow lesson: the
+    two-colour strip builder pays per colour boundary, and an unquantised
+    field of this roughness pushed that mode past the frame budget.
     """
     dr, dc = ctx.dot_rows, ctx.dot_cols
     if dr < 8 or dc < 8:
