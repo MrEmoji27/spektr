@@ -258,7 +258,7 @@ def auroras(ctx: Ctx):
     # over a field whose visible range is a fraction of the ramp is finer than
     # the eye resolves here, and it does not depend on the theme being gentle
     # enough for the strip builder's own tolerance to help.
-    shade = np.where(lit, np.clip(heat, 0.0, 1.0), 0.0)
+    shade = np.clip(heat, 0.0, 1.0) * lit
     cidx = ctx.ramp(np.round(cell_max(shade) * 16.0) * (1.0 / 16.0))
     return codes, cidx
 
@@ -394,7 +394,7 @@ def _tunnel(ctx, inward: bool):
     lit &= noise((dr, dc), ctx.frame) < (0.25 + near * 0.85)
 
     codes = pack_braille(lit)
-    cidx = ctx.ramp(cell_max(np.where(lit, near * (0.4 + 0.6 * nrg), 0.0)))
+    cidx = ctx.ramp(cell_max(near * (0.4 + 0.6 * nrg) * lit))
     return codes, cidx
 
 
@@ -498,7 +498,7 @@ def matrix(ctx: Ctx):
     y = np.arange(h)[:, None]
     behind = st["head"][None, :] - y
     lit = (behind >= 0) & (behind < st["len"][None, :])
-    bright = np.where(lit, 1.0 - behind / np.maximum(st["len"][None, :], 1.0), 0.0)
+    bright = (1.0 - behind / np.maximum(st["len"][None, :], 1.0)) * lit
 
     codes = np.where(lit, st["glyph"], SPACE).astype(np.int32)
     cidx = ctx.ramp(bright ** 1.6)

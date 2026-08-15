@@ -346,7 +346,7 @@ def ember(ctx: Ctx):
     # envelope into a sparse speckle that thickens as the band rises, and a
     # fixed seed keeps the speckle from strobing (see ``Dune``'s grain).
     lit_haze = noise((dr, dc), 7) < (haze * 0.7)
-    field = np.maximum(field, np.where((above > 0) & lit_haze, 0.14 + 0.5 * haze, 0.0))
+    field = np.maximum(field, (0.14 + 0.5 * haze) * ((above > 0) & lit_haze))
 
     st["acc"] += (2.0 + ctx.energy * 55.0) * ctx.dt
     want = int(st["acc"])

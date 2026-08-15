@@ -62,6 +62,30 @@ def detect(signal: np.ndarray, samplerate: int) -> list[float]:
     return times
 
 
+#: Floors the detector has to clear on the corpus, as a whole.
+#:
+#: This file scored the detector for months and returned 0 whatever it found,
+#: which meant a change that halved recall would have printed a smaller number
+#: and passed. The corpus, the ground truth and the matcher were all already
+#: here; the only missing piece was saying out loud what counts as good.
+#:
+#: Set below where the detector currently sits rather than at it — F 0.948 and
+#: precision 1.000 today — so ordinary retuning has somewhere to move without
+#: tripping the gate, while a real regression cannot hide. Precision is held
+#: hardest because a false onset is the one error the visual modes cannot
+#: absorb: every mode keyed on ``ctx.onsets`` fires on it, and a detector that
+#: invents beats makes the whole app twitch.
+MIN_F = 0.90
+MIN_PRECISION = 0.95
+
+#: Scenarios that must stay clean. ``silence``, ``noise`` and ``note_stream``
+#: contain no onsets at all — a pad, a hiss and a stream of notes with no
+#: percussive attack — so anything detected in them is by construction a false
+#: positive, and they are the cheapest possible guard against a detector that
+#: has started firing on level rather than on change.
+MUST_BE_SILENT = ("silence", "noise", "note_stream")
+
+
 def main() -> int:
     rows = evaluate(detect)
 
@@ -75,6 +99,32 @@ def main() -> int:
             print("-" * 40)
         print(f"{name:<16}{row['precision']:>8.3f}{row['recall']:>8.3f}"
               f"{row['f']:>8.3f}")
+
+    total = rows.get("total")
+    if total is None:
+        print("\nno total row — the corpus did not evaluate")
+        return 1
+
+    problems: list[str] = []
+    if total["f"] < MIN_F:
+        problems.append(f"total F {total['f']:.3f} < {MIN_F:.2f}")
+    if total["precision"] < MIN_PRECISION:
+        problems.append(
+            f"total precision {total['precision']:.3f} < {MIN_PRECISION:.2f}"
+        )
+    for name in MUST_BE_SILENT:
+        row = rows.get(name)
+        if row is not None and row["precision"] < 1.0:
+            problems.append(f"{name} should contain no onsets at all")
+
+    if problems:
+        print("\nonset detector regressed:")
+        for p in problems:
+            print("  ", p)
+        return 1
+
+    print(f"\nF {total['f']:.3f}, precision {total['precision']:.3f} "
+          f"— both inside their floors")
     return 0
 
 

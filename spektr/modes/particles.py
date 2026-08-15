@@ -82,7 +82,7 @@ def scatter(ctx: Ctx):
     density = level * level * fade
     dots = noise((dr, dc), ctx.frame) < density
     codes = pack_braille(dots)
-    cidx = ctx.ramp(cell_max(np.where(dots, density, 0.0)))
+    cidx = ctx.ramp(cell_max(density * dots))
     return codes, cidx
 
 
@@ -157,7 +157,7 @@ def flame(ctx: Ctx):
 
     codes = pack_braille(dots)
     heat = np.zeros((dr, dc), dtype=np.float32)
-    heat[top:] = np.where(dots[top:], tip, np.float32(0.0))
+    heat[top:] = tip * dots[top:]
     cidx = ctx.ramp(cell_max(heat))
     return codes, cidx
 
@@ -281,7 +281,7 @@ def pulse(ctx: Ctx):
     codes = pack_braille(lit)
     # The core is a handful of dots; giving it its own full-grid ``where`` and
     # ``maximum`` cost two passes over 320k cells to colour about twelve.
-    heat = np.where(lit, prox, 0.0)
+    heat = prox * lit
     heat[core] = 0.2
     cidx = ctx.ramp(cell_max(heat))
     return codes, cidx
@@ -360,7 +360,7 @@ def arcs(ctx: Ctx):
 
     lit = heat > 0.06
     codes = pack_braille(lit)
-    cidx = ctx.ramp(cell_max(np.where(lit, heat, 0.0)))
+    cidx = ctx.ramp(cell_max(heat * lit))
     return codes, cidx
 
 
@@ -658,7 +658,7 @@ def sonar(ctx: Ctx):
 
     dots = buf > 0.05
     codes = pack_braille(dots)
-    cidx = ctx.ramp(cell_max(np.where(dots, buf, 0.0)))
+    cidx = ctx.ramp(cell_max(buf * dots))
     return codes, cidx
 
 
@@ -1113,7 +1113,7 @@ def dune(ctx: Ctx):
     grain = noise((dr, dc), 0) < np.clip(0.35 + depth * 0.05, 0.35, 0.97)
     dots = body & grain
 
-    heat = np.clip(np.where(dots, 0.35 + 0.65 * (1.0 - depth / max(1, dr)), 0.0), 0.0, 1.0)
+    heat = np.clip((0.35 + 0.65 * (1.0 - depth / max(1, dr))) * dots, 0.0, 1.0)
     codes = pack_braille(dots)
     cidx = ctx.ramp(cell_max(heat))
     return codes, cidx

@@ -585,7 +585,7 @@ def vfd(ctx: Ctx):
 
     dots = buf > 0.04
     codes = pack_braille(dots)
-    cidx = ctx.ramp(cell_max(np.where(dots, buf, 0.0)))
+    cidx = ctx.ramp(cell_max(buf * dots))
     return codes, cidx
 
 
@@ -1678,7 +1678,7 @@ def locket(ctx: Ctx):
              + np.float32(0.25) * st["beat"]).astype(np.float32)
     ai = _g["aidx"]
     rim = np.abs(sfield - rim_r_t[ai]) < rim_w_t[ai]
-    glow = np.where(rim, val_t[ai], np.float32(0.0)).astype(np.float32)
+    glow = (val_t[ai] * rim).astype(np.float32)
 
     # No interior fill, and that is a decision rather than an omission. A
     # flat wash was tried and turned the heart into a silhouette; a sparse

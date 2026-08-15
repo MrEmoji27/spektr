@@ -42,7 +42,7 @@ def _trace_dots(values: np.ndarray, dot_rows: int, dot_cols: int, gain: float = 
     dots = (rows >= lo) & (rows <= hi)
 
     heat = np.abs(rows - centre) / max(centre, 1.0)
-    return dots, np.where(dots, heat, 0.0)
+    return dots, heat * dots
 
 
 @mode("Wave", group="scope", blurb="smoothed waveform")
@@ -164,7 +164,7 @@ def ecg(ctx: Ctx):
     # colour by age: the leading edge is hot and the tail cools behind it,
     # which is what makes the direction of travel readable
     age = (np.arange(dc, dtype=np.float64) / max(1, dc - 1)) ** 2
-    heat = np.where(dots, (0.18 + 0.82 * age)[None, :], 0.0)
+    heat = (0.18 + 0.82 * age)[None, :] * dots
     codes = pack_braille(dots)
     cidx = ctx.ramp(cell_max(heat))
     return codes, cidx
