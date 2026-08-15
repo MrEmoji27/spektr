@@ -732,116 +732,239 @@ def vu(ctx: Ctx):
     return codes, cidx
 
 
-#: Contrast gamma for the Kaleidoscope shard field. Above 1 darkens the
-#: gaussian skirts between facets while leaving the peaks; see the note at the
-#: gamma call for why it is applied to the source table rather than the
-#: rendered field, and why that is exact rather than an approximation.
+#: Resolution of the Kaleidoscope source patch — the little chamber of glass
+#: the mirrors look at, sampled as a (radius, wedge-angle) table.
 #:
-#: 1.5 rather than a tuned value because it is ``x * sqrt(x)``, and ``sqrt``
-#: is a hardware instruction where ``pow`` is a library call — measured at
-#: 0.35 ms a frame for the latter on this table, which is a fifth of the
-#: mode's whole build budget spent on an exponent nobody would be able to
-#: pick out of a line-up against 1.4.
-_KAL_GAMMA = 1.5
+#: ``_KAL_NU`` is the angular resolution and has to stay a power of two: the
+#: per-dot gather masks with ``& (nu - 1)`` rather than taking a modulus. It
+#: is sized against the fraction of the chamber one wedge actually shows
+#: (:data:`_KAL_SECTOR`) rather than against the dot grid: a wedge spans
+#: ``_KAL_SECTOR`` of the patch, so it gets ``_KAL_NU * _KAL_SECTOR`` = 85
+#: samples, which is the number that has to beat the dots competing for them.
+_KAL_NU, _KAL_NR = 512, 128
 
-#: Resolution of the Kaleidoscope source wedge, and its sample axes.
+#: How much of the chamber's circumference one mirror wedge looks at.
 #:
-#: ``_KAL_NU`` is 256, not 512. It is the resolution of the *source wedge*,
-#: and the fold maps a whole wedge onto 0..1, so the dots competing for those
-#: samples are at most ``dot_cols / k`` of them — 100 at 400x100 with eight
-#: sectors, the widest this mode ever gets. 512 was oversampling the source
-#: five times over and paying for it in the table build every frame. It has to
-#: stay a power of two: the gather masks with ``& (nu - 1)`` rather than
-#: taking a modulus.
+#: Getting this wrong is what a first attempt at the rebuild did, and the
+#: symptom was unmistakable: mapping the *whole* source disc onto one wedge
+#: means a screen wedge sweeps all 2*pi of the glass, so every fragment is
+#: compressed into a thin radial sliver and the rosette reads as a starburst
+#: of rays rather than as pieces of anything. Fragments need an aspect ratio
+#: close to one to read as fragments, and that is set here.
 #:
-#: Module constants rather than ``ctx.scratch`` because neither axis depends on
-#: the terminal size, and scratch is keyed on size — parking them there spent a
-#: cache slot per size on an array that was the same every time. The audit
-#: allows four scratch entries per mode and this mode needs all four for
-#: geometry that genuinely is per-size.
-_KAL_NU, _KAL_NR = 256, 128
-_KAL_U_AXIS = (np.arange(_KAL_NU, dtype=np.float32) + 0.5) * np.float32(1.0 / _KAL_NU)
-_KAL_R_AXIS = (np.arange(_KAL_NR, dtype=np.float32) + 0.5) * np.float32(1.0 / _KAL_NR)
+#: A sixth, fixed, rather than the physically exact ``1 / k``. The real object
+#: has the wedge angle and the chamber sector locked together, so a 20-mirror
+#: tube shows a twentieth of the glass; honouring that would make the
+#: fragments visibly thinner every time the spectrum pushed the mirror count
+#: up, which is backwards — more mirrors should mean more repeats of the same
+#: pretty thing, not a worse thing repeated more often. Holding the sector
+#: fixed keeps fragment shape constant and lets the count follow the music
+#: freely. It is the same trade the shard widths made in the version before
+#: this one, for the same reason.
+_KAL_SECTOR = 1.0 / 6.0
+
+#: How many straight cuts shatter the glass, and how many different chambers
+#: are kept ready to swap between.
+#:
+#: The cuts are what make this a kaleidoscope rather than an iris. See
+#: :func:`_kal_glass` for the construction.
+#:
+#: The count is set by the *worst* wedge, not the average one. What a wedge
+#: shows is a 60-degree slice of the chamber, and with too few cuts the odds
+#: are decent that a given slice at a given rotation falls almost entirely
+#: inside one fragment — at which point the frame is a flat wash with a thin
+#: figure in it. Swept over six chambers and twelve rotations, measuring how
+#: much of the wedge the largest visible fragment takes:
+#:
+#:     cuts   fragments   visible/wedge   largest    worst case
+#:       12          58            10.8       42%           89%
+#:       16          98            16.1       33%           80%
+#:       22         180            25.5       25%           48%
+#:       32         368            45.9       17%           37%
+#:
+#: 22 is where the worst case stops being a flat frame. Past it the average
+#: fragment drops below a few cells at ordinary terminal sizes, where the
+#: reduction to half-blocks starts dropping pieces rather than drawing them,
+#: and every extra fragment is another colour boundary for the strip builder.
+_KAL_CUTS = 22
+_KAL_CHAMBERS = 4
+
+#: Screen radius that maps to the rim of the chamber.
+#:
+#: The dot geometry normalises so ``r == 1`` at the nearer edge, which puts
+#: the corners at ``sqrt(2)``. Mapping 0..1 onto the patch therefore clamped
+#: everything outside the inscribed circle to the outermost ring of samples —
+#: one fragment smeared across all four corners, which at 78x11 was most of
+#: the frame and read as a flat surround with a small figure in it. Dividing
+#: by the corner distance puts the whole terminal inside the glass at every
+#: aspect ratio.
+_KAL_RIM = 1.45
+
+#: Where in the chamber the screen centre sits, as a source radius.
+#:
+#: Nonzero, and this is the last thing standing between the rebuild and the
+#: iris it replaced. Sampling a pie slice that runs from the chamber's own
+#: centre out to its rim means screen radius *is* source radius, so any
+#: fragment spanning a range of source radii lands as an arc band and the
+#: rosette organises itself into concentric rings — the exact read the
+#: gaussians used to produce, arrived at from a different direction.
+#:
+#: Looking at an annular sector instead removes the shared centre: the glass
+#: in view has no radial structure relative to the screen, because the point
+#: everything is radial about is not in the picture. It also squares the
+#: fragments up. The visible region spans 0.45..1.0 in radius against a 60
+#: degree arc, which at mid-radius is 0.55 by 0.73 — near enough one to one
+#: that a fragment reads as a piece rather than as a band.
+_KAL_CORE = 0.45
+
+def _kal_glass(seed: int) -> tuple[np.ndarray, int]:
+    """One chamber of shattered glass, as a fragment index per patch sample.
+
+    **This is the whole difference between a kaleidoscope and an iris**, and
+    the previous version of this mode was the iris. It drew twelve soft 2-D
+    gaussians at staggered radii inside the wedge, which has two consequences
+    that between them name the shape: the blobs have no edges, so nothing
+    reads as a *piece* of anything; and mirroring a radial chain of blobs
+    around a circle stacks them into concentric rings, which is an aperture.
+    No amount of retuning widths or radii escapes that — the arrangement is
+    the problem.
+
+    Real stained glass in a mirror tube is the opposite on both counts. The
+    fragments are hard-edged, flat in colour, and they *tile*: they meet each
+    other along straight seams and cover the whole field, with no privileged
+    centre and no radial banding. So build exactly that.
+
+    Seven random lines are drawn across the source disc. Every sample records
+    which side of each line it fell on, giving a 7-bit code; samples sharing a
+    code are on the same side of every cut, which is precisely the definition
+    of one convex cell of the arrangement. Those cells are the fragments. The
+    edges are hard because the code changes discontinuously at a line, which
+    is free — there is no anti-aliasing to switch off and no width to tune.
+
+    The cuts are placed in the *Cartesian* plane of the patch, not in
+    ``(radius, angle)``, and that matters for a reason easy to miss: the
+    sampler wraps the angular axis with ``& (nu - 1)`` once the spin is added,
+    so the patch has to be periodic in u or there is a visible seam at the
+    wrap. Laid out as chords of a disc, periodicity is automatic — a line in
+    the plane is a closed curve in ``(r, phi)`` — where any pattern authored
+    directly in u would have to be made periodic by hand.
+
+    Returns the fragment index per sample and the fragment count. Both are
+    functions of the seed alone, so chambers are built once at import and
+    cost nothing at any terminal size.
+    """
+    rng = np.random.default_rng(seed)
+    u = (np.arange(_KAL_NU, dtype=np.float32) + 0.5) * np.float32(1.0 / _KAL_NU)
+    r = (np.arange(_KAL_NR, dtype=np.float32) + 0.5) * np.float32(1.0 / _KAL_NR)
+    phi = u * np.float32(2.0 * math.pi)
+    px = r[:, None] * np.cos(phi)[None, :]
+    py = r[:, None] * np.sin(phi)[None, :]
+
+    code = np.zeros((_KAL_NR, _KAL_NU), dtype=np.int32)
+    for _ in range(_KAL_CUTS):
+        th = float(rng.uniform(0.0, math.pi))
+        # Offsets kept well inside the disc: a chord that grazes the rim
+        # splits off a sliver too thin to survive the reduction to half-block
+        # cells, and spends a fragment index on something invisible.
+        d = float(rng.uniform(-0.62, 0.62))
+        side = (px * np.float32(math.cos(th))
+                + py * np.float32(math.sin(th))) > np.float32(d)
+        code = (code << 1) | side
+
+    # Dense-remap the sparse sign codes to 0..M-1 so the per-frame value array
+    # is M long rather than 128 long with holes.
+    uniq, flat = np.unique(code.ravel(), return_inverse=True)
+    return flat.reshape(_KAL_NR, _KAL_NU).astype(np.int32), int(uniq.size)
 
 
-@mode("Kaleidoscope", group="fields", blurb="radial mirror symmetry — the wedge count follows the spectrum")
+#: The chambers, built once at import. Size-independent by construction, so
+#: this is not scratch and never rebuilds — the whole point of authoring the
+#: glass in patch space rather than on the dot grid.
+_KAL_GLASS = [_kal_glass(0x6C1A55 + i) for i in range(_KAL_CHAMBERS)]
+
+#: Per-fragment constants: which band lights a fragment, how much light it
+#: passes, and where it sits in its own slow shimmer. Fixed, because a piece
+#: of glass does not change colour — the light behind it changes.
+#:
+#: Sized from the chambers actually built rather than from ``1 << _KAL_CUTS``.
+#: Twenty-two cuts have an upper bound of four million sign codes and produce
+#: about a hundred and eighty regions; allocating for the bound would be four
+#: million entries per array to use a hundred and eighty of them.
+_KAL_MAX_CELLS = max(n for _, n in _KAL_GLASS)
+_KAL_RNG = np.random.default_rng(0x91A55)
+_KAL_FRAG_BAND = _KAL_RNG.integers(0, 8, _KAL_MAX_CELLS).astype(np.int32)
+_KAL_FRAG_TONE = _KAL_RNG.uniform(0.30, 1.0, _KAL_MAX_CELLS).astype(np.float32)
+_KAL_FRAG_PHASE = _KAL_RNG.uniform(0.0, 2.0 * math.pi, _KAL_MAX_CELLS).astype(np.float32)
+
+
+@mode("Kaleidoscope", group="fields",
+      blurb="a mirrored tube of stained glass — the wedge count follows the spectrum, beats shake the chamber")
 def kaleidoscope(ctx: Ctx):
-    """A real mirror array behind the visuals, not a spun copy of a picture.
+    """A mirrored tube looking at a chamber of broken glass.
 
-    The premise comes from a physical kaleidoscope: a ring of mirrors around
-    the centre — 8, 12, 16 or 20 of them, eased by the spectral centroid —
-    each one showing the same source slice, reflected left-right alternately.
-    (The count read "4 or 8" here for a while; the code has snapped to
-    multiples of four in 8..20 since the shard widths stopped being tied to
-    the sector count, and the sentence was never updated.) Every
-    dot's angle is wrapped into its sector, then even sectors read the source
-    forward and odd sectors read it reversed, so adjacent sectors mirror each
-    other across the shared boundary and the picture is symmetric about every
-    mirror line. Only a sector count that is a multiple of four puts a mirror
-    line on the vertical axis, so the count snaps between 4 and 8 rather than
-    running through every integer.
+    Three parts, and they map one-to-one onto the physical object: a chamber
+    of coloured fragments (:func:`_kal_glass`), a ring of mirrors around it,
+    and the fact that turning the tube rotates the glass behind fixed mirror
+    seams.
 
-    The mirror lines are fixed in screen space. The spin shown below rotates
-    the *source* inside the wedge: the fold coordinate stays put, and only
-    the lookup shifts by the accumulated phase, so the picture stays
-    bilaterally symmetric at every angle of rotation — a property that comes
-    out of the construction rather than being close enough for the eye.
+    **The mirrors.** A ring of 8, 12, 16 or 20 of them, eased by the spectral
+    centroid and snapped on a beat, each showing the same source slice
+    reflected left-right alternately. Every dot's angle is wrapped into its
+    sector, then even sectors read the source forward and odd sectors read it
+    reversed, so adjacent sectors mirror across the shared boundary and the
+    picture is symmetric about every mirror line. Only a multiple of four puts
+    a mirror line on the vertical axis, which is why the count snaps rather
+    than running through every integer.
+
+    The mirror lines are fixed in screen space; the spin rotates the *source*
+    inside the wedge. The fold coordinate stays put and only the lookup shifts
+    by the accumulated phase, so the picture stays bilaterally symmetric at
+    every angle of rotation — a property that falls out of the construction
+    rather than being close enough for the eye.
 
     That construction is the important part. The fold runs on a grid of
     absolute columns: the geometry is evaluated on ``|x|`` measured from the
     centre line between the two middle dot columns, so a dot and its L/R
     mirror compute exactly the same angle, radius and folded coordinate, and
-    any function of those coordinates — the shard field, the brightness, the
-    colour — is bit-for-bit identical between the two dots. No averaging, no
-    tolerance: the rendered frame is symmetric by construction.
+    any function of those coordinates is bit-for-bit identical between the
+    two. No averaging, no tolerance: the rendered frame is symmetric by
+    construction. The gather then runs on the left half only and is mirrored
+    for the right, which halves the per-dot path without changing a bit.
 
-    The source slice is a handful of bright shards, each a small 2-D
-    Gaussian in the (radius, wedge-angle) plane, gathered from the *source*
-    coordinate so the spin visibly rotates them inside the wedge while the
-    mirror lines stay fixed, and sampled on a small (radius, angle) table
-    once per frame — a few thousand exp() calls instead of one per dot. The
-    band levels are cos-blended into the table along the angle axis, so the
-    per-dot path is one gather that returns the brightness profile already
-    modulated by the band ramp — two gathers and a per-dot multiply avoided.
-    The gather runs on the left half of the |x|-symmetric grid and is
-    mirrored for the right, so it sees half the dots: the two halves compute
-    the same values bit-for-bit, and mirroring costs a copy, not a recompute.
-    The widths are clamped in dot terms so a shard
-    stays a handful of dots across at any terminal size, and the field stays
-    sparse — bright, narrow features on a dark ground — so the half-blocks
-    read as distinct solid shards rather than the aliased noise a smooth
-    sinusoid over the whole field degrades into.
+    **The glass.** Hard-edged convex fragments tiling the whole source disc,
+    cut once at import and never rebuilt. What changes per frame is only how
+    brightly each fragment is lit: one value per fragment, forty-odd of them,
+    then a single gather turns that into the source table. That is a much
+    smaller per-frame job than the twelve gaussians this used to evaluate over
+    a 128x512 table, and it is the reason the mode now costs less than the
+    version that looked worse.
 
-    The fold itself never depends on the spin and only on the sector count,
-    which takes two values, so the per-frame path is just the phase shift,
-    the table gather, and the threshold — the wrap into sectors, the radius
-    field and the mirror mapping are recomputed only when the count snaps or
-    the terminal resizes. That is what keeps a 400x100 terminal inside the
-    frame budget.
+    Each fragment is lit by one band, scaled by its own fixed transmittance
+    and a slow shimmer on its own phase — a piece of glass does not change
+    colour, the light behind it does. Flat colour within a fragment is not a
+    simplification: it is what glass looks like, and it is also what the
+    run-length encoder in the strip builder wants, so the look and the render
+    cost agree for once.
 
-    A beat arrives as an onset in the current frame; the same beat kicks the
-    rotation once and snaps the sector count, and the count then eases back
-    toward the spectral centroid. The rotation rate is re-integrated through
-    ``ctx.dt`` rather than read from ``ctx.t``, so pausing the audio locks
-    the rotation in place without disturbing the phase.
+    **Shaking the tube.** A beat swaps the whole chamber for a different one,
+    round-robin through four cut at import. That is the one gesture a real
+    kaleidoscope has that rotation cannot give you — the fragments tumble into
+    a new arrangement — and swapping a precomputed index array costs nothing,
+    where re-cutting the glass would cost a sort over the patch. The same beat
+    kicks the rotation and snaps the sector count.
 
-    Onsets alone left the mode coasting between hits, which on sparse
-    material reads as a still picture twitching four times a bar, so two
-    continuous inputs sit underneath them. ``beat_phase`` swells the facet
-    chain outward on the beat and draws it back through the bar — gated on
-    ``tempo_bpm``, which is 0.0 until a tempo is established and takes the
-    phase to 0.0 with it, i.e. a permanent on-the-beat swell if read
-    ungated. ``flatness`` sets how tight the facets are: percussive material
-    draws narrow hard-edged shards, a sustained pad broad soft ones, so a
-    loud snare and a loud pad no longer render the same picture.
+    The rotation rate is re-integrated through ``ctx.dt`` rather than read
+    from ``ctx.t``, so pausing the audio locks the rotation in place without
+    disturbing the phase. ``beat_phase`` drives a gentle brightening between
+    hits — gated on ``tempo_bpm``, which is 0.0 until a tempo is established
+    and takes the phase to 0.0 with it, i.e. a permanent on-the-beat swell if
+    read ungated.
 
-    Colour: every cell renders as a solid two-colour ``▀`` pair — the top
-    half from the max shard brightness over the cell's top two dot rows, the
-    bottom half from its bottom two — blended 0.5/0.5 with the cell radius
-    and quantised to eight buckets before ramping, so the shards take on
-    density rather than hue. Quantisation is the Chladni Flow lesson: the
-    two-colour strip builder pays per colour boundary, and an unquantised
-    field of this roughness pushed that mode past the frame budget.
+    Colour: every cell renders as a solid two-colour ``▀`` pair — the top half
+    from the max over the cell's top two dot rows, the bottom half from its
+    bottom two — quantised to eight buckets before ramping. Quantisation is
+    the Chladni Flow lesson: the two-colour strip builder pays per colour
+    boundary. Flat fragments make that cheap here rather than merely bearable.
     """
     dr, dc = ctx.dot_rows, ctx.dot_cols
     if dr < 8 or dc < 8:
@@ -851,16 +974,13 @@ def kaleidoscope(ctx: Ctx):
 
     # Geometry on the |x|-folded grid: dot (x, y) and its L/R mirror
     # (dc - 1 - x, y) compute identical turn and radius, so any function of
-    # them is bit-for-bit symmetric. The pole sits on the boundary between
-    # the two centre dot columns, so no dot straddles the mirror axis. The
-    # radius field is folded into the factory so the per-frame path never
-    # re-divides a static grid.
+    # them is bit-for-bit symmetric. The pole sits on the boundary between the
+    # two centre dot columns, so no dot straddles the mirror axis.
     #
-    # Only the left half of each grid is kept. Everything downstream reads
-    # the half and mirrors the *result*, so retaining the full-width copies
-    # was 2.5 MB of scratch at 400x100 that nothing ever indexed. ``dist``
-    # went the same way: it was returned, held for the lifetime of the size,
-    # and read by nobody — ``r`` is the normalised form and the only one used.
+    # Only the left half is kept — everything downstream reads the half and
+    # mirrors the result — and the full-width brightness buffer rides in the
+    # same entry, since it is per-size and has exactly this lifetime. The
+    # audit caps a mode at four scratch keys.
     def geo():
         cx, cy = (dc - 1) / 2.0, (dr - 1) / 2.0
         hw = dc // 2
@@ -874,57 +994,43 @@ def kaleidoscope(ctx: Ctx):
         ang = np.where(ang < 0, ang + np.float32(2 * math.pi), ang).astype(np.float32)
         turn = (ang / np.float32(2 * math.pi)).astype(np.float32)
         r = (dist / max(cy - 1.0, 1.0)).astype(np.float32)
-        # The mirrored full-width brightness buffer rides along in the same
-        # entry. It is per-size and has exactly this lifetime, and the audit
-        # caps a mode at four scratch keys — one per genuinely distinct
-        # cache — so a buffer that is born and dies with the geometry belongs
-        # with the geometry rather than claiming a slot of its own.
-        return turn, r, np.empty((dr, dc), dtype=np.float32)
+        # Radius index into the source patch, fixed for the size. Clamped
+        # rather than wrapped: past the rim of the glass there is no glass.
+        rr = np.minimum(r * np.float32(1.0 / _KAL_RIM), np.float32(1.0))
+        rr = rr * np.float32(1.0 - _KAL_CORE) + np.float32(_KAL_CORE)
+        ir = np.minimum((rr * np.float32(_KAL_NR)).astype(np.int32), _KAL_NR - 1)
+        return turn, ir, np.empty((dr, dc), dtype=np.float32)
 
-    turn, r, bright = ctx.scratch("kaleido_geo", geo)
+    turn, ir, bright = ctx.scratch("kaleido_geo", geo)
     hw = dc // 2
 
-    bands8 = ctx.display_bands(8).astype(np.float64)
+    bands8 = ctx.display_bands(8).astype(np.float32)
     total = float(bands8.sum())
     centroid = float((bands8 * np.arange(8)).sum() / total / 7.0) if total > 1e-9 else 0.0
     bass = ctx.range(0.0, 0.18)
 
-    # Spectral flatness separates a drum-led groove from a pad at the same
-    # level, and it is the only timbre measure the app has. Here it sets how
-    # tight the shards are: a percussive, noise-like spectrum draws narrow
-    # hard-edged facets, a sustained tonal one draws broad soft ones. Without
-    # it the shard widths were a pure function of level, so a loud pad and a
-    # loud snare produced the same picture.
-    tight = float(np.clip(ctx.flatness * 2.2, 0.0, 1.0))
+    # ``beat_phase`` is continuous and available between hits, where the onset
+    # effects are not, so it carries the pulse on material the detector is
+    # sparse about. Gated on the tempo, never on the phase.
+    breathe = (1.0 - float(ctx.beat_phase)) ** 2 if ctx.tempo_bpm > 0.0 else 0.0
 
-    # Beat-locked breathing. The rotation and the sector snap are onset-driven,
-    # which means the mode only moves *on* hits and coasts between them; on
-    # sparse material that reads as a still picture twitching four times a bar.
-    # ``beat_phase`` is continuous and available between hits, so the shard
-    # radii can ride the pulse itself. Squared so the swell sits on the beat
-    # and decays through the bar rather than sweeping linearly.
-    #
-    # ``tempo_bpm`` is 0.0 whenever no tempo is established — silence, a drone,
-    # the first seconds of a track — and ``beat_phase`` is 0.0 with it, which
-    # would read as a permanent on-the-beat swell. Gate on the tempo, not the
-    # phase, and fall back to no breathing at all.
-    if ctx.tempo_bpm > 0.0:
-        breathe = (1.0 - float(ctx.beat_phase)) ** 2
-    else:
-        breathe = 0.0
-
-    st = ctx.scratch("kaleido", lambda: {"kc": 4.0, "spin": 0.0, "k": None, "folded": None})
+    st = ctx.scratch("kaleido", lambda: {
+        "kc": 8.0, "spin": 0.0, "k": None, "folded": None,
+        "chamber": 0, "shimmer": 0.0,
+    })
     # ctx.onsets, not a private difference of ctx.onset_seq. Scratch survives
     # a mode switch, so differencing here would replay every beat that played
     # while the mode was not drawing, all in a single frame.
     onsets = ctx.onsets
 
-    # The wedge count eases toward the centroid and snaps on a beat. It only
+    # The mirror count eases toward the centroid and snaps on a beat. It only
     # ever lands on a multiple of four — that is what keeps a mirror line on
     # the vertical axis — and the reachable set is 8, 12, 16, 20.
     st["kc"] += (8.0 + centroid * 10.0 - st["kc"]) * min(1.0, ctx.dt / 1.2)
     if onsets:
         st["kc"] = float(8.0 + 10.0 * min(1.0, bass * 1.5))
+        # Shake the tube: the glass tumbles into a different arrangement.
+        st["chamber"] = (st["chamber"] + onsets) % _KAL_CHAMBERS
     k = 4 * int(round(st["kc"] / 4.0))
     k = max(8, min(k, 20))
 
@@ -933,12 +1039,13 @@ def kaleidoscope(ctx: Ctx):
     if onsets:
         st["spin"] = (st["spin"] + 0.3 * min(onsets, 3)) % (2 * math.pi)
     spin = st["spin"]
+    st["shimmer"] = (st["shimmer"] + 1.7 * max(ctx.dt, 0.0)) % (2 * math.pi)
 
-    # The fold: wrap the angle into its sector, then read even sectors
-    # forward and odd sectors backward, so the array alternates orientation
-    # around the ring exactly like physical mirror tubes. The fold depends
-    # only on the sector count (two values), so it is cached; the per-frame
-    # path is just the phase shift below.
+    # The fold: wrap the angle into its sector, then read even sectors forward
+    # and odd sectors backward, so the array alternates orientation around the
+    # ring exactly like physical mirror tubes. It depends only on the sector
+    # count, which takes four values, so it is cached; the per-frame path is
+    # just the phase shift and the gather below.
     if st["k"] != k:
         wedge = turn * np.float32(k)
         m = np.floor(wedge).astype(np.int32)
@@ -947,123 +1054,40 @@ def kaleidoscope(ctx: Ctx):
         st["k"] = k
     folded = st["folded"]
 
-    # The source slice: bright shards, each a small 2-D Gaussian in the
-    # (radius, wedge-angle) plane, sampled on a (radius, angle) table once
-    # per frame. The band ramp — cos-blended between neighbours like the
-    # shared _angular_bands helper — is multiplied into the table along the
-    # angle axis, so the per-dot brightness profile arrives from a single
-    # gather. The widths are clamped in dot terms so a shard stays a handful
-    # of dots across at any terminal size; the angular width is derived from
-    # the arc the wedge covers at the shard's radius.
-    nu, nr = _KAL_NU, _KAL_NR
-    n_shards = 12
-    u_axis, r_axis = _KAL_U_AXIS, _KAL_R_AXIS
-    lv = bands8.astype(np.float32)
+    # ── how brightly each fragment is lit ──
+    # One value per fragment — forty-odd numbers — then a single gather builds
+    # the whole source table. The old build evaluated twelve 2-D gaussians
+    # over the table every frame; this is the same table for a fraction of the
+    # arithmetic, and it comes out with hard edges instead of soft ones.
+    cell_id, n_cells = _KAL_GLASS[st["chamber"]]
+    band = _KAL_FRAG_BAND[:n_cells]
+    tone = _KAL_FRAG_TONE[:n_cells]
+    shim = 0.80 + 0.20 * np.sin(_KAL_FRAG_PHASE[:n_cells] + np.float32(st["shimmer"]))
+    lit = bands8[band] * shim * tone
+    # Floor so unlit glass still reads as glass rather than as a hole: a dark
+    # fragment is a dark fragment, not an absence of one, and the seams have
+    # to stay visible for the tiling to be legible at all.
+    val = (np.float32(0.12) + np.float32(0.88) * lit) * np.float32(
+        (0.62 + 0.55 * ctx.energy) * (1.0 + 0.14 * breathe))
+    np.clip(val, 0.0, 1.0, out=val)
 
-    # Twelve shards rather than eight, at staggered radii, so the wedge holds
-    # a chain of facets instead of a few blobs. Two per band, offset, which
-    # is what gives the repeat its intricacy once it is mirrored around.
-    #
-    # **The table is a matrix product, not twelve accumulations.** Every shard
-    # is separable — a gaussian in u times a gaussian in r — so the sum over
-    # shards is exactly ``GR @ GU`` with ``GR`` (nr, 12) and ``GU`` (12, nu).
-    # The old loop did twelve ``gu[None, :] * gr[:, None]`` outer products and
-    # added each into a 128x512 accumulator: 786k float multiplies and twelve
-    # 64k temporaries per frame, all in numpy dispatch. One BLAS call does the
-    # same arithmetic in one pass with no temporaries, and it is the same
-    # factorisation Dither Storm uses for its plane waves. The result is
-    # identical up to float association.
-    idx = np.arange(n_shards)
-    b = idx % 8
-    lv_b = lv[b]
-    au = ((idx + 0.5) / n_shards + (lv_b - 0.5) * 0.10) % 1.0
-    ar = 0.22 + 0.70 * ((idx * 5) % n_shards) / (n_shards - 1.0)
-    ar = np.minimum(0.94, ar * (0.75 + 0.35 * lv[(b + 2) % 8]))
-    # Beat-locked breathing: the whole facet chain is pushed outward on the
-    # beat and drawn back through the bar. Small — 6% of the radius — because
-    # the shards are narrow and a larger swing walks them off the edge.
-    ar = np.minimum(0.96, ar * (1.0 + 0.06 * breathe))
+    table = val[cell_id]
 
-    # Width as a FRACTION OF THE WEDGE, not a fixed number of dots.
-    #
-    # This was sdot/arc, a dot-sized shard divided by the arc the wedge
-    # spans -- which couples the shard's share of its wedge to the sector
-    # count, because arc shrinks as sectors are added. Past about eight
-    # sectors the quotient hit its 0.9 clamp and every shard filled nine
-    # tenths of its wedge, so the facets merged into one solid ring with
-    # a hole in it. Raising the sector count made the mode worse, which
-    # is the opposite of how a kaleidoscope works.
-    #
-    # Held as a fraction, a shard occupies the same slice of its wedge at
-    # any count, so more sectors means more facets rather than fatter
-    # ones -- and the count is then free to follow the music.
-    #
-    # ``tight`` narrows both widths on percussive material and lets them
-    # broaden on tonal material, so the facets sharpen under drums.
-    narrow = np.float32(1.0 - 0.35 * tight)
-    wu = (0.055 + 0.050 * lv[(b + 1) % 8]) * narrow
-    wr = (0.030 + 0.045 * lv[(b + 3) % 8]) * narrow
-
-    du = np.abs(u_axis[None, :] - au[:, None].astype(np.float32))
-    du = np.minimum(du, 1.0 - du)
-    gu = np.exp(-((du / wu[:, None].astype(np.float32)) ** 2)).astype(np.float32)
-    dr_ = (r_axis[None, :] - ar[:, None].astype(np.float32)) / wr[:, None].astype(np.float32)
-    gr = np.exp(-(dr_ ** 2)).astype(np.float32)
-    table = gr.T @ gu                                   # (nr, 12) @ (12, nu)
-
-    # the band ramp blended into the table along the angle axis (a smooth
-    # cosine blend between adjacent band levels, exactly like _angular_bands)
-    pos = np.linspace(0.0, 8, nu, endpoint=False, dtype=np.float32)
-    bi = pos.astype(np.int32) % 8
-    bf = pos - np.floor(pos)
-    tm = (1.0 - np.cos(bf * np.float32(math.pi))) * np.float32(0.5)
-    lut = lv[bi] * (1.0 - tm) + lv[(bi + 1) % 8] * tm
-    table *= (0.55 + lut * 0.9)[None, :]
-
-    # Contrast gamma, applied HERE rather than to the rendered field.
-    #
-    # A kaleidoscope is bright narrow features on a dark ground, and the
-    # linear field spent most of its range on the gaussian skirts between
-    # facets — which washed the ground out to a flat mid-tone and, because
-    # those skirts are smooth and everywhere, put a colour boundary every few
-    # cells across the whole frame. Pulling them down into the bottom bucket
-    # fixes the look and the render cost at once; they had one cause.
-    #
-    # It belongs on the table because ``pow`` is expensive and the table is
-    # small. The rendered field is up to 80k cells at 400x100 against this
-    # 128x256; more to the point the field is reached through ``cell_max``,
-    # and max commutes with a monotone gamma — ``max(x)**g == max(x**g)`` —
-    # so gamma'ing the source is not an approximation of gamma'ing the
-    # output, it is the same number. The per-frame energy scale is a scalar
-    # and factors out the same way, hence ``escale ** GAMMA`` below.
-    table *= np.sqrt(table)                             # x ** 1.5
-
-    # The source slice is sampled on the LEFT half of the symmetric grid and
-    # mirrored: dot (x, y) and its L/R mirror (dc - 1 - x, y) gather the same
-    # table cell bit-for-bit, so the right half of the brightness field is a
-    # reversed copy of the left. That halves the per-dot path — the frac,
-    # the index arithmetic and the gather — without averaging, and the
-    # rendered frame stays symmetric by construction.
-    src = frac(folded + np.float32(spin * k / (2 * math.pi)))
-    iu = (src * np.float32(nu)).astype(np.int32) & (nu - 1)
-    ir = ctx.scratch(
-        "kaleido_ir",
-        lambda: np.minimum((r * np.float32(nr)).astype(np.int32), nr - 1),
-    )
-    escale = np.float32((0.55 + ctx.energy * 0.9) ** _KAL_GAMMA)
-    b_half = table.ravel()[ir * nu + iu] * escale
-    # ``bright`` comes from the geometry entry rather than being allocated per
-    # frame: at 400x100 it is 1.28 MB, and asking the allocator for it sixty
-    # times a second is pure overhead when its shape only ever changes on
-    # resize — which is exactly what scratch keys on.
+    # The source is sampled on the LEFT half of the |x|-symmetric grid and
+    # mirrored: dot (x, y) and its mirror gather the same table cell
+    # bit-for-bit, so the right half is a reversed copy of the left. That
+    # halves the frac, the index arithmetic and the gather without averaging,
+    # and the rendered frame stays symmetric by construction.
+    src = frac(folded * np.float32(_KAL_SECTOR) + np.float32(spin / (2 * math.pi)))
+    iu = (src * np.float32(_KAL_NU)).astype(np.int32) & (_KAL_NU - 1)
+    b_half = table.ravel()[ir * _KAL_NU + iu]
     bright[:, :hw] = b_half
     bright[:, hw:] = b_half[:, ::-1]
 
     # Two colour samples per text cell, one per half-row: the top half is the
     # max over the cell's top two dot rows, the bottom half over its bottom
-    # two — the same 2x2-dot reduction as the braille cell_max, split by
-    # half. The bright grid is symmetric about the middle column, so these
-    # reductions are too: every half-row equals its mirror, bit for bit.
+    # two. The bright grid is symmetric about the middle column, so these
+    # reductions are too — every half-row equals its mirror, bit for bit.
     top = np.maximum(bright[0::4, 0::2], bright[1::4, 0::2])
     top = np.maximum(top, bright[0::4, 1::2])
     top = np.maximum(top, bright[1::4, 1::2])
@@ -1071,63 +1095,20 @@ def kaleidoscope(ctx: Ctx):
     bot = np.maximum(bot, bright[2::4, 1::2])
     bot = np.maximum(bot, bright[3::4, 1::2])
 
-    # Half-row radius, cached on resize like the braille cell radius was.
-    # The layout is (2h, w) to match the ramp below: idx[0::2] is the top
-    # half-row of each cell and idx[1::2] the bottom.
-    #
-    # Built from the ``r`` grid geo already computed, mirrored, rather than
-    # re-deriving the centre, the aspect scale and the square root a second
-    # time. The two copies had drifted apart in exactly the way duplicated
-    # geometry does: this one divided by ``max(1.0, cy - 1.0)`` and geo by
-    # ``max(cy - 1.0, 1.0)`` — the same number by luck, not by construction.
-    #
-    # Quantised to eight steps at build time. The radius term's only job is a
-    # vignette, and left continuous it guarantees a colour boundary every few
-    # columns *before the shards contribute anything* — which is a cost paid
-    # in the strip builder on every row of every frame, for a gradient the
-    # quantisation downstream was going to collapse anyway.
-    def cell_r2():
-        rr = np.empty((dr, dc), dtype=np.float32)
-        rr[:, :hw] = r
-        rr[:, hw:] = r[:, ::-1]
-        rt = np.maximum(rr[0::4, 0::2], rr[1::4, 0::2])
-        rt = np.maximum(rt, rr[0::4, 1::2])
-        rt = np.maximum(rt, rr[1::4, 1::2])
-        rb = np.maximum(rr[2::4, 0::2], rr[3::4, 0::2])
-        rb = np.maximum(rb, rr[2::4, 1::2])
-        rb = np.maximum(rb, rr[3::4, 1::2])
-        out = np.empty((2 * rt.shape[0], rt.shape[1]), dtype=np.float32)
-        out[0::2] = rt
-        out[1::2] = rb
-        np.round(out * 8.0, 0, out=out)
-        out *= np.float32(1.0 / 8.0)
-        return out
-
-    cr2 = ctx.scratch("kaleido_r2", cell_r2)
-
-    # Colour is the shard brightness blended with the radius, for every
-    # half-row of every cell, so the picture is solid colour rather than dots.
-    #
-    # The mix was 0.5/0.5, and half the colour of every cell being a static
-    # function of where it sat on screen was too much. It put a hard floor
-    # under the outer ring — at r near 1 the field could not read below 0.5
-    # however dark the shards were — so the frame edge was a permanent bright
-    # band, and the shards, which are the mode, had only the top four of the
-    # eight buckets to move through. At 0.72/0.28 the shards own the ramp and
-    # the radius is what it was always meant to be: a vignette.
-    #
-    # Quantised in place to eight buckets before ramping: the two-colour ▀
-    # strip builder pays per colour boundary, and an unquantised field with
-    # this many local extrema pushed Chladni Flow to 9-14 ms a frame (its
-    # docstring records the numbers).
-    #
-    # The contrast gamma that used to sit here now lives on the shard table,
-    # where it is a tenth of the elements and exactly equivalent — see the
-    # note by ``np.power`` above.
     field = np.empty((2 * top.shape[0], top.shape[1]), dtype=np.float32)
-    field[0::2] = top * 0.72 + cr2[0::2] * 0.28
-    field[1::2] = bot * 0.72 + cr2[1::2] * 0.28
-    np.clip(field, 0.0, 1.0, out=field)
+    field[0::2] = top
+    field[1::2] = bot
+
+    # Quantised to eight buckets before ramping: the two-colour ▀ strip
+    # builder pays per colour boundary, and an unquantised field with this
+    # many local extrema pushed Chladni Flow to 9-14 ms a frame (its docstring
+    # records the numbers). Flat fragments already produce long runs, so this
+    # mostly guards the shimmer against splitting them.
+    #
+    # No radial vignette. The old version blended the cell radius in at half
+    # weight, which is a concentric gradient laid over everything and one of
+    # the two things making the mode read as an iris; the other was the
+    # gaussians. Both are gone.
     field *= 8.0
     np.round(field, 0, out=field)
     field *= 1.0 / 8.0
@@ -1539,10 +1520,30 @@ def locket(ctx: Ctx):
     one frame and neither read cleanly. Removing them leaves the pulses as
     the only motion, which is what makes the direction legible.
 
-    Expansion is ``k / z`` with ``z`` falling at a steady rate, so a pulse
-    crawls while small and accelerates as it grows — the same perspective
-    Tunnel In uses. Constant growth would read as a shape inflating in place
-    rather than as something travelling outward past you.
+    Expansion is ``k / z``, the same perspective Tunnel In uses: a pulse
+    accelerates as it grows, so it reads as something travelling outward past
+    you rather than a shape inflating in place. Constant growth loses that.
+
+    **``z`` decays geometrically, and the birth radius sits on the outline.**
+    Both were wrong together, and the symptom was the mode's whole premise
+    failing to land: you did not see hearts shooting out, you saw a long
+    nothing and then a blur.
+
+    ``z`` fell *linearly* before, which is literally correct perspective for
+    something approaching at constant speed — and exactly why it does not work
+    here, because ``r0 / z`` diverges as ``z`` approaches zero. Measured on
+    the old constants: a pulse was born at ``0.30 * core``, one third of the
+    way out to a resting outline it then had to grow past, and it crossed the
+    visible band in the last 0.37 s of a 1.78 s life. 73% of every pulse was
+    smaller than the heart it came from, i.e. hidden inside it, and the part
+    you could see went by at up to 46x the speed it started at.
+
+    Geometric decay — ``z *= exp(-lambda dt)`` — makes the *fractional* growth
+    per second constant. That still accelerates in absolute terms, by about
+    4.5x across the journey, because the same fraction of a larger radius is a
+    larger step; it just cannot run away. Combined with a birth radius at
+    ``0.80 * core`` the pulse starts just inside the outline, crosses it within
+    about a fifth of a second, and is visible for the rest of its life.
 
     Each pulse carries its own birth radius, fixed at release. Deriving it from
     the heart's current size every frame instead — which is what this did — ties
@@ -1720,14 +1721,18 @@ def locket(ctx: Ctx):
             busy = np.flatnonzero(st["z"] > 0.0)
             if busy.size:
                 slots.extend(busy[np.argsort(st["z"][busy])][:short])
-        # Born at a fraction of the resting heart's size, so a pulse starts
-        # inside it and grows out through the outline rather than appearing on
-        # it. Held per pulse from here on: ``core`` breathes with the bass and
+        # Born just inside the resting outline, so a pulse starts within the
+        # heart and crosses out through it in its first fifth of a second
+        # rather than spending most of its life hidden in there. 0.30 put it
+        # a third of the way out and cost 73% of every pulse — see the
+        # docstring for the measurement.
+        #
+        # Held per pulse from here on: ``core`` breathes with the bass and
         # the beat, and re-deriving the birth radius every frame moved every
         # ring in flight with it. Each onset teleported the whole field
         # outward — a step 10.6x a normal frame's on average, and backwards
         # whenever the heart shrank.
-        born = np.float32(core * 0.30)
+        born = np.float32(core * 0.80)
         for i in slots:
             st["z"][i] = np.float32(1.0)
             st["r0"][i] = born
@@ -1738,9 +1743,20 @@ def locket(ctx: Ctx):
 
     live = st["z"] > 0.0
     if live.any():
-        st["z"][live] -= (np.float32(0.26 + ctx.energy * 0.70)
-                          * st["spd"][live] * np.float32(max(ctx.dt, 0.0)))
-        st["z"][st["z"] <= 0.045] = 0.0
+        # Geometric, not linear. ``sc = r0 / z``, so a constant *rate of
+        # decay* in z is a constant fractional growth in screen radius: the
+        # pulse still accelerates outward, by roughly 4.5x over its life,
+        # but the rate cannot diverge the way a linear z does as it
+        # approaches zero. The old law spent 73% of a pulse inside the heart
+        # and the rest at up to 46x its starting speed.
+        #
+        # Integrated through dt as a decay factor rather than subtracted,
+        # which keeps it frame-rate independent for the same reason the
+        # springs in spektr.motion are: exp(-k*dt) composes over substeps
+        # where a per-frame multiply does not.
+        lam = np.float32(0.95 + ctx.energy * 0.90)
+        st["z"][live] *= np.exp(-lam * st["spd"][live] * np.float32(max(ctx.dt, 0.0)))
+        st["z"][st["z"] <= 0.02] = 0.0
         # Retire anything wider than the grid instead of holding its slot until
         # z runs out. ``r0 / z > rmax`` is the same test as "off screen",
         # written without the divide.

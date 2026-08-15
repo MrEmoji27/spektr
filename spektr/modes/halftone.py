@@ -63,6 +63,30 @@ RAD_MAX = 0.80
 #: existing levels and took the same sequence to 8.78 ms and 15811 segments.
 COLOUR_STEPS = 8
 
+#: Target fraction of *dots* lit, at rest and at full level, plus how far a
+#: flash lifts it. These are the mode's density budget — see the note by the
+#: ``field.mean()`` correction for why density is aimed at rather than left to
+#: emerge from the sum of everything upstream.
+#:
+#: Dots, not cells, and the difference is the whole reason these numbers look
+#: low. A braille cell carries eight dots and lights if any one of them
+#: survives, so a uniform 0.30 dot density already lights 94% of cells.
+#:
+#: Calibrated against plain Dither, which is the mode this one is a companion
+#: to and which reads correctly: measured over a level sweep it runs 0.18
+#: dots per cell when quiet, 1.33 at half level and 2.75 when loud. A first
+#: attempt here at 0.22/0.30 gave 2.80 -> 3.87 — denser than Dither at its
+#: loudest even in near-silence, and a range of one dot per cell where Dither
+#: has two and a half. Wrong on both counts: nothing to see at the quiet end
+#: and nowhere to go at the loud one.
+#:
+#: 0.06 at rest is a sparse stipple rather than the black screen the mode's
+#: own docstring rules out, and the ceiling below keeps the loudest bar of
+#: the loudest track from going solid.
+_REST_DENSITY = 0.06
+_LOUD_DENSITY = 0.30
+_FLASH_DENSITY = 0.14
+
 
 @mode("Dither Storm", group="fields",
       blurb="Dither's one-bit crosshatch, but the field moves — each band drives its own wave, and beats throw rings through it")
@@ -261,6 +285,7 @@ def dither_storm(ctx: Ctx):
         "kick": np.float32(0.0),                        # phase-rate boost, 0..1.3
         "wp_x": np.float32(0.0),                        # bass warp phases
         "wp_y": np.float32(0.0),
+        "bloom_dc": np.float32(0.0),                    # bloom's running mean
     })
 
     # ── the band weights ──
@@ -297,18 +322,39 @@ def dither_storm(ctx: Ctx):
         s = np.float32(min(1.0, ctx.onset_strength))
         # Threshold inversion: for roughly a tenth of a second the tile is
         # lerped toward its own inverse, so the field's troughs light instead
-        # of its crests — the texture itself flips. The bloom then keeps the
-        # threshold pulled down for a few more tenths, and the kick speeds
-        # every phase, so a hit is a flash and a lurch, not just a brightening.
+        # of its crests — the texture itself flips. The bloom then lifts the
+        # field for a few more tenths, and the kick speeds every phase, so a
+        # hit is a flash and a lurch, not just a brightening.
+        #
+        # **Every one of these is a max, not a sum, and that is the fix for
+        # the mode falling apart on dense material.** They were ``+=`` with a
+        # cap, which makes each accumulator a function of the beat *rate*
+        # rather than of a beat: at one hit a second bloom averaged 0.19, at
+        # four a second 0.97, at eight 1.14, because hits arrived faster than
+        # the decay could clear them. Since bloom pulled the threshold down,
+        # dot density rose with beat rate and kept rising — measured 59% of
+        # dots at rest, 84% at 160 BPM, 99% at a drum fill, i.e. a solid sheet
+        # with no texture left in it at exactly the moment the music was most
+        # interesting.
+        #
+        # A max cannot pile up. Two hits close together give the same peak as
+        # one, which is what "a hit is a flash" has to mean if it is to mean
+        # anything at any tempo; what a faster rate now buys is more flashes,
+        # not a brighter floor. The remaining rate dependence — the decay
+        # never reaching zero between hits — is taken out downstream by
+        # subtracting bloom's own running mean.
         st["inv"] = max(st["inv"], np.float32(0.5 + 0.5 * s))
-        st["bloom"] = min(np.float32(1.3), st["bloom"] + np.float32(0.45 + 0.55 * s))
-        st["kick"] = min(np.float32(1.3), st["kick"] + np.float32(0.4 + 0.6 * s))
+        st["bloom"] = max(st["bloom"], np.float32(0.45 + 0.55 * s))
+        st["kick"] = max(st["kick"], np.float32(0.4 + 0.6 * s))
 
-        # One storm layer per hit, round-robin. The amplitude caps a little
-        # past one so back-to-back hits read as a pile-up rather than a clamp.
+        # One storm layer per hit, round-robin, each refreshed rather than
+        # topped up — same reason. Piling meant a busy passage pinned all six
+        # layers near their cap and the storm weave became a constant, so
+        # "busy is structurally different from loud" stopped being true right
+        # where it mattered.
         for _ in range(ctx.onsets):
             i = st["storm_i"]
-            st["tq"][i] = min(np.float32(1.2), st["tq"][i] + np.float32(0.55 + 0.45 * s))
+            st["tq"][i] = max(st["tq"][i], np.float32(0.55 + 0.45 * s))
             st["storm_i"] = (i + 1) % STORM
 
         # Rings fill the free slots, retiring the oldest live ring when a
@@ -325,8 +371,24 @@ def dither_storm(ctx: Ctx):
             st["a"][i] = np.float32(1.3 * (0.55 + 1.15 * s))
 
     st["inv"] = max(np.float32(0.0), st["inv"] - np.float32(8.5) * dt)
-    st["bloom"] = max(np.float32(0.0), st["bloom"] - np.float32(2.3) * dt)
+    st["bloom"] = max(np.float32(0.0), st["bloom"] - np.float32(3.4) * dt)
     st["kick"] = max(np.float32(0.0), st["kick"] - np.float32(3.5) * dt)
+
+    # Bloom's own slow average, which is what gets subtracted from it below.
+    #
+    # Capping the peak stops a *single* accumulator running away; it does not
+    # stop the floor creeping, because at eight hits a second the decay never
+    # returns bloom to zero between them and the residue is a DC offset that
+    # still scales with rate. Removing the running mean makes the flash a
+    # mean-zero excursion: dense material gets more flashes about a baseline
+    # that has not moved, sparse material gets fewer, and the resting texture
+    # is the same in both. This is the analyser's own trick — sensitivity
+    # there is driven by overshoot rather than by level, for the same reason.
+    #
+    # ~1.5 s, i.e. slow against a beat and fast against a section, so a hit
+    # reads fully but a change of density settles out within a bar or two.
+    st["bloom_dc"] += (st["bloom"] - st["bloom_dc"]) * np.float32(
+        1.0 - math.exp(-float(dt) / 1.5))
 
     # Storm layers decay; their phases keep advancing on their own fast clock,
     # boosted by the kick, so the wake left by a hit keeps moving as it fades.
@@ -432,24 +494,71 @@ def dither_storm(ctx: Ctx):
     if ctx.tempo_bpm > 0.0:
         lvl = np.float32(min(1.0, float(lvl) * (1.0 + 0.13 * (1.0 - ctx.beat_phase) ** 2)))
     field *= np.float32(0.40) + np.float32(1.35) * lvl
-    # The baseline is what silence looks like, and it is a dot density rather
-    # than a cell count: at 0.30 roughly a third of dots survive the
-    # threshold, and since a braille cell carries eight of them that lights
-    # 94% of *cells* -- a silent track read as a solid sheet. 0.07 is
-    # near-black but still an even speckle, which is the quiet end of the
-    # swing; it never reads as a black screen or a solid sheet.
-    field += np.float32(0.07) + np.float32(0.66) * lvl
 
-    # The onset flash lives here: while inv > 0 the tile is lerped toward its
-    # own inverse, so the field's troughs light instead of its crests, and the
-    # bloom pulls the whole threshold down — a hit blooms the field toward
-    # solid, then settles back to the texture.
+    # ── dot density, aimed rather than hoped for ──
+    #
+    # The threshold tile is uniform on [0, 1) by construction — that is what
+    # the rank step in ``_blue_noise`` is for — so the expected fraction of
+    # dots that survive the comparison is ``E[clip(field, 0, 1)]``. Density is
+    # therefore something this mode can *set* rather than something that falls
+    # out of everything upstream.
+    #
+    # The clip is not a formality and getting it wrong is a real error: this
+    # first used the raw mean, which is only the density if the field already
+    # lies inside [0, 1). It does not — it is a sum of travelling waves with
+    # ring crests added on top and a long tail either side — and clipping
+    # folds the negative tail up to 0 while the raw mean still counts it as
+    # negative. Aiming the raw mean at 0.10 measured 0.25 in practice, i.e.
+    # two and a half times the density asked for, worst at the quiet end
+    # where the target is small against the spread.
+    #
+    # One Newton step closes it. ``d`` is the density the field would give as
+    # it stands and ``inside`` is exactly d(density)/d(shift) — the fraction
+    # of dots whose comparison a small shift could still change, since dots
+    # already clipped at either end are decided. The floor on it keeps the
+    # step finite when almost everything is saturated.
+    #
+    # It used to fall out, and it fell out badly. Depth, baseline, ring
+    # amplitudes, how many storm layers happened to be awake and the bloom
+    # offset on the threshold all pushed on density independently, none of
+    # them knew what the others were doing, and the sum ran to a solid sheet:
+    # 59% of dots at rest against a docstring claiming "near-black but still
+    # an even speckle", and 99% on a drum fill. A one-bit medium has exactly
+    # one currency and nothing was accounting for it.
+    #
+    # Aiming it also makes every other knob safe to touch. Ring crests, storm
+    # weave and bass warp now redistribute the lit dots — which is the part
+    # that carries structure — instead of adding to them.
+    target = _REST_DENSITY + _LOUD_DENSITY * lvl
+
+    # The flash rides on top as a mean-zero excursion, so it brightens
+    # relative to whatever the recent baseline has been rather than adding to
+    # it. Clipped because a section change can move the running mean faster
+    # than 1.5 s and there is no reading of "flash" that should darken the
+    # field below its resting density.
+    flash = float(np.clip(st["bloom"] - st["bloom_dc"], 0.0, 1.0))
+    target = min(0.50, target + _FLASH_DENSITY * flash)
+
+    np.clip(field, 0.0, 1.0, out=lit_buf)
+    d = float(lit_buf.mean())
+    inside = float(np.count_nonzero((field > 0.0) & (field < 1.0))) / field.size
+    field += np.float32((target - d) / max(inside, 0.20))
+
+    # The onset inversion lives here: while inv > 0 the tile is lerped toward
+    # its own inverse, so the field's troughs light instead of its crests and
+    # the texture itself flips.
+    #
+    # Density-neutral by construction, which is why it is the one onset effect
+    # that can stay on the threshold. ``1 - th0`` is uniform on [0, 1) exactly
+    # as ``th0`` is, so inverting changes *which* dots light and never how
+    # many — the flip reads as a flip rather than as a flash, and the flash is
+    # handled above where it can be accounted for.
     #
     # The tile itself is gathered once per size (see ``build``); this is the
     # only part that moves. Written into a scratch buffer with fused ops
     # rather than three fresh (dr, dc) temporaries a frame.
     np.multiply(th0, np.float32(1.0) - np.float32(2.0) * st["inv"], out=th_buf)
-    th_buf += st["inv"] - np.float32(0.5) * st["bloom"]
+    th_buf += st["inv"]
     lit = field > th_buf
 
     codes = pack_braille(lit)
