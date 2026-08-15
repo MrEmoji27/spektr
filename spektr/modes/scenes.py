@@ -333,6 +333,40 @@ def keys(ctx: Ctx):
 
 
 def _tunnel(ctx, inward: bool):
+    """Ribs travel down the pipe at an audio-reactive speed.
+
+    Shared by both Tunnel and Tunnel In, which are the same corridor differing
+    only in which way the ribs travel: ``inward`` flips the sign the
+    accumulated phase is applied with, and nothing else. They were separate
+    implementations until Tunnel In had been patched twice and still did not
+    read as well as the mode it was imitating; folding it onto this body was
+    the fix, so keep them sharing it. A change made here that should not apply
+    to both is a sign the two have diverged in intent, not an invitation to
+    branch on ``inward``.
+
+    Each direction keeps its own phase accumulator (see the scratch key), so
+    switching modes does not jump the ribs.
+
+    **Why the phase is accumulated rather than ``ctx.t * speed``.** This is the
+    important part of this function and it is not obvious from the arithmetic.
+
+    Since phase is time times speed, changing the speed retroactively rewrites
+    the whole history the multiplication represents, not just the rate going
+    forward — an ordinary loudness change teleports the ribs by however many
+    turns of ``depth * 0.55`` separate the old and new phase at the *current*
+    ``t``, and that gap grows without bound the longer the session has been
+    running. Traced and measured when the same bug was found in Retro's sun
+    scroll: at t=120s an energy change could jump the ring phase by ~130 turns
+    in a single frame, and under a gentle energy wobble 53% of frames moved
+    more than a quarter of a rib-spacing. A ``ctx.dt``-accumulated phase held
+    in scratch is the fix, and it is the same one Retro's scroll and ECG's and
+    Spectro's column steps already use — the same bug wearing scenes.py's
+    clothes instead of fields.py's or scope.py's.
+
+    ``turn * spin`` below is NOT this bug: that spin rate is a constant
+    (0.024), so ``ctx.t * constant`` is an ordinary, correct phase. Only
+    multiplying time by a *varying* rate is unsafe.
+    """
     dr, dc = ctx.dot_rows, ctx.dot_cols
     if dr < 8 or dc < 8:
         return empty(ctx.w, ctx.h)
