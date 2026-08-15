@@ -58,6 +58,8 @@ SELF_ANIMATING = {
     # own clock (Boot), a cellular automaton stepping generations on its own
     # a flock whose agents keep moving under their own inter-agent forces
     # even at a constant spectrum (Murmuration), and the lofi set, each
+    # (Dither Storm Extreme shares Dither Storm's per-band travelling phases,
+    # so it self-animates for the same reason and belongs here too)
     # animating on its own even in silence by design: a record keeps spinning
     # after the needle drops (Vinyl), rain keeps falling at a small base rate
     # so the loop never looks paused (Rain), and embers keep drifting and
@@ -72,7 +74,7 @@ SELF_ANIMATING = {
     # the band driving it, and onset rings keep travelling outward after the
     # beat that threw them — so a frozen spectrum still moves, which is the
     # whole distinction from Dither next to it
-    "Dither Storm",
+    "Dither Storm", "Dither Storm Extreme",
 }
 
 #: Modes driven by the waveform rather than the band levels.

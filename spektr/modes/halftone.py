@@ -91,6 +91,42 @@ _FLASH_DENSITY = 0.14
 @mode("Dither Storm", group="fields",
       blurb="Dither's one-bit crosshatch, but the field moves — each band drives its own wave, and beats throw rings through it")
 def dither_storm(ctx: Ctx):
+    """Dither Storm with its density held. See :func:`_dither_storm`."""
+    return _dither_storm(ctx, extreme=False)
+
+
+@mode("Dither Storm Extreme", group="fields",
+      blurb="Dither Storm with nothing holding it back — hits pile up and a dense passage blows the field to white")
+def dither_storm_extreme(ctx: Ctx):
+    """Dither Storm with every governor removed. See :func:`_dither_storm`.
+
+    Same field, same rings, same blue noise; what differs is that the onset
+    accumulators add instead of taking a maximum, the bloom pulls the
+    threshold down directly, and nothing aims the dot density. Each of those
+    is a knob pushing on how much of the frame lights, none of them knows
+    what the others are doing, and the sum is a function of *beat rate*
+    rather than of a beat.
+
+    In the plain mode that is a bug and it is fixed. Here it is the point.
+    Measured over a beat-density sweep at full level, dots lit:
+
+        beats/min      plain      extreme
+             none        42%          59%
+              120        38%          75%
+              160        38%          84%
+              480        34%          99%
+
+    A sparse groove looks close to the plain mode. As the material gets
+    busier the field loads up, the crosshatch fills in, and a drum fill takes
+    it to a solid white sheet before it falls back — the visualiser
+    equivalent of letting something clip. That is a legitimate thing to want
+    on the right track and a terrible default, which is why it is two modes
+    and not a setting.
+    """
+    return _dither_storm(ctx, extreme=True)
+
+
+def _dither_storm(ctx: Ctx, extreme: bool = False):
     """The spectrum as eight travelling waves, thresholded to one bit.
 
     Same family as Dither and a different animal. Dither bakes eight wave
@@ -344,8 +380,12 @@ def dither_storm(ctx: Ctx):
         # never reaching zero between hits — is taken out downstream by
         # subtracting bloom's own running mean.
         st["inv"] = max(st["inv"], np.float32(0.5 + 0.5 * s))
-        st["bloom"] = max(st["bloom"], np.float32(0.45 + 0.55 * s))
-        st["kick"] = max(st["kick"], np.float32(0.4 + 0.6 * s))
+        if extreme:
+            st["bloom"] = min(np.float32(1.3), st["bloom"] + np.float32(0.45 + 0.55 * s))
+            st["kick"] = min(np.float32(1.3), st["kick"] + np.float32(0.4 + 0.6 * s))
+        else:
+            st["bloom"] = max(st["bloom"], np.float32(0.45 + 0.55 * s))
+            st["kick"] = max(st["kick"], np.float32(0.4 + 0.6 * s))
 
         # One storm layer per hit, round-robin, each refreshed rather than
         # topped up — same reason. Piling meant a busy passage pinned all six
@@ -354,7 +394,10 @@ def dither_storm(ctx: Ctx):
         # where it mattered.
         for _ in range(ctx.onsets):
             i = st["storm_i"]
-            st["tq"][i] = max(st["tq"][i], np.float32(0.55 + 0.45 * s))
+            if extreme:
+                st["tq"][i] = min(np.float32(1.2), st["tq"][i] + np.float32(0.55 + 0.45 * s))
+            else:
+                st["tq"][i] = max(st["tq"][i], np.float32(0.55 + 0.45 * s))
             st["storm_i"] = (i + 1) % STORM
 
         # Rings fill the free slots, retiring the oldest live ring when a
@@ -371,7 +414,11 @@ def dither_storm(ctx: Ctx):
             st["a"][i] = np.float32(1.3 * (0.55 + 1.15 * s))
 
     st["inv"] = max(np.float32(0.0), st["inv"] - np.float32(8.5) * dt)
-    st["bloom"] = max(np.float32(0.0), st["bloom"] - np.float32(3.4) * dt)
+    # Slower in the extreme mode, which is half of why it loads up: a bloom
+    # that has not cleared when the next hit lands is a floor the next hit
+    # adds to.
+    st["bloom"] = max(np.float32(0.0),
+                      st["bloom"] - np.float32(2.3 if extreme else 3.4) * dt)
     st["kick"] = max(np.float32(0.0), st["kick"] - np.float32(3.5) * dt)
 
     # Bloom's own slow average, which is what gets subtracted from it below.
@@ -539,10 +586,19 @@ def dither_storm(ctx: Ctx):
     flash = float(np.clip(st["bloom"] - st["bloom_dc"], 0.0, 1.0))
     target = min(0.50, target + _FLASH_DENSITY * flash)
 
-    np.clip(field, 0.0, 1.0, out=lit_buf)
-    d = float(lit_buf.mean())
-    inside = float(np.count_nonzero((field > 0.0) & (field < 1.0))) / field.size
-    field += np.float32((target - d) / max(inside, 0.20))
+    if extreme:
+        # None of the above. The extreme mode keeps the original fixed
+        # baseline, which is the knob that made density a function of beat
+        # rate: nothing measures what the field is actually doing, so depth,
+        # rings, storm layers and the bloom offset below all add up
+        # unsupervised and a busy passage runs to white. Left in deliberately
+        # — see the mode's own docstring for the numbers it produces.
+        field += np.float32(0.07) + np.float32(0.66) * lvl
+    else:
+        np.clip(field, 0.0, 1.0, out=lit_buf)
+        d = float(lit_buf.mean())
+        inside = float(np.count_nonzero((field > 0.0) & (field < 1.0))) / field.size
+        field += np.float32((target - d) / max(inside, 0.20))
 
     # The onset inversion lives here: while inv > 0 the tile is lerped toward
     # its own inverse, so the field's troughs light instead of its crests and
@@ -558,7 +614,15 @@ def dither_storm(ctx: Ctx):
     # only part that moves. Written into a scratch buffer with fused ops
     # rather than three fresh (dr, dc) temporaries a frame.
     np.multiply(th0, np.float32(1.0) - np.float32(2.0) * st["inv"], out=th_buf)
-    th_buf += st["inv"]
+    if extreme:
+        # The bloom pulls the whole threshold down as well, on top of the
+        # inversion — a hit blooms the field toward solid rather than merely
+        # flipping it. This is the other half of the pile-up: bloom is already
+        # accumulating, and here it moves the bar every dot is measured
+        # against, so a run of hits walks the entire frame toward lit.
+        th_buf += st["inv"] - np.float32(0.5) * st["bloom"]
+    else:
+        th_buf += st["inv"]
     lit = field > th_buf
 
     codes = pack_braille(lit)
