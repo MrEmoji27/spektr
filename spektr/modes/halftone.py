@@ -23,6 +23,19 @@ from . import Ctx, empty, mode
 #: small matrix multiply. See ``_field`` for why the count barely costs here.
 LAYERS = 8
 
+#: Extra transient directions in the layer bank, beyond the eight base ones.
+#: They sit on the half-steps between the base angles and carry a finer grain,
+#: and they are silent until an onset wakes one — round-robin — after which it
+#: decays over a few tenths of a second. Waking one is a wider matrix multiply
+#: for a few frames rather than a new pass over the grid, so a busy passage
+#: reads as a *different* crosshatch, not just a faster one.
+STORM = 6
+
+#: Ring slots. A beat throws a ring and a burst of beats throws several; when
+#: the slots run out the oldest ring is retired to make room, so a drum fill
+#: reads as a drum fill instead of being throttled to one ring at a time.
+RING_SLOTS = 8
+
 #: Side of the blue-noise threshold tile. Tiled by absolute dot position, so
 #: 64 is a compromise: large enough that the eye cannot find the repeat in a
 #: moving field, small enough that building it is free.
@@ -47,12 +60,21 @@ COLOUR_STEPS = 10
 def dither_storm(ctx: Ctx):
     """The spectrum as eight travelling waves, thresholded to one bit.
 
-    Same family as Dither and a different animal. Dither sums eight *fixed*
-    wave fields and re-weights them, so the texture restates the spectrum
-    without ever moving on its own. Here each wave also has a phase that
-    advances, at a rate set by the level of the band that owns it, so a busy
-    band visibly races and a quiet one drifts. The spectrum chooses the
-    texture in both modes; only this one lets it choose the motion too.
+    Same family as Dither and a different animal. Dither bakes eight wave
+    fields once and re-weights them per frame, so its texture restates the
+    spectrum; what motion it has is one slow global drift shared by the whole
+    field (``dither_drift``, about 0.05-0.25 of a cycle a second). Measured on
+    a frozen spectrum that is 0.4% of cells changing per frame against 14%
+    here, because in this mode every wave carries its own phase advancing at a
+    rate set by the band that owns it — a busy band visibly races while a
+    quiet one crawls. The spectrum picks the texture in both; only this one
+    lets it pick the motion.
+
+    (Dither's own docstring claims it has no clock at all and that a frozen
+    spectrum is a frozen frame. That is not true of the code as it stands —
+    the drift accumulator is right there — so do not take that sentence as the
+    contrast this mode is drawn against. The contrast is one global drift
+    versus a phase per band.)
 
     **Why the layer count is nearly free.** Summing eight travelling waves
     over the dot grid looks like eight passes over several hundred thousand
@@ -66,7 +88,8 @@ def dither_storm(ctx: Ctx):
     sum into a single ``(dr, 2Q) @ (2Q, dc)`` matrix multiply, so the per-frame
     trigonometry is ``2·Q·dc`` values — about thirteen thousand at 400x100
     rather than 2.5 million — and BLAS does the rest. Adding layers widens a
-    matrix multiply instead of adding a pass over the grid.
+    matrix multiply instead of adding a pass over the grid; even the storm
+    layers below are just a wider matrix for the few frames they are alive.
 
     That is also why the phases can move at all. Dither had to bake its sine
     fields precisely because recomputing them was most of its cost; baked
@@ -80,7 +103,35 @@ def dither_storm(ctx: Ctx):
     retire off the edge; the field's own motion is unaffected by them, so a
     beat reads as something passing *through* the surface. The falloff is a
     triangular window rather than a gaussian — over a dot grid this size the
-    difference is invisible and ``exp`` is not.
+    difference is invisible and ``exp`` is not. A ring is a hard wall, not a
+    soft bump: a bright crest with a darker edge just ahead of it, so the hit
+    reads as a shockwave crossing the grain. Up to eight rings can be in
+    flight, and when the slots run out the oldest ring is retired rather than
+    a new hit going unanswered.
+
+    **Hits go inverted.** An onset also kicks the threshold itself. For about
+    a tenth of a second the blue-noise tile is inverted — the field's troughs
+    light instead of its crests, the texture itself flips — then the threshold
+    stays pulled down for a few more tenths of a second as a bloom, so a beat
+    is a flash that tears through the whole field before settling back to the
+    texture. The same kick also speeds the phase of every wave, base and storm
+    alike: hits drive the *motion* as well as the brightness, so the field
+    visibly lurches on the beat.
+
+    **Bass bends the field.** The low end does not just brighten the field, it
+    deforms it. A low-frequency phase offset is added along each axis, its
+    amplitude set by the bottom of the spectrum and its phase advancing on its
+    own clock, so the waves wrinkle and writhe with the bass. The offset is
+    one-dimensional — a per-column and per-row phase shift, scaled per layer
+    by how far that layer's direction runs along the axis — so it is folded
+    into the same factored sine/cosine passes and costs nothing structural.
+
+    **Storm layers.** A transient wakes extra waves. Six finer-grained layers
+    sit at the half-angles between the base directions, normally silent; each
+    onset wakes one of them round-robin and it decays over a few tenths of a
+    second, carrying its own fast phase. After a hit the crosshatch visibly
+    re-orients into a denser, sharper weave, then settles — a busy passage is
+    structurally different from a loud one, not just faster.
 
     **Blue noise, not Bayer.** Dither thresholds against an ordered Bayer
     matrix, which is what gives it its newspaper crosshatch. This one
@@ -105,22 +156,42 @@ def dither_storm(ctx: Ctx):
 
     def build():
         # Normalised coordinates, so the texture keeps its structure at any
-        # terminal size rather than getting finer as the grid grows.
+        # terminal size rather than getting finer as the grid grows. Kept in
+        # the scratch tuple as well as folded into ax/ay, because the bass
+        # warp phase offsets are evaluated over them every frame.
         x = (np.arange(dc, dtype=np.float32) - np.float32((dc - 1) / 2.0)) / np.float32(max(dc - 1, 1))
         y = (np.arange(dr, dtype=np.float32) - np.float32((dr - 1) / 2.0)) / np.float32(max(dr - 1, 1))
 
+        # The layer bank: eight base directions plus the storm layers, all
+        # factored the same way. The bank is a few hundred one-dimensional
+        # values, so precomputing the whole thing costs nothing; per frame
+        # only the live subset is touched.
+        #
         # Cycles across the field, not per dot. Dither's docstring records
         # what happens when this is read as a fraction of the dot count: the
         # high bands land at three dots per cycle, which is speckle rather
         # than structure and reads as a static mode. Three to seventeen
         # cycles is broad swells through fine grain, all of it visible.
-        ax = np.empty((LAYERS, dc), dtype=np.float32)
-        ay = np.empty((LAYERS, dr), dtype=np.float32)
-        for q in range(LAYERS):
-            th = math.pi * q / LAYERS
-            k = 2.0 * math.pi * (1.4 + 5.2 * (q / max(LAYERS - 1, 1)))
+        ax = np.empty((LAYERS + STORM, dc), dtype=np.float32)
+        ay = np.empty((LAYERS + STORM, dr), dtype=np.float32)
+        wqx = np.empty(LAYERS + STORM, dtype=np.float32)
+        wqy = np.empty(LAYERS + STORM, dtype=np.float32)
+        for q in range(LAYERS + STORM):
+            if q < LAYERS:
+                th = math.pi * q / LAYERS
+                k = 2.0 * math.pi * (1.4 + 5.2 * (q / max(LAYERS - 1, 1)))
+            else:
+                # Half-steps between the base angles, so the storm weave cuts
+                # across the base crosshatch instead of reinforcing it, and a
+                # finer grain than the base can reach.
+                th = math.pi * (2 * (q - LAYERS) + 1) / (2 * LAYERS)
+                k = 2.0 * math.pi * (6.5 + 2.5 * ((q - LAYERS) % 3))
             ax[q] = np.float32(math.cos(th) * k) * x
             ay[q] = np.float32(math.sin(th) * k) * y
+            # How much a layer's direction runs along each axis; the bass
+            # warp moves a layer along its own travel direction.
+            wqx[q] = abs(math.cos(th))
+            wqy[q] = abs(math.sin(th))
 
         # Distance from centre, quantised once into a lookup index.
         #
@@ -135,14 +206,22 @@ def dither_storm(ctx: Ctx):
         ridx = np.clip(rad * np.float32((RAD_BINS - 1) / RAD_MAX),
                        0, RAD_BINS - 1).astype(np.int32)
 
-        return ax, ay, ridx, _blue_noise(TILE), _tile_index(dr, dc)
+        return ax, ay, wqx, wqy, x, y, ridx, _blue_noise(TILE), _tile_index(dr, dc)
 
-    ax, ay, ridx, tile, (ti, tj) = ctx.scratch("dither_storm", build)
+    ax, ay, wqx, wqy, xn, yn, ridx, tile, (ti, tj) = ctx.scratch("dither_storm", build)
 
     st = ctx.state.setdefault("dither_storm_st", {
         "phase": np.zeros(LAYERS, dtype=np.float32),
-        "r": np.zeros(4, dtype=np.float32),      # ring radii; 0 means the slot is free
-        "a": np.zeros(4, dtype=np.float32),      # ring amplitudes
+        "tp": np.zeros(STORM, dtype=np.float32),        # storm layer phases
+        "tq": np.zeros(STORM, dtype=np.float32),        # storm layer amplitudes
+        "storm_i": 0,                                   # round-robin wake index
+        "r": np.zeros(RING_SLOTS, dtype=np.float32),    # ring radii; 0 means the slot is free
+        "a": np.zeros(RING_SLOTS, dtype=np.float32),    # ring amplitudes
+        "inv": np.float32(0.0),                         # threshold inversion, 0..1
+        "bloom": np.float32(0.0),                       # threshold pull-down, 0..1.3
+        "kick": np.float32(0.0),                        # phase-rate boost, 0..1.3
+        "wp_x": np.float32(0.0),                        # bass warp phases
+        "wp_y": np.float32(0.0),
     })
 
     # ── the band weights ──
@@ -157,29 +236,77 @@ def dither_storm(ctx: Ctx):
     amp = amp / np.float32(max(total, 1e-3))
 
     dt = np.float32(max(ctx.dt, 0.0))
-    # Each layer drifts at a rate set by its own band. A band carrying
-    # nothing barely moves, so silence is a slow field rather than a still
-    # one, and a band that suddenly fills visibly takes off.
-    st["phase"] += (np.float32(0.6) + amp * np.float32(26.0)) * dt
-    # Wrapped so the phase cannot grow until float32 loses resolution in the
-    # fractional part -- a mode left running for hours would otherwise start
-    # stepping its own animation coarsely.
-    st["phase"] %= np.float32(2.0 * math.pi)
 
-    # ── rings ──
+    # ── bass warp ──
+    # The bottom of the spectrum sets how far the field's phase is bent along
+    # each axis; the warp phases advance on their own clocks, so even a steady
+    # bass note keeps the field writhing instead of freezing into a bent
+    # static pattern. Both axes share the same band, at different rates so the
+    # two bends never lock into a standing figure.
+    bass = ctx.range(0.0, 0.30)
+    st["wp_x"] = (st["wp_x"] + np.float32(0.7 + 5.5 * bass) * dt) % np.float32(2.0 * math.pi)
+    st["wp_y"] = (st["wp_y"] + np.float32(0.9 + 7.0 * bass) * dt) % np.float32(2.0 * math.pi)
+    wx_off = np.float32(2.2 * bass) * np.sin(np.float32(2.0 * math.pi * 1.5) * xn + st["wp_x"])
+    wy_off = np.float32(2.2 * bass) * np.sin(np.float32(2.0 * math.pi * 1.5) * yn + st["wp_y"])
+
+    # ── onsets: flash, storm, rings ──
     # ctx.onsets is the count for THIS frame. Never difference ctx.onset_seq
     # privately: scratch survives a mode switch, so a mode that keeps its own
     # last-seen counter replays every beat that played while it was not
     # drawing. The contract is at spektr/modes/__init__.py:70-91.
     if ctx.onsets:
-        free = np.flatnonzero(st["r"] <= 0.0)[:ctx.onsets]
-        for i in free:
-            st["r"][i] = np.float32(1e-3)
-            st["a"][i] = np.float32(0.45 + 0.55 * min(1.0, ctx.onset_strength))
+        s = np.float32(min(1.0, ctx.onset_strength))
+        # Threshold inversion: for roughly a tenth of a second the tile is
+        # lerped toward its own inverse, so the field's troughs light instead
+        # of its crests — the texture itself flips. The bloom then keeps the
+        # threshold pulled down for a few more tenths, and the kick speeds
+        # every phase, so a hit is a flash and a lurch, not just a brightening.
+        st["inv"] = max(st["inv"], np.float32(0.5 + 0.5 * s))
+        st["bloom"] = min(np.float32(1.3), st["bloom"] + np.float32(0.45 + 0.55 * s))
+        st["kick"] = min(np.float32(1.3), st["kick"] + np.float32(0.4 + 0.6 * s))
 
+        # One storm layer per hit, round-robin. The amplitude caps a little
+        # past one so back-to-back hits read as a pile-up rather than a clamp.
+        for _ in range(ctx.onsets):
+            i = st["storm_i"]
+            st["tq"][i] = min(np.float32(1.2), st["tq"][i] + np.float32(0.55 + 0.45 * s))
+            st["storm_i"] = (i + 1) % STORM
+
+        # Rings fill the free slots, retiring the oldest live ring when a
+        # burst outruns the slot count — a drum fill must read as a drum
+        # fill, not be throttled to one ring at a time.
+        need = ctx.onsets
+        free = np.flatnonzero(st["r"] <= 0.0)
+        if need > free.size:
+            drop = np.argsort(st["r"])[-(need - free.size):]
+            st["r"][drop] = 0.0
+            free = np.flatnonzero(st["r"] <= 0.0)
+        for i in free[:need]:
+            st["r"][i] = np.float32(1e-3)
+            st["a"][i] = np.float32(1.3 * (0.55 + 1.15 * s))
+
+    st["inv"] = max(np.float32(0.0), st["inv"] - np.float32(8.5) * dt)
+    st["bloom"] = max(np.float32(0.0), st["bloom"] - np.float32(2.3) * dt)
+    st["kick"] = max(np.float32(0.0), st["kick"] - np.float32(3.5) * dt)
+
+    # Storm layers decay; their phases keep advancing on their own fast clock,
+    # boosted by the kick, so the wake left by a hit keeps moving as it fades.
+    st["tq"] *= np.exp(-dt / np.float32(0.32))
+    st["tp"] = (st["tp"] + (np.float32(16.0) + np.float32(30.0) * st["kick"]) * dt) % np.float32(2.0 * math.pi)
+
+    # Each layer drifts at a rate set by its own band, kicked hard by any
+    # onset. A band carrying nothing barely moves, so silence is a slow field
+    # rather than a still one, and a band that suddenly fills visibly takes
+    # off. Wrapped so the phase cannot grow until float32 loses resolution in
+    # the fractional part -- a mode left running for hours would otherwise
+    # start stepping its own animation coarsely.
+    st["phase"] += (np.float32(0.9) + amp * np.float32(34.0) + np.float32(16.0) * st["kick"]) * dt
+    st["phase"] %= np.float32(2.0 * math.pi)
+
+    # ── rings ──
     live = st["r"] > 0.0
     if live.any():
-        st["r"][live] += (np.float32(1.15) + np.float32(0.9) * ctx.energy) * dt
+        st["r"][live] += (np.float32(1.5) + np.float32(1.4) * ctx.energy) * dt
         # Retirement is measured, not guessed. x and y are normalised to
         # +/-0.5, so ``rad`` tops out at sqrt(0.5) ~ 0.707 in the corners:
         # a ring is fully off the grid just past that, and anything larger
@@ -192,7 +319,25 @@ def dither_storm(ctx: Ctx):
         st["a"][gone] = 0.0
 
     # ── the field, in one matrix multiply ──
-    field = _field(ax, ay, st["phase"], amp)
+    # The live set is the eight base layers plus whatever storm layers a
+    # recent hit woke, so the matrix is a little wider for a few frames after
+    # an onset and no wider at all the rest of the time.
+    live_t = np.flatnonzero(st["tq"] > np.float32(0.02))
+    sel = np.concatenate((np.arange(LAYERS, dtype=np.int32), LAYERS + live_t))
+    ph = np.concatenate((st["phase"], st["tp"][live_t]))
+    am = np.concatenate((amp, st["tq"][live_t]))
+    # The bass warp rides on the phase: each layer bends along its own axis
+    # by wq·offset — still one-dimensional, still factored, still one GEMM.
+    # Both warp offsets are laid along the layer axis the same way: the per-
+    # layer weight is the column and the offset is the row. wy_off is a 1-D
+    # array over dot ROWS, so it broadcasts as [None, :] here exactly as
+    # wx_off does over columns -- writing it as [:, None] makes numpy try to
+    # line the layer count up against the row count and the mode dies with
+    # "operands could not be broadcast together with shapes (8,1) (96,1)"
+    # at every grid size.
+    px = ax[sel] + ph[:, None] + wqx[sel, None] * wx_off[None, :]
+    py = ay[sel] + wqy[sel, None] * wy_off[None, :]
+    field = _field(px, py, am)
 
     hot = np.flatnonzero(st["r"] > 0.0)
     if hot.size:
@@ -203,25 +348,38 @@ def dither_storm(ctx: Ctx):
         centres = np.linspace(0.0, RAD_MAX, RAD_BINS, dtype=np.float32)
         profile = np.zeros(RAD_BINS, dtype=np.float32)
         for i in hot:
-            d = np.abs(centres - st["r"][i]) * np.float32(7.0)
-            profile += (np.float32(1.0) - np.clip(d, 0.0, 1.0)) * st["a"][i] * np.float32(1.3)
+            r = st["r"][i]
+            crest = np.float32(1.0) - np.clip(np.abs(centres - r) * np.float32(5.0), 0.0, 1.0)
+            inner = np.float32(1.0) - np.clip(np.abs(centres - (r - np.float32(0.06))) * np.float32(5.0), 0.0, 1.0)
+            outer = np.float32(1.0) - np.clip(np.abs(centres - (r + np.float32(0.06))) * np.float32(5.0), 0.0, 1.0)
+            # A hard crest with a faint interior glow and a darker edge just
+            # ahead of it: the ring reads as a shockwave passing through the
+            # grain rather than a soft brightening.
+            profile += crest * st["a"][i]
+            profile += inner * st["a"][i] * np.float32(0.5)
+            profile -= outer * st["a"][i] * np.float32(0.35)
         field += profile[ridx]
 
     # ── to one bit ──
     # Depth is what loudness drives: a louder passage is a deeper, denser
-    # field and a quiet one flattens toward even grey, which is the same
-    # bargain Dither makes.
+    # field and a quiet one flattens toward dark. The swing is deliberately
+    # wide — loud is near-solid — which is the point of a storm.
     lvl = np.float32(min(1.0, total / max(LAYERS * 0.55, 1e-3)))
-    field *= np.float32(0.55) + np.float32(0.85) * lvl
+    field *= np.float32(0.40) + np.float32(1.35) * lvl
     # The baseline is what silence looks like, and it is a dot density rather
     # than a cell count: at 0.30 roughly a third of dots survive the
     # threshold, and since a braille cell carries eight of them that lights
-    # 94% of *cells* -- a silent track read as a solid sheet. 0.16 is an even
-    # grey with the texture still legible in it, which is what a quiet
-    # passage should be.
-    field += np.float32(0.16) + np.float32(0.34) * lvl
+    # 94% of *cells* -- a silent track read as a solid sheet. 0.07 is
+    # near-black but still an even speckle, which is the quiet end of the
+    # swing; it never reads as a black screen or a solid sheet.
+    field += np.float32(0.07) + np.float32(0.66) * lvl
 
     th = tile[ti[:, None], tj[None, :]]
+    # The onset flash lives here: while inv > 0 the tile is lerped toward its
+    # own inverse, so the field's troughs light instead of its crests, and the
+    # bloom pulls the whole threshold down — a hit blooms the field toward
+    # solid, then settles back to the texture.
+    th = th * (np.float32(1.0) - np.float32(2.0) * st["inv"]) + st["inv"] - np.float32(0.5) * st["bloom"]
     lit = field > th
 
     codes = pack_braille(lit)
@@ -247,7 +405,7 @@ def dither_storm(ctx: Ctx):
     return codes, cidx
 
 
-def _field(ax: np.ndarray, ay: np.ndarray, phase: np.ndarray, amp: np.ndarray) -> np.ndarray:
+def _field(px: np.ndarray, py: np.ndarray, amp: np.ndarray) -> np.ndarray:
     """Sum the travelling waves as one ``(dr, 2Q) @ (2Q, dc)`` product.
 
     ``sin(kx·x + ky·y + p)`` expands to ``sin(kx·x+p)·cos(ky·y) +
@@ -255,14 +413,15 @@ def _field(ax: np.ndarray, ay: np.ndarray, phase: np.ndarray, amp: np.ndarray) -
     the whole weighted sum a single GEMM. The amplitude rides on the x half so
     it is folded in by the same multiply rather than scaling the result after.
 
-    Everything trigonometric here is one-dimensional — ``Q·dc`` and ``Q·dr``
+    ``px`` and ``py`` are the fully assembled per-layer phase terms — base
+    phase, storm phase and the bass warp all arrive already folded in — so
+    everything trigonometric here is one-dimensional — ``Q·dc`` and ``Q·dr``
     values — which is the entire reason the phases are allowed to move.
     """
-    px = ax + phase[:, None]
     a = amp[:, None]
     bs = np.sin(px) * a
     bc = np.cos(px) * a
-    left = np.concatenate((np.cos(ay), np.sin(ay)), axis=0).T   # (dr, 2Q)
+    left = np.concatenate((np.cos(py), np.sin(py)), axis=0).T   # (dr, 2Q)
     right = np.concatenate((bs, bc), axis=0)                    # (2Q, dc)
     return left @ right
 
