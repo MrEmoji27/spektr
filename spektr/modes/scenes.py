@@ -332,28 +332,7 @@ def keys(ctx: Ctx):
     return codes, cidx
 
 
-@mode("Tunnel", group="scenes", blurb="flying down a pipe, ribbed by the beat")
-def tunnel(ctx: Ctx):
-    """Ribs travel down the pipe at an audio-reactive speed.
-
-    That speed varying is exactly the case ``ctx.t * speed`` gets wrong: since
-    phase is time times speed, changing speed retroactively rewrites the whole
-    history the multiplication represents, not just the rate going forward —
-    an ordinary loudness change teleports the ribs by however many turns of
-    ``depth * 0.55`` separate the old and new phase at the *current* ``t``,
-    which grows without bound the longer the session has been running. Traced
-    and measured during the Retro sun-scroll fix earlier this session: at
-    t=120s an energy change could jump the ring phase by ~130 turns in one
-    frame, and under a gentle energy wobble 53% of frames moved more than a
-    quarter rib-spacing. A ``ctx.dt``-accumulated phase in scratch is exactly
-    the fix Retro's scroll and ECG's/Spectro's column step already use — the
-    same bug wearing scenes.py's clothes instead of fields.py's or scope.py's.
-
-    ``turn * spin`` a few lines down is not this bug: that spin rate is a
-    constant (0.024), not a function of the music, so ``ctx.t * constant`` is
-    an ordinary, correct phase — it's only multiplying time by a *varying*
-    rate that's unsafe.
-    """
+def _tunnel(ctx, inward: bool):
     dr, dc = ctx.dot_rows, ctx.dot_cols
     if dr < 8 or dc < 8:
         return empty(ctx.w, ctx.h)
@@ -366,9 +345,10 @@ def tunnel(ctx: Ctx):
     depth = max_r / np.maximum(dist, 0.9)
 
     speed = 0.6 + ctx.energy * 2.4
-    phase = ctx.scratch("tunnel_phase", lambda: {"v": 0.0})
+    phase = ctx.scratch("tunnel{}_phase".format("_in" if inward else ""), lambda: {"v": 0.0})
     phase["v"] += speed * max(ctx.dt, 0.0)
-    rings = frac(depth * 0.55 - phase["v"])
+    direction = -1 if inward else 1
+    rings = frac(depth * 0.55 - direction * phase["v"])
     ribs = rings < (0.10 + 0.22 * nrg)
 
     spokes = frac(turn * 16.0 + depth * 0.03)
@@ -382,6 +362,11 @@ def tunnel(ctx: Ctx):
     codes = pack_braille(lit)
     cidx = ctx.ramp(cell_max(np.where(lit, near * (0.4 + 0.6 * nrg), 0.0)))
     return codes, cidx
+
+
+@mode("Tunnel", group="scenes", blurb="flying down a pipe, ribbed by the beat")
+def tunnel(ctx: Ctx):
+    return _tunnel(ctx, inward=False)
 
 
 @mode("Warp", group="scenes", blurb="starfield, accelerating with the music")
@@ -673,108 +658,6 @@ def boot(ctx: Ctx):
     cidx = ctx.ramp(np.clip(bright, 0.0, 1.0))
     return codes, cidx
 
-
-
-
-#: Concurrent rings in Tunnel In. Bounded so a dense passage cannot grow the
-#: arrays; at 8 the oldest is always well past the frame edge before reuse.
-_TIN_RINGS = 8
-
-
 @mode("Tunnel In", group="scenes", blurb="rings thrown out of the centre on the beat, rushing past you")
 def tunnel_in(ctx: Ctx):
-    """``Tunnel`` run the other way — and not by flipping a sign.
-
-    Tunnel's ribs march *into* the distance: a rib sits where
-    ``frac(depth * 0.55 - phase)`` is near zero, so as the phase grows each
-    rib's depth grows with it, which on an inverse-distance axis walks it
-    toward the centre. Negating that term would reverse the direction and
-    leave the mode otherwise identical — the same endless corridor of evenly
-    spaced ribs, read backwards.
-
-    Coming *at* you is a different thing to watch, so it is built differently.
-    Rings are discrete and beat-spawned rather than an infinite regular
-    pattern: one leaves the centre on each onset, and between beats nothing
-    new appears. What you are watching is the track throwing rings at you,
-    not a corridor scrolling.
-
-    The rush comes from perspective, not from a speed constant. Each ring
-    holds a depth ``z`` that falls at a steady rate, and its screen radius is
-    ``k / z`` — so it crawls while it is far away and tears across the frame
-    as it passes, which is what approaching actually looks like. A ring
-    moving outward at constant *radial* speed reads as a growing circle
-    instead, which is the tell that a mode is faking depth.
-
-    Rings also thicken and brighten as they near, because a rib subtends more
-    of your view the closer it gets. The spokes stay pinned to the walls and
-    do not travel, so there is a fixed corridor for the rings to arrive
-    through; without them the rings read as flat circles on a black field
-    rather than as structure in a pipe.
-    """
-    dr, dc = ctx.dot_rows, ctx.dot_cols
-    if dr < 8 or dc < 8:
-        return empty(ctx.w, ctx.h)
-
-    dist, turn, max_r = _polar(ctx)
-    n = min(16, ctx.n_display)
-    nrg = _angular_bands(ctx, turn, n, ctx.t * 0.024)
-
-    st = ctx.scratch("tunnel_in", lambda: {
-        "z": np.zeros(_TIN_RINGS, dtype=np.float32),      # 0 == free
-        "amp": np.zeros(_TIN_RINGS, dtype=np.float32),
-        "acc": 0.0,
-    })
-    # ctx.onsets, not a private difference of ctx.onset_seq. Scratch survives
-    # a mode switch, so differencing here would replay every beat that played
-    # while the mode was not drawing, all in a single frame.
-    onsets = ctx.onsets
-
-    # A ring per beat, plus a slow clock so a passage the detector reads
-    # poorly still has something arriving — the same reasoning as Pulse's
-    # rate term, and not a second detector: it cannot tell where a beat is.
-    st["acc"] += (0.35 + ctx.energy * 1.5) * max(ctx.dt, 0.0)
-    want = onsets
-    if st["acc"] >= 1.0:
-        st["acc"] -= 1.0
-        want += 1
-    if want:
-        free = np.flatnonzero(st["z"] <= 0.0)[:want]
-        for i in free:
-            st["z"][i] = np.float32(1.0)
-            st["amp"][i] = np.float32(0.45 + 0.55 * min(1.0, ctx.onset_strength + ctx.energy))
-
-    # Depth falls at a steady rate; the radius is 1/z, so the motion across
-    # the frame accelerates on its own.
-    live = st["z"] > 0.0
-    if live.any():
-        st["z"][live] -= (0.30 + ctx.energy * 0.85) * np.float32(max(ctx.dt, 0.0))
-        st["z"][st["z"] <= 0.06] = 0.0
-
-    # The corridor: fixed spokes, so the rings arrive through something.
-    spokes = frac(turn * 16.0) < 0.075
-    lit = spokes & (dist > 1.5)
-    glow = np.where(lit, 0.16, 0.0).astype(np.float32)
-
-    near_r = dist / max_r
-    for i in np.flatnonzero(st["z"] > 0.0):
-        z = float(st["z"][i])
-        r = 0.16 / z                      # perspective radius, in max_r units
-        if r > 1.9:
-            continue
-        # Thickness grows as it approaches, so a near ring is a band and a
-        # far one is a hairline.
-        w = 0.012 + 0.075 * (1.0 - z)
-        band = np.abs(near_r - r) < w
-        if not band.any():
-            continue
-        a = float(st["amp"][i]) * (0.50 + 0.50 * (1.0 - z))
-        np.maximum(glow, np.where(band, np.float32(a), np.float32(0.0)), out=glow)
-
-    lit |= glow > 0.2
-    lit &= dist > 1.2
-    # Dither the far field only: near the edge the rings should be solid.
-    lit &= noise((dr, dc), ctx.frame) < (0.55 + near_r * 0.45)
-
-    codes = pack_braille(lit)
-    cidx = ctx.ramp(cell_max(np.where(lit, glow * (0.55 + 0.45 * nrg), 0.0)))
-    return codes, cidx
+    return _tunnel(ctx, inward=True)
