@@ -8,8 +8,15 @@ import numpy as np
 
 from ..palette import RAMP_STEPS
 from ..render import SPACE, cell_max, frac, noise, pack_braille
-from . import Ctx, band_columns, empty, mode, spread
-from .particles import _angular_bands, _polar
+from . import (
+    Ctx,
+    angular_bands as _angular_bands,
+    band_columns,
+    empty,
+    mode,
+    polar_grid as _polar,
+    spread,
+)
 
 _FULL = ord("█")
 

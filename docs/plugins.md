@@ -122,8 +122,33 @@ From `spektr.api`:
 | `resample_bands(bands, n)` | area-averaged resample |
 | `band_columns(w, n)` | column → band map with gutters |
 | `spread(levels, w)` | interpolate band levels across every column |
+| `polar_grid(ctx)` | `(dist, turn, max_r)` over the dot grid, aspect-corrected and cached per size |
+| `angular_bands(ctx, turn, n, spin)` | every dot's angle → its band level, blended, one gather |
 | `empty(w, h)` | a blank `(codes, cidx)` pair |
 | `BLOCKS_UP`, `BLOCKS_LEFT`, `SHADES`, `SPACE` | character sets |
+
+### Rhythm
+
+`ctx` carries the raw analyser fields — `onsets`, `onset_strength`, `flux`,
+`tempo_bpm`, `beat_phase` — and two derived ones that are usually what you
+want:
+
+| | |
+|---|---|
+| `ctx.pulse` | `0..1` beat-locked swell, `1.0` on the beat, decaying through the bar |
+| `ctx.drive` | `0..1` how percussive the signal is right now |
+
+Prefer these to the raw fields unless you need something they don't express.
+`beat_phase` is `0.0` whenever `tempo_bpm` is `0.0`, and `0.0` is *on the
+beat*, so the obvious `1 - ctx.beat_phase` reads as a permanent
+full-strength swell through silence and the opening seconds of every track.
+`ctx.pulse` has that gate built in and returns `0.0` until there is a tempo.
+
+Use `ctx.pulse` for swells and `ctx.drive` for rates — how fast something
+scrolls, spins or spawns. `ctx.onsets` is still the right call for discrete
+events; it is the count for *this frame*, so never difference `onset_seq`
+yourself (scratch survives a mode switch, and a private counter replays every
+beat that played while your mode was not drawing).
 
 ## Example: a dot-grid mode
 

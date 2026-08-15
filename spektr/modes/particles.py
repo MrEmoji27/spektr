@@ -7,7 +7,15 @@ import math
 import numpy as np
 
 from ..render import cell_max, frac, noise, pack_braille
-from . import Ctx, band_columns, empty, mode, spread
+from . import (
+    Ctx,
+    angular_bands as _angular_bands,
+    band_columns,
+    empty,
+    mode,
+    polar_grid as _polar,
+    spread,
+)
 
 _INV24 = np.float32(1.0 / 0x1000000)
 
@@ -29,49 +37,6 @@ def _noise_at(rows: np.ndarray, cols: np.ndarray, seed: int) -> np.ndarray:
         h *= np.uint32(0x45D9F3B)
         h ^= h >> np.uint32(16)
     return (h & np.uint32(0xFFFFFF)).astype(np.float32) * _INV24
-
-
-def _polar(ctx: Ctx):
-    """Cached distance/angle grids. Only rebuilt when the terminal resizes."""
-    dr, dc = ctx.dot_rows, ctx.dot_cols
-
-    def build():
-        cx, cy = dc / 2.0, dr / 2.0
-        x_scale = cy / max(cx, 1.0)          # braille cells are ~2x taller than wide
-        xs = (np.arange(dc, dtype=np.float32) - cx) * x_scale
-        ys = np.arange(dr, dtype=np.float32) - cy
-        dx = xs[None, :]
-        dy = ys[:, None]
-        dist = np.sqrt(dx * dx + dy * dy).astype(np.float32)
-        ang = np.arctan2(dy + np.zeros_like(dx), dx + np.zeros_like(dy))
-        ang = np.where(ang < 0, ang + 2 * math.pi, ang).astype(np.float32)
-        # angle expressed as a 0..1 turn, so the per-frame path avoids a divide
-        turn = (ang / np.float32(2 * math.pi)).astype(np.float32)
-        return dist, turn, max(1.0, cy - 1.0)
-
-    return ctx.scratch("polar", build)
-
-
-def _angular_bands(ctx: Ctx, turn: np.ndarray, n: int, spin: float) -> np.ndarray:
-    """Map every dot's angle onto the band set, blended between neighbours.
-
-    ``turn`` is the angle as a fraction of a full turn. Doing the lookup as a
-    single table index into a pre-blended ramp costs one gather instead of the
-    two gathers, a cosine and three multiplies the per-dot blend needed — worth
-    it when this runs over 100k dots a frame.
-    """
-    steps = 512
-    bands = ctx.display_bands(n).astype(np.float32)
-    pos = np.linspace(0.0, n, steps, endpoint=False, dtype=np.float32)
-    bi = pos.astype(np.int32) % n
-    frac = pos - np.floor(pos)
-    tm = (1.0 - np.cos(frac * np.float32(math.pi))) * np.float32(0.5)
-    lut = bands[bi] * (1.0 - tm) + bands[(bi + 1) % n] * tm
-
-    # keep the spin bounded so float32 precision doesn't drift over a long session
-    offset = np.float32(float(spin) % 1.0)
-    idx = ((turn + offset) * np.float32(steps)).astype(np.int32) & (steps - 1)
-    return lut[idx]
 
 
 @mode("Scatter", group="particles", blurb="density sparkle, thicker where it's loud")

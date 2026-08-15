@@ -35,9 +35,11 @@ from .modes import (
     Ctx,
     Mode,
     ModeNameTaken,
+    angular_bands,
     band_columns,
     empty,
     mode,
+    polar_grid,
     spread,
 )
 from .palette import RAMP_STEPS, Palette
@@ -83,4 +85,7 @@ __all__ = [
     "band_columns",
     "spread",
     "empty",
+    # polar layout, for modes drawn about a centre
+    "polar_grid",
+    "angular_bands",
 ]

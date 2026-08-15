@@ -36,7 +36,7 @@ import numpy as np
 
 from ..render import cell_max, frac, noise, pack_braille
 from . import Ctx, empty, mode, spread
-from .particles import _polar
+from . import polar_grid as _polar
 
 _ARM_TURN = 0.08   # fixed tonearm rest angle, as a fraction of a full turn
 _VINYL_BANDS = 14

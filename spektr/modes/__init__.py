@@ -13,6 +13,7 @@ surface — this module is free to move around underneath it.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from functools import cached_property, lru_cache
 from typing import Callable
@@ -373,6 +374,79 @@ def empty(w: int, h: int) -> tuple[np.ndarray, np.ndarray]:
         np.full((h, w), SPACE, dtype=np.int32),
         np.zeros((h, w), dtype=np.int32),
     )
+
+
+# ── shared polar geometry ────────────────────────────────────────────────────
+#
+# These two lived in ``particles.py`` and were imported out of it by
+# ``scenes.py`` and ``lofi.py``, which made a leaf module the de facto home of
+# a shared primitive: adding a polar mode to a third file meant importing from
+# a sibling that has nothing to do with it. They belong here beside
+# ``band_columns`` and ``spread``, which are the same kind of thing.
+#
+# Not every polar mode uses these, and that is deliberate rather than an
+# oversight to clean up later. ``Needle`` pivots at the bottom edge of a
+# *cell* grid rather than the centre of a dot grid; ``Locket`` normalises each
+# axis independently so the heart stretches to fill whatever aspect it is
+# given; ``Kaleidoscope`` evaluates on a half-width ``|x|`` fold so that a dot
+# and its mirror compute bit-identical values. Those are different geometries
+# with different reasons, and forcing them through one signature would cost
+# more in parameters than it saves in lines.
+#
+# What *was* worth removing is two derivations of the same grid inside one
+# function, which is how ``Kaleidoscope`` ended up with ``max(1.0, cy - 1.0)``
+# in one place and ``max(cy - 1.0, 1.0)`` in another — the same number by luck
+# rather than by construction.
+
+def polar_grid(ctx: Ctx):
+    """``(dist, turn, max_r)`` over the dot grid, cached per size.
+
+    ``dist`` is in dots from the centre, aspect-corrected so a circle comes
+    out round rather than as an ellipse — a braille cell is about twice as
+    tall as it is wide. ``turn`` is the angle as a fraction of a full turn
+    (0..1), which is the form :func:`angular_bands` wants and which keeps a
+    divide out of the per-frame path. ``max_r`` is the inscribed radius.
+
+    Rebuilt only when the terminal resizes.
+    """
+    dr, dc = ctx.dot_rows, ctx.dot_cols
+
+    def build():
+        cx, cy = dc / 2.0, dr / 2.0
+        x_scale = cy / max(cx, 1.0)          # braille cells are ~2x taller than wide
+        xs = (np.arange(dc, dtype=np.float32) - cx) * x_scale
+        ys = np.arange(dr, dtype=np.float32) - cy
+        dx = xs[None, :]
+        dy = ys[:, None]
+        dist = np.sqrt(dx * dx + dy * dy).astype(np.float32)
+        ang = np.arctan2(dy + np.zeros_like(dx), dx + np.zeros_like(dy))
+        ang = np.where(ang < 0, ang + 2 * math.pi, ang).astype(np.float32)
+        turn = (ang / np.float32(2 * math.pi)).astype(np.float32)
+        return dist, turn, max(1.0, cy - 1.0)
+
+    return ctx.scratch("polar", build)
+
+
+def angular_bands(ctx: Ctx, turn: np.ndarray, n: int, spin: float) -> np.ndarray:
+    """Map every dot's angle onto the band set, blended between neighbours.
+
+    ``turn`` is the angle as a fraction of a full turn. Doing the lookup as a
+    single table index into a pre-blended ramp costs one gather instead of the
+    two gathers, a cosine and three multiplies the per-dot blend needed — worth
+    it when this runs over 100k dots a frame.
+    """
+    steps = 512
+    bands = ctx.display_bands(n).astype(np.float32)
+    pos = np.linspace(0.0, n, steps, endpoint=False, dtype=np.float32)
+    bi = pos.astype(np.int32) % n
+    f = pos - np.floor(pos)
+    tm = (1.0 - np.cos(f * np.float32(math.pi))) * np.float32(0.5)
+    lut = bands[bi] * (1.0 - tm) + bands[(bi + 1) % n] * tm
+
+    # keep the spin bounded so float32 precision doesn't drift over a long session
+    offset = np.float32(float(spin) % 1.0)
+    idx = ((turn + offset) * np.float32(steps)).astype(np.int32) & (steps - 1)
+    return lut[idx]
 
 
 # importing the mode modules registers them, in menu order
