@@ -68,6 +68,11 @@ SELF_ANIMATING = {
     # continuous spin (Kaleidoscope rotates its mirror array; the
     # scrollwork curls turn on their anchors even at a frozen spectrum)
     "Kaleidoscope", "Valentine", "Tunnel In", "Dither", "Locket",
+    # every wave carries a phase that advances on its own, at a rate set by
+    # the band driving it, and onset rings keep travelling outward after the
+    # beat that threw them — so a frozen spectrum still moves, which is the
+    # whole distinction from Dither next to it
+    "Dither Storm",
 }
 
 #: Modes driven by the waveform rather than the band levels.
