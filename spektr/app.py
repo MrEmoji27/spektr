@@ -59,13 +59,15 @@ class Spektr(App):
         border-left: tall $accent;
         padding: 0 1;
     }
-    /* Picker holds up to 29 mode names, each with a blurb that can run past
-       sixty characters; SettingsPanel holds five rows with short notes. Both
-       used to share one 32-wide rule, which was fine for the settings notes
-       and far too narrow for the mode blurbs — every one of them wrapped,
-       and wrapped text with no hanging indent reads as a jumbled paragraph
-       rather than a list. Widened, and given each its own value now that
-       they don't actually want the same one. */
+    /* Picker lists fifty mode names; SettingsPanel holds eight rows with short
+       notes. Both used to share one 32-wide rule, which was fine for the
+       settings notes and far too narrow for what the mode picker showed then —
+       a blurb per mode, some past sixty characters, every one of them wrapping
+       into a jumbled paragraph. The blurbs are no longer shown here (see
+       action_pick_mode), so the width is now set by the longest mode NAME plus
+       the current-item marker, with room for the theme picker's swatches. Kept
+       separate from SettingsPanel because the two still don't want the same
+       number. */
     Picker > #panel {
         width: 40;
     }
@@ -236,8 +238,15 @@ class Spektr(App):
 
     def action_pick_mode(self) -> None:
         viz = self.viz
+        # Names only. The blurbs are still on every mode and still printed by
+        # the ``--list`` CLI; they are just not shown here. At fifty modes the
+        # picker was a wall of prose — two lines each, the dim line longer than
+        # the name — and scanning it for a mode you already knew the name of
+        # meant reading past a description you did not want. The plugin marker
+        # stays, because that is provenance rather than description: it is the
+        # only place the UI says a mode did not ship with spektr.
         labels = {
-            m.name: (f"{m.blurb}  ·{m.plugin}" if m.is_plugin else m.blurb)
+            m.name: (f"·{m.plugin}" if m.is_plugin else "")
             for m in mode_registry.MODES
         }
 
