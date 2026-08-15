@@ -52,7 +52,16 @@ RAD_MAX = 0.80
 #: Levels the colour is folded onto before it reaches the ramp. This is a
 #: render-cost control rather than an aesthetic one — see the note at the end
 #: of ``dither_storm`` for what an unquantised field costs downstream.
-COLOUR_STEPS = 10
+#:
+#: Ten until the strip cost was measured against the alternatives on a live
+#: frame sequence at 400x100: 10 steps is 4.93 ms and 7734 segments, 8 is
+#: 3.44 ms and 5936, 6 is 2.80 ms and 4559. Colour here rides a one-bit
+#: stipple that is already carrying the detail, so the ramp is doing less
+#: work than the number suggests and 8 is not visibly flatter than 10 — 6 is,
+#: which is where this stops. Smoothing the field before quantising was tried
+#: instead and is worse on both counts: a 3-tap blur puts values *between* the
+#: existing levels and took the same sequence to 8.78 ms and 15811 segments.
+COLOUR_STEPS = 8
 
 
 @mode("Dither Storm", group="fields",
@@ -147,6 +156,17 @@ def dither_storm(ctx: Ctx):
     Bayer tiling and for the same reason: it keeps the surface one continuous
     skin instead of restarting at a row boundary or folding on a mirror line.
 
+    **Continuous inputs under the discrete ones.** Everything above is
+    onset-driven, and an onset only exists on the frames where the peak
+    picker committed to one. Two continuous fields sit underneath so the mode
+    keeps answering to the music in the gaps: ``flux`` — the raw
+    detection function, i.e. how percussive the signal is right now — adds to
+    every layer's phase rate, so a dense passage the detector is conservative
+    about still races; and ``beat_phase`` swells the field's depth on the
+    pulse and lets it settle through the bar. Both are gated the way the Ctx
+    contract requires — ``beat_phase`` on ``tempo_bpm``, which is 0.0 until a
+    tempo is established and takes the phase to 0.0 with it.
+
     Colour walks the ramp by each cell's strongest dot, so the crest of a
     passing ring sits highest in the ramp.
     """
@@ -206,9 +226,28 @@ def dither_storm(ctx: Ctx):
         ridx = np.clip(rad * np.float32((RAD_BINS - 1) / RAD_MAX),
                        0, RAD_BINS - 1).astype(np.int32)
 
-        return ax, ay, wqx, wqy, x, y, ridx, _blue_noise(TILE), _tile_index(dr, dc)
+        # The threshold laid out over the whole grid, gathered ONCE per size.
+        #
+        # This used to be ``tile[ti[:, None], tj[None, :]]`` evaluated every
+        # frame, which is a two-dimensional fancy index producing a
+        # (dr, dc) array — 0.91 ms at 400x100, measured, and the single
+        # largest item in this mode's build. Nothing in it depends on the
+        # audio: the tile is fixed at construction and the index arrays are
+        # pure functions of the grid size, so it produced a bit-identical
+        # array sixty times a second. What the beat actually moves is the
+        # affine transform applied to it below, and that is two fused passes
+        # over a cached buffer.
+        ti, tj = _tile_index(dr, dc)
+        th0 = _blue_noise(TILE)[ti[:, None], tj[None, :]].astype(np.float32)
 
-    ax, ay, wqx, wqy, xn, yn, ridx, tile, (ti, tj) = ctx.scratch("dither_storm", build)
+        # Output buffers, sized once. Both are written in full every frame,
+        # so there is nothing to clear and nothing stale to read.
+        return (ax, ay, wqx, wqy, x, y, ridx, th0,
+                np.empty((dr, dc), dtype=np.float32),
+                np.empty((dr, dc), dtype=np.float32))
+
+    ax, ay, wqx, wqy, xn, yn, ridx, th0, th_buf, lit_buf = ctx.scratch(
+        "dither_storm", build)
 
     st = ctx.state.setdefault("dither_storm_st", {
         "phase": np.zeros(LAYERS, dtype=np.float32),
@@ -300,7 +339,23 @@ def dither_storm(ctx: Ctx):
     # off. Wrapped so the phase cannot grow until float32 loses resolution in
     # the fractional part -- a mode left running for hours would otherwise
     # start stepping its own animation coarsely.
-    st["phase"] += (np.float32(0.9) + amp * np.float32(34.0) + np.float32(16.0) * st["kick"]) * dt
+    #
+    # ``flux`` is in here alongside the kick, and the two are answering
+    # different questions. The kick is discrete: it exists only on frames
+    # where the peak picker committed to an onset, and it decays from there.
+    # Flux is the raw detection function — how percussive the signal is *right
+    # now* — and it is continuous and safe at any frame rate. On material the
+    # detector is conservative about (brushed drums, a busy mix where nothing
+    # clears the adaptive threshold) the kick never fires and the field was
+    # left crawling at its band rate through a passage a listener hears as
+    # dense. Flux keeps the motion honest between hits; the kick still
+    # supplies the lurch on the ones that land.
+    st["phase"] += (
+        np.float32(0.9)
+        + amp * np.float32(34.0)
+        + np.float32(16.0) * st["kick"]
+        + np.float32(11.0) * np.float32(min(1.0, ctx.flux))
+    ) * dt
     st["phase"] %= np.float32(2.0 * math.pi)
 
     # ── rings ──
@@ -365,6 +420,17 @@ def dither_storm(ctx: Ctx):
     # field and a quiet one flattens toward dark. The swing is deliberately
     # wide — loud is near-solid — which is the point of a storm.
     lvl = np.float32(min(1.0, total / max(LAYERS * 0.55, 1e-3)))
+    # Beat-locked depth. The rings and the bloom are onset-driven, so between
+    # hits the depth was a pure function of level and the field breathed only
+    # when something was detected. ``beat_phase`` is continuous and available
+    # in the gaps, so the surface swells on the pulse and settles through the
+    # bar whether or not the peak picker found that particular beat.
+    #
+    # Gated on ``tempo_bpm``: it is 0.0 until a tempo is established and takes
+    # ``beat_phase`` to 0.0 with it, which read ungated is a permanent
+    # on-the-beat swell — including through silence, where it is most wrong.
+    if ctx.tempo_bpm > 0.0:
+        lvl = np.float32(min(1.0, float(lvl) * (1.0 + 0.13 * (1.0 - ctx.beat_phase) ** 2)))
     field *= np.float32(0.40) + np.float32(1.35) * lvl
     # The baseline is what silence looks like, and it is a dot density rather
     # than a cell count: at 0.30 roughly a third of dots survive the
@@ -374,13 +440,17 @@ def dither_storm(ctx: Ctx):
     # swing; it never reads as a black screen or a solid sheet.
     field += np.float32(0.07) + np.float32(0.66) * lvl
 
-    th = tile[ti[:, None], tj[None, :]]
     # The onset flash lives here: while inv > 0 the tile is lerped toward its
     # own inverse, so the field's troughs light instead of its crests, and the
     # bloom pulls the whole threshold down — a hit blooms the field toward
     # solid, then settles back to the texture.
-    th = th * (np.float32(1.0) - np.float32(2.0) * st["inv"]) + st["inv"] - np.float32(0.5) * st["bloom"]
-    lit = field > th
+    #
+    # The tile itself is gathered once per size (see ``build``); this is the
+    # only part that moves. Written into a scratch buffer with fused ops
+    # rather than three fresh (dr, dc) temporaries a frame.
+    np.multiply(th0, np.float32(1.0) - np.float32(2.0) * st["inv"], out=th_buf)
+    th_buf += st["inv"] - np.float32(0.5) * st["bloom"]
+    lit = field > th_buf
 
     codes = pack_braille(lit)
 
@@ -399,7 +469,15 @@ def dither_storm(ctx: Ctx):
     # different direction, and the fix is the same one: fold the field onto a
     # few levels first so rows come out as runs. Ten steps is enough that the
     # texture still reads as shaded rather than posterised.
-    val = np.clip(cell_max(np.where(lit, field, np.float32(0.0))), 0.0, 1.0)
+    # ``field * lit`` rather than ``np.where(lit, field, 0.0)``. The two are
+    # bit-identical here — the false branch is a zero and the true branch is
+    # ``field`` unchanged, which is exactly multiplication by the bool — but
+    # ``where`` against a python scalar builds a fresh (dr, dc) array through
+    # a slow path: 1.03 ms at 400x100 against 0.09 ms for a multiply into a
+    # buffer that already exists. It was the largest single line in this
+    # mode's frame.
+    np.multiply(field, lit, out=lit_buf)
+    val = np.clip(cell_max(lit_buf), 0.0, 1.0)
     val = np.floor(val * np.float32(COLOUR_STEPS)) * np.float32(1.0 / COLOUR_STEPS)
     cidx = ctx.ramp(val)
     return codes, cidx
