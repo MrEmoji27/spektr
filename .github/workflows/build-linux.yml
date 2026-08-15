@@ -39,15 +39,22 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install "pyinstaller>=6.3"
-          pip install -e .
+          pip install -e ".[dev]"
 
       - name: Run the test suites
         # Same tests as the Windows build — none of them need an audio device.
+        # See that workflow for why the two script-style files are named on
+        # top of the pytest run.
         run: |
-          python tests/test_audit.py
-          python tests/test_audio.py
-          python tests/test_plugins.py
+          python -m pytest tests/ -q
           python tests/test_app.py
+          python tests/test_plugins.py
+
+      - name: Check onset accuracy and render cost
+        # Both can fail. See the Windows workflow for what they gate.
+        run: |
+          python tests/onset_score.py
+          python tests/bench.py
 
       - name: Build portable binary
         # No SPEKTR_ONEDIR here: a onefile ELF is the single "download and run"

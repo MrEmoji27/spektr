@@ -47,6 +47,12 @@ dependencies = [
   "dbus-next>=0.2.3; sys_platform == 'linux'",
 ]
 
+[project.optional-dependencies]
+# Everything CI needs beyond the runtime deps. `pip install -e .[dev]` gets a
+# checkout to the same state the workflows run in, so a failure there is
+# reproducible locally without guessing at versions.
+dev = ["pytest>=8.0"]
+
 [project.scripts]
 spektr = "spektr.app:main"
 

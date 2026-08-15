@@ -28,16 +28,35 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install "pyinstaller>=6.3"
-          pip install -e .
+          pip install -e ".[dev]"
 
       - name: Run the test suites
         # No audio device on a runner — every one of these is written to work
         # without one, and a broken build should not reach a release.
+        #
+        # This used to be four hand-listed files out of fifteen. Everything in
+        # tests/ that pytest can collect now runs, which adds the theme editor,
+        # the widget theme cache, the ascii art, the now-playing header and the
+        # config-directory tests — all of which existed and none of which any
+        # workflow was running.
+        #
+        # test_app.py and test_plugins.py still need naming explicitly: they
+        # are script-style with their own main(), so pytest collects nothing
+        # from the first and one test from the second. Running them twice is
+        # cheaper than the confusion of a file that looks covered and isn't.
         run: |
-          python tests/test_audit.py
-          python tests/test_audio.py
-          python tests/test_plugins.py
+          python -m pytest tests/ -q
           python tests/test_app.py
+          python tests/test_plugins.py
+
+      - name: Check onset accuracy and render cost
+        # Both of these can fail now. onset_score gates the detector against
+        # its labelled corpus; bench ratchets every mode's render cost against
+        # a recorded multiple of Bars, so a mode cannot quietly get slower.
+        # Neither needs an audio device.
+        run: |
+          python tests/onset_score.py
+          python tests/bench.py
 
       - name: Build portable exe
         run: pyinstaller --noconfirm --clean packaging/spektr.spec

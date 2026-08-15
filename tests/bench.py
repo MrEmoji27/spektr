@@ -39,12 +39,13 @@ GATE_SIZE = (400, 100)
 #: See :func:`ratchet` for why the gate is a ratio and why it is per-mode.
 TOLERANCE = 1.30
 
-#: Ceiling for a mode with no recorded cost, in units of ``Bars``. Today's
-#: heaviest is 14.2x, so a new mode past 16x is doing something no existing
-#: mode needs to and should say why in review before it gets a baseline.
-NEW_MODE_CEILING = 16.0
+#: Ceiling for a mode with no recorded cost, in units of the median mode.
+#: Today's heaviest is Chladni Flow at 2.7x, so a new mode past 3.5x is doing
+#: something no existing mode needs to and should say why in review before it
+#: gets a baseline of its own.
+NEW_MODE_CEILING = 3.5
 
-#: What each mode costs at :data:`GATE_SIZE`, as a multiple of ``Bars``
+#: What each mode costs at :data:`GATE_SIZE`, as a multiple of the median mode
 #: measured in the same run.
 #:
 #: This file could not fail for the whole of the project's life. It printed
@@ -58,58 +59,58 @@ NEW_MODE_CEILING = 16.0
 #: that is *meant* to move a mode's cost, and say so in the commit. Do not
 #: regenerate to make a red gate green; that is the one use this is not for.
 BASELINE = {
-    'Chladni Flow': 15.3,
-    'Arcs': 13.1,
-    'Auroras': 13.0,
-    'Vinyl': 12.6,
-    'Chladni Extreme': 12.4,
-    'Scatter': 10.9,
-    'Chladni': 10.7,
-    'Pulse': 10.2,
-    'Ember': 9.6,
-    'Dither Storm': 9.0,
-    'Flame': 8.7,
-    'Plasma': 8.5,
-    'Tunnel In': 8.1,
-    'Tunnel': 8.1,
-    'Radial': 8.0,
-    'Dither Storm Extreme': 7.9,
-    'Sonar': 6.9,
-    'Maelstrom': 6.7,
-    'Rain': 6.4,
-    'ECG': 6.4,
-    'Retro': 6.3,
-    'Locket': 6.2,
-    'Murmuration': 6.1,
-    'Strings': 6.0,
-    'Helix': 5.8,
-    'Readout': 5.7,
-    'Valentine': 5.6,
-    'Kaleidoscope': 5.4,
-    'Dune': 4.5,
-    'Dither': 4.3,
-    'Warp': 4.1,
-    'Spectro': 3.9,
-    'Wave': 3.9,
-    'VU': 3.7,
-    'VFD': 3.5,
-    'Matrix': 3.3,
-    'Scope': 3.2,
-    'Boot': 3.1,
-    'Keys': 3.0,
-    'Orbit': 2.9,
-    'Gonio': 2.7,
-    'Bubbles': 2.7,
-    'Fireworks': 2.7,
-    'Stereo': 2.4,
-    'Flipbook': 2.2,
-    'Needle': 2.1,
-    'Bars': 1.0,
-    'Mirror': 0.9,
-    'Columns': 0.9,
-    'Ladder': 0.9,
-    'Bricks': 0.8,
-    'None': 0.6,
+    'Chladni Flow': 2.67,
+    'Auroras': 2.33,
+    'Arcs': 2.27,
+    'Vinyl': 2.23,
+    'Chladni Extreme': 2.10,
+    'Scatter': 1.89,
+    'Chladni': 1.89,
+    'Pulse': 1.82,
+    'Ember': 1.71,
+    'Flame': 1.57,
+    'Plasma': 1.47,
+    'Tunnel': 1.47,
+    'Tunnel In': 1.46,
+    'Dither Storm': 1.45,
+    'Dither Storm Extreme': 1.42,
+    'Radial': 1.37,
+    'Maelstrom': 1.31,
+    'Rain': 1.22,
+    'Sonar': 1.15,
+    'Locket': 1.14,
+    'ECG': 1.12,
+    'Retro': 1.12,
+    'Murmuration': 1.06,
+    'Readout': 1.03,
+    'Strings': 1.03,
+    'Valentine': 1.01,
+    'Kaleidoscope': 0.99,
+    'Helix': 0.98,
+    'Dune': 0.83,
+    'Wave': 0.75,
+    'Dither': 0.72,
+    'Spectro': 0.70,
+    'VU': 0.70,
+    'Warp': 0.68,
+    'Scope': 0.64,
+    'VFD': 0.63,
+    'Matrix': 0.57,
+    'Boot': 0.54,
+    'Keys': 0.54,
+    'Orbit': 0.52,
+    'Fireworks': 0.50,
+    'Bubbles': 0.49,
+    'Gonio': 0.48,
+    'Needle': 0.45,
+    'Stereo': 0.42,
+    'Flipbook': 0.41,
+    'Bars': 0.18,
+    'Columns': 0.18,
+    'Mirror': 0.16,
+    'Ladder': 0.16,
+    'Bricks': 0.16,
+    'None': 0.10,
 }
 
 
@@ -263,20 +264,20 @@ def bench(palette, sizes=((120, 16), (200, 50), (240, 60), (400, 100)),
 
 
 def ratchet(cost: dict[str, float]) -> tuple[list[str], dict[str, float]]:
-    """Compare each mode against what it used to cost, in units of ``Bars``.
+    """Compare each mode against what it used to cost, in units of the median mode.
 
     **Why a ratio and not milliseconds.** A gate in ms is a gate on the
     machine. Byte-identical code measured 13.5 ms and 18.3 ms in consecutive
     runs of this file on the development box, and a CI runner is slower and
     noisier again; any ms threshold loose enough not to flake is too loose to
-    catch anything. Dividing by ``Bars`` measured in the *same run* cancels
-    the machine out — Bars is the cheapest real mode here and its cost is
-    almost entirely the strip builder every other mode also pays.
+    catch anything. Dividing by the median mode measured in the *same run*
+    cancels the machine out: every mode pays the same strip builder over the
+    same grid, so their costs move together when the machine does.
 
     **Why per-mode and not one ceiling.** A single ceiling has to clear the
     heaviest mode, and the heaviest modes are heavy for good reasons —
     a Chladni figure genuinely has a colour boundary every few cells, and no
-    amount of quantising changes that. Setting one number above 14x Bars to
+    amount of quantising changes that. Setting one number above 14x median to
     let Chladni Flow through would have let Dither Storm drift from 6x to 13x
     without a word, which is precisely the regression that motivated this.
     A recorded cost per mode catches *drift* instead: a mode may be expensive,
@@ -287,9 +288,24 @@ def ratchet(cost: dict[str, float]) -> tuple[list[str], dict[str, float]]:
     gets deleted. It still catches the case that started this — Dither Storm
     doubling — with room to spare.
     """
-    ref = cost.get("Bars")
-    if not ref:
-        return ["Bars did not benchmark, so there is no reference to divide by"], {}
+    import statistics
+
+    if not cost:
+        return ["nothing benchmarked, so there is no reference to divide by"], {}
+    # The median mode, not ``Bars``. Dividing by a single mode makes the whole
+    # gate hostage to that one measurement: a shared CI runner that deschedules
+    # Bars for 3 ms shrinks every ratio at once and the run passes blind, and
+    # one that measures Bars unusually fast inflates every ratio and the run
+    # fails everything. The median over 52 modes cannot be moved by one bad
+    # sample in either direction.
+    #
+    # What this deliberately cannot catch is everything getting slower
+    # together — a regression in ``make_strips`` would lift all 52 costs and
+    # leave the ratios untouched. That is what ``strips_equiv.py`` is for, and
+    # what the absolute ``BUDGET_MS`` check above still backstops.
+    ref = statistics.median(cost.values())
+    if ref <= 0:
+        return ["median mode cost is zero, which cannot be right"], {}
     ratios = {name: ms / ref for name, ms in cost.items()}
 
     problems: list[str] = []
@@ -298,12 +314,12 @@ def ratchet(cost: dict[str, float]) -> tuple[list[str], dict[str, float]]:
         if base is None:
             if r > NEW_MODE_CEILING:
                 problems.append(
-                    f"{name}: {r:.1f}x Bars, over the {NEW_MODE_CEILING:.0f}x ceiling "
+                    f"{name}: {r:.2f}x median, over the {NEW_MODE_CEILING:.0f}x ceiling "
                     f"for a mode with no recorded cost"
                 )
         elif r > base * TOLERANCE:
             problems.append(
-                f"{name}: {r:.1f}x Bars against a recorded {base:.1f}x "
+                f"{name}: {r:.2f}x median against a recorded {base:.2f}x "
                 f"(+{(r / base - 1) * 100:.0f}%, tolerance +{(TOLERANCE - 1) * 100:.0f}%)"
             )
     return problems, ratios
@@ -328,7 +344,7 @@ if __name__ == "__main__":
         print("\n# paste over BASELINE in tests/bench.py")
         print("BASELINE = {")
         for name, r in sorted(ratios.items(), key=lambda kv: -kv[1]):
-            print(f"    {name!r}: {r:.1f},")
+            print(f"    {name!r}: {r:.2f},")
         print("}")
         raise SystemExit(0)
 
@@ -337,7 +353,8 @@ if __name__ == "__main__":
         print("  ", line)
     print(
         f"cost gate at {GATE_SIZE[0]}x{GATE_SIZE[1]}, "
-        f"per-mode against a recorded multiple of Bars, +{(TOLERANCE - 1) * 100:.0f}% slack"
+        f"per-mode against a recorded multiple of the median mode, "
+        f"+{(TOLERANCE - 1) * 100:.0f}% slack"
         f" — {len(problems)} over"
     )
     for line in problems:
