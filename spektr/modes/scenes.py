@@ -189,7 +189,12 @@ def auroras(ctx: Ctx):
         edge = np.clip(1.0 - d / (spacing * 0.9), 0.0, 1.0)
         w = edge * edge + np.float32(0.02)
         wsum += w
-        gsum += w * (0.18 + 0.82 * level)
+        # The whole ribbon brightens on the beat and settles through the bar.
+        # ``ctx.pulse`` rather than an onset because an aurora should breathe,
+        # not flash, and because a swell keyed to discrete hits does nothing at
+        # all between them — which on the slow material this mode suits best is
+        # most of the time.
+        gsum += w * (0.18 + 0.82 * level) * np.float32(1.0 + 0.15 * ctx.pulse)
         bsum += w * (0.34 + 0.52 * level)      # louder pushes the rim lower
         hsum += w * (0.26 + 0.40 * level)      # and makes the ribbon deeper
     inv_w = 1.0 / wsum
@@ -424,7 +429,11 @@ def warp(ctx: Ctx):
     rng = st["rng"]
 
     max_r = min(dr, dc) / 2.0
-    st["rad"] += st["spd"] * ctx.dt * (0.22 + ctx.energy * 1.9)
+    # Percussiveness on top of level: how fast you travel should answer to
+    # attack, not only to how loud the mix is. A wall of sustained guitar and
+    # a drum break sit at the same energy and should not fly past at the same
+    # speed.
+    st["rad"] += st["spd"] * ctx.dt * (0.22 + ctx.energy * 1.9 + ctx.drive * 1.2)
 
     gone = st["rad"] >= 1.0
     if gone.any():
@@ -480,7 +489,12 @@ def matrix(ctx: Ctx):
 
     # each column is driven by the band that sits at its horizontal position
     drive = spread(ctx.display_bands(), w)
-    st["head"] += st["spd"] * ctx.dt * (0.35 + drive * 2.2)
+    # ``ctx.drive`` on top of the per-column band: the columns say *where* the
+    # rain is heavy, the flux says how percussive the moment is, and the two
+    # are different questions. A sustained pad fills the bands and the rain
+    # falls steadily; a drum break barely moves them and the rain should still
+    # race. Continuous, so it fills the gaps between detected onsets.
+    st["head"] += st["spd"] * ctx.dt * (0.35 + drive * 2.2 + ctx.drive * 1.1)
 
     done = st["head"] - st["len"] > h
     if done.any():

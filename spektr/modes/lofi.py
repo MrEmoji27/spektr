@@ -193,7 +193,10 @@ def rain(ctx: Ctx):
 
     mid = ctx.range(0.15, 0.7)
     bass = ctx.range(0.0, 0.2)
-    fall = 0.55 + ctx.energy * 2.0
+    # Rain falls harder on percussive material, not merely on loud material —
+    # ``ctx.drive`` is continuous, so a busy passage the onset detector is
+    # conservative about still drives it.
+    fall = 0.55 + ctx.energy * 2.0 + ctx.drive * 1.0
 
     st["acc"] += (8.0 + mid * 55.0) * ctx.dt
     want = int(st["acc"])

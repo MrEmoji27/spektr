@@ -105,6 +105,63 @@ class Ctx:
     def size(self) -> tuple[int, int]:
         return self.w, self.h
 
+    # ── rhythm, in the forms a mode actually wants ───────────────────────────
+    #
+    # The raw fields above are the honest ones and they stay. These two are
+    # what almost every caller was going to build out of them, and the reason
+    # they exist is that the raw fields turned out to be easy to get wrong and
+    # therefore mostly went unused: of 52 modes, 40 read no rhythm field at
+    # all, ``flux`` had one reader and ``tempo_bpm`` and ``beat_phase`` two
+    # each — for analysis the widget computes 187 times a second regardless.
+    #
+    # Both are safe to read at any frame rate, in silence, under a drone and
+    # before a tempo is established. That is the whole point: the trap they
+    # remove is real and was hit twice while writing the modes that do use
+    # them.
+
+    @property
+    def pulse(self) -> float:
+        """0..1 beat-locked swell — 1.0 on the beat, decaying through the bar.
+
+        ``beat_phase`` with its footgun removed. The footgun: ``beat_phase``
+        is 0.0 whenever ``tempo_bpm`` is 0.0, and 0.0 is *on the beat*, so the
+        obvious ``1 - ctx.beat_phase`` reads as a permanent full-strength swell
+        during silence, under a drone, and for the first seconds of every
+        track — exactly the states where the mode should be doing nothing.
+        Gating on the tempo rather than the phase is the fix, and it has to be
+        remembered at every call site.
+
+        Squared, so the swell sits on the beat and decays through the bar
+        rather than sweeping linearly between them.
+
+        This is the field to reach for when a mode looks twitchy on sparse
+        material. Onsets are discrete and only exist on the frames where the
+        peak picker committed; a mode driven only by them coasts in between,
+        which on a slow track reads as a still picture jerking four times a
+        bar. ``pulse`` is continuous and fills those gaps.
+        """
+        if self.tempo_bpm <= 0.0:
+            return 0.0
+        return (1.0 - float(self.beat_phase)) ** 2
+
+    @property
+    def drive(self) -> float:
+        """0..1 how percussive the signal is right now.
+
+        ``flux`` clamped, which is all most callers need. Continuous and
+        computed per hop, so unlike :attr:`onsets` it is safe to read at any
+        frame rate and does not depend on the peak picker committing to
+        anything — it answers "how much attack is in the signal" rather than
+        "was there a hit this frame".
+
+        Use it for rates: how fast something scrolls, spins or spawns. On
+        material the detector is deliberately conservative about — brushed
+        drums, a dense mix where nothing clears the adaptive threshold — the
+        onset path stays quiet while this does not, so the picture keeps
+        answering to music a listener hears as busy.
+        """
+        return float(min(1.0, max(0.0, self.flux)))
+
     @property
     def dot_rows(self) -> int:
         """Braille dot rows — four per text row."""

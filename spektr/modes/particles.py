@@ -519,7 +519,11 @@ def radial(ctx: Ctx):
     nrg = _angular_bands(ctx, turn, n, ctx.t * 0.04)
 
     inner = max_r * 0.18
-    outer = inner + (max_r - inner) * nrg
+    # The rays breathe on the beat. ``ctx.pulse`` is the gated form of
+    # beat_phase — 0.0 until a tempo is established, so silence and the first
+    # seconds of a track get no swell rather than a permanent one. Small,
+    # because the rays are already the loudest thing here.
+    outer = inner + (max_r - inner) * nrg * np.float32(1.0 + 0.12 * ctx.pulse)
 
     # thin radial gutters so the wedges read as separate bars
     wedge = frac(turn * n)
@@ -614,7 +618,14 @@ def sonar(ctx: Ctx):
     # and disappears, against 20 at the rim of a large terminal.
     arc = dtheta * _sonar_circ(ctx, dist)
 
-    decay = float(np.exp(-max(ctx.dt, 0.0) / 0.9))
+    # Persistence, and the beat holds it. A radar screen's phosphor is what
+    # carries the last sweep, so lengthening it on the pulse leaves the whole
+    # trail hanging a moment longer on the beat and fading back between —
+    # visible across the entire swept area rather than only where the beam
+    # currently is, which a brightness kick would not be. ``ctx.pulse`` is 0.0
+    # until a tempo is established, so this is exactly the 0.9 s constant
+    # until there is a beat to hold for.
+    decay = float(np.exp(-max(ctx.dt, 0.0) / (0.9 + 0.5 * ctx.pulse)))
     buf *= decay
 
     # Everything below runs only on the dots the beam actually covers. A
