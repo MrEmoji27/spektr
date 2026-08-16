@@ -35,6 +35,9 @@ PAL = Palette(BUILTIN["gruvbox"])
 #: register right behind its original in the mode cycle.
 VARIANT_OF = [
     ("Sonar", "Sonar Fine"),
+    ("Scope", "Scope Fine"),
+    ("ECG", "ECG Fine"),
+    ("Radial", "Radial Fine"),
 ]
 
 #: bit weight per subcell for each packer, indexed [row][col]. Braille numbers
@@ -135,10 +138,69 @@ def test_sonar_fine_is_a_solid_superset_of_sonar():
     _assert_solid_superset(_mode("Sonar"), _mode("Sonar Fine"))
 
 
+def test_scope_fine_is_a_solid_superset_of_scope():
+    _assert_solid_superset(_mode("Scope"), _mode("Scope Fine"))
+
+
+def test_ecg_fine_is_a_solid_superset_of_ecg():
+    _assert_solid_superset(_mode("ECG"), _mode("ECG Fine"))
+
+
+# ── the pack_octant ports: two colours a cell ────────────────────────────────
+
+def _assert_two_colour(plain, fine, frames=8, w=120, h=30):
+    """The two-colour ports: a background and a foreground per cell.
+
+    These modes fill their whole viewport with a continuous field, so the
+    variant carries the cell's range — ``cell_hilo`` — into both ramp ends
+    and draws the mask with ``pack_octant``: the glyph, not a second colour
+    run, carries which subcells are on which side of the cell's midpoint.
+    """
+    sa: dict = {}
+    sb: dict = {}
+    for f in range(frames):
+        out_a = plain.fn(_ctx(w, h, f, sa, PAL))
+        out_b = fine.fn(_ctx(w, h, f, sb, PAL))
+        assert len(out_a) == 2, "the original must stay a single-colour mode"
+        codes, cidx, bidx = out_b
+        assert codes.shape == cidx.shape == bidx.shape == (h, w)
+        assert (codes >= OCTANT_BASE).any(), "no octant-block glyph anywhere"
+        assert (bidx != cidx).any(), "background and foreground never differ"
+        assert len(np.unique(codes)) > 8, "the glyph is barely varying; is the mask stuck?"
+
+
+def test_radial_fine_draws_two_colours():
+    _assert_two_colour(_mode("Radial"), _mode("Radial Fine"))
+
+
+def test_radial_itself_still_draws_braille():
+    st: dict = {}
+    for f in range(6):
+        codes, _ = _mode("Radial").fn(_ctx(120, 30, f, st, PAL))
+    braille = (codes >= BRAILLE_BASE) & (codes <= BRAILLE_BASE + 0xFF)
+    assert bool((braille | (codes == SPACE)).all())
+
+
 def test_sonar_itself_still_draws_braille():
     """The original must not have been quietly ported underneath the variant."""
     st: dict = {}
     for f in range(6):
         codes, _ = _mode("Sonar").fn(_ctx(120, 30, f, st, PAL))
+    braille = (codes >= BRAILLE_BASE) & (codes <= BRAILLE_BASE + 0xFF)
+    assert bool((braille | (codes == SPACE)).all())
+
+
+def test_scope_itself_still_draws_braille():
+    st: dict = {}
+    for f in range(6):
+        codes, _ = _mode("Scope").fn(_ctx(120, 30, f, st, PAL))
+    braille = (codes >= BRAILLE_BASE) & (codes <= BRAILLE_BASE + 0xFF)
+    assert bool((braille | (codes == SPACE)).all())
+
+
+def test_ecg_itself_still_draws_braille():
+    st: dict = {}
+    for f in range(6):
+        codes, _ = _mode("ECG").fn(_ctx(120, 30, f, st, PAL))
     braille = (codes >= BRAILLE_BASE) & (codes <= BRAILLE_BASE + 0xFF)
     assert bool((braille | (codes == SPACE)).all())

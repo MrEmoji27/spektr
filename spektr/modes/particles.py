@@ -516,8 +516,7 @@ def bubbles(ctx: Ctx):
     return codes, cidx
 
 
-@mode("Radial", group="particles", blurb="the spectrum wrapped into a circle")
-def radial(ctx: Ctx):
+def _radial(ctx: Ctx, octant: bool):
     dr, dc = ctx.dot_rows, ctx.dot_cols
     if dr < 8 or dc < 8:
         return empty(ctx.w, ctx.h)
@@ -533,6 +532,7 @@ def radial(ctx: Ctx):
     # radius offset the shading divides is the same array every frame. Five
     # full-grid passes at 400x100, rebuilt sixty times a second for numbers
     # that only change when the terminal is resized or the band count moves.
+    # Each version keeps its own entry, so one never sees the other's.
     def build():
         wedge = frac(turn * n)
         return {
@@ -542,10 +542,11 @@ def radial(ctx: Ctx):
             "from_inner": dist - inner,
         }
 
-    geo = ctx.scratch("radial_geo", build)
+    key = "radial_geo" if not octant else "radial_geo_fine"
+    geo = ctx.scratch(key, build)
     if geo["n"] != n:
         geo = build()
-        ctx.state[("radial_geo", ctx.w, ctx.h)] = geo
+        ctx.state[(key, ctx.w, ctx.h)] = geo
 
     # The rays breathe on the beat. ``ctx.pulse`` is the gated form of
     # beat_phase — 0.0 until a tempo is established, so silence and the first
@@ -562,9 +563,37 @@ def radial(ctx: Ctx):
     lit |= geo["ring"]
 
     heat = np.where(lit, np.clip(geo["from_inner"] / np.maximum(span_lut, 1e-6)[idx], 0, 1), 0.0)
+    if octant:
+        # Two colours and a glyph threshold per cell, like Kaleidoscope: the
+        # whole viewport is field — wedges, hub and the dark between them —
+        # so the cell's range is ramped into background and foreground and
+        # the glyph says which of the eight subcells sit on which side of the
+        # cell's midpoint. Hard-edged wedges keep a soft rim where the field
+        # crosses its own midpoint inside a cell.
+        lo_cell, hi_cell = cell_hilo(heat)
+        codes = pack_octant(heat, lo_cell, hi_cell)
+        return codes, ctx.ramp(hi_cell), ctx.ramp(lo_cell)
     codes = pack_braille(lit)
     cidx = ctx.ramp(cell_max(heat))
     return codes, cidx
+
+
+@mode("Radial", group="particles", blurb="the spectrum wrapped into a circle")
+def radial(ctx: Ctx):
+    return _radial(ctx, octant=False)
+
+
+@mode("Radial Fine", after="Radial", group="particles",
+      blurb="the same ring as a solid field at two colours a cell — needs a terminal that draws Unicode 16 octants")
+def radial_fine(ctx: Ctx):
+    """Radial on octant cells.
+
+    Separate mode rather than a switch on the original, for the same reason
+    Kaleidoscope Fine is: octants are Unicode 16 and an older terminal or
+    font draws a grid of tofu, which is a thing to opt into rather than to
+    discover when a mode you liked stops working.
+    """
+    return _radial(ctx, octant=True)
 
 
 #: Beam thickness, in braille dots, held constant at every radius.
