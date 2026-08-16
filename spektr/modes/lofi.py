@@ -332,32 +332,45 @@ def ember(ctx: Ctx):
     pop = bool(ctx.onsets) and (ctx.t - st["pop_t"]) > 0.4
 
     bed_h = max(3, int(dr * 0.20))
-    field = np.zeros((dr, dc), dtype=np.float64)
-
-    lv_cols = spread(ctx.display_bands(), dc)
-    rows = np.arange(dr)[:, None]
     bed_top = dr - bed_h
-    bed_rows = rows >= bed_top
-    depth = np.clip((rows - bed_top) / max(bed_h - 1, 1), 0.0, 1.0)
-    bed_heat = (0.18 + 0.80 * lv_cols)[None, :] * (0.55 + 0.45 * depth)
-    field = np.where(bed_rows, bed_heat, field)
+    # float32, and the same deal Flame's and Vinyl's docstrings make: at
+    # 400x100 this is a 320,000-cell grid and every float64 pass over it moves
+    # twice the memory of a float32 one, for a value that ends up quantised to
+    # 64 ramp steps.
+    field = np.zeros((dr, dc), dtype=np.float32)
+
+    lv_cols = spread(ctx.display_bands(), dc).astype(np.float32)
+
+    # The bed is the bottom fifth of the screen and the haze is what is above
+    # it, so neither is a full-grid job. Both used to be built over every row
+    # and then masked, which is four fifths of the work thrown away in one
+    # case and one fifth in the other.
+    bed_rows = np.arange(bed_top, dr, dtype=np.float32)[:, None]
+    depth = np.clip((bed_rows - bed_top) / max(bed_h - 1, 1), 0.0, 1.0)
+    field[bed_top:] = (0.18 + 0.80 * lv_cols)[None, :] * (0.55 + 0.45 * depth)
 
     # heat haze standing over the coals: each column glows as far up as its
     # own band reaches. Without this the only band-driven area was the bed
     # itself — about a fifth of the height — so the picture barely changed
     # between a quiet passage and a loud one even though the bed underneath
     # was tracking the spectrum correctly the whole time.
-    above = bed_top - rows
-    glow_h = np.maximum(lv_cols * dr * 0.55, 1.0)[None, :]
-    haze = np.clip(1.0 - above / glow_h, 0.0, 1.0) * lv_cols[None, :]
-    # Dithered against a *fixed* noise field, not drawn solid. A continuous
-    # haze value lights every dot inside the envelope the moment it clears
-    # the 0.04 threshold, which rendered as a hard triangular slab of ⣿
-    # rather than anything resembling heat. Thresholding turns the same
-    # envelope into a sparse speckle that thickens as the band rises, and a
-    # fixed seed keeps the speckle from strobing (see ``Dune``'s grain).
-    lit_haze = noise((dr, dc), 7) < (haze * 0.7)
-    field = np.maximum(field, (0.14 + 0.5 * haze) * ((above > 0) & lit_haze))
+    if bed_top > 0:
+        above = (bed_top - np.arange(bed_top, dtype=np.float32))[:, None]
+        glow_h = np.maximum(lv_cols * dr * 0.55, 1.0)[None, :]
+        haze = np.clip(1.0 - above / glow_h, 0.0, 1.0) * lv_cols[None, :]
+        # Dithered against a *fixed* noise field, not drawn solid. A continuous
+        # haze value lights every dot inside the envelope the moment it clears
+        # the 0.04 threshold, which rendered as a hard triangular slab of ⣿
+        # rather than anything resembling heat. Thresholding turns the same
+        # envelope into a sparse speckle that thickens as the band rises, and a
+        # fixed seed keeps the speckle from strobing (see ``Dune``'s grain).
+        #
+        # Fixed means fixed: seed 7 every frame produced the same 320,000
+        # hashes every frame, at 2 ms a time. It is scratch, not per-frame
+        # work.
+        grain = ctx.scratch("ember_grain", lambda: noise((dr, dc), 7))
+        lit_haze = grain[:bed_top] < (haze * 0.7)
+        np.maximum(field[:bed_top], (0.14 + 0.5 * haze) * lit_haze, out=field[:bed_top])
 
     st["acc"] += (2.0 + ctx.energy * 55.0) * ctx.dt
     want = int(st["acc"])
