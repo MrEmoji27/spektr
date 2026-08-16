@@ -796,9 +796,19 @@ class Capture:
 
         quiet_since = time.time()
         reported_quiet = False
+        # The status and the analyser must use the same statistic and the same
+        # threshold, or the status can say "listening" while the display is
+        # gated to silence. The analyser gates on RMS (8e-5); a peak test would
+        # pass on a signal whose RMS never clears that gate.
+        from .analysis import GATE_RMS
+
         while self._running and session == self._session:
             buf = self.ring.latest(2048)
-            if buf is not None and float(np.abs(buf).max()) > 3e-5:
+            if buf is not None:
+                rms = float(np.sqrt(np.mean(buf.mean(axis=1) ** 2)))
+            else:
+                rms = 0.0            # a ring that has not been filled is quiet
+            if rms > GATE_RMS:
                 quiet_since = time.time()
                 if reported_quiet and not self.on_mic:
                     self._say(f"listening — {src.label}")

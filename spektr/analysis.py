@@ -112,6 +112,12 @@ _PCM_SCALE = 32768.0
 #: exactly the case auto-gain exists to rescue.
 _KNEE = 2.0
 
+#: The default noise gate, in RMS of a float sample. Anything at or below this
+#: reads as silence to the analyser, and the capture status line uses the same
+#: value — same statistic, same threshold — so "listening" and "the display is
+#: moving" can never disagree.
+GATE_RMS = 8e-5
+
 
 @dataclass
 class Frame:
@@ -1010,7 +1016,7 @@ class Analyser:
         self._env = 1e-4
         self._target_rms = 0.06
         self._max_gain = 1200.0
-        self._gate_abs = 8e-5     # fixed absolute gate; see note below
+        self._gate_abs = GATE_RMS   # fixed absolute gate; see note below
         self._gate_hold_s = 0.30
         self._hold_until = 0.0
         self.sensitivity = 1.0    # manual trim, [ and ]
