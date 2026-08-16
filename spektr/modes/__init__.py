@@ -442,13 +442,22 @@ def polar_grid(ctx: Ctx):
     return ctx.scratch("polar", build)
 
 
-def angular_bands(ctx: Ctx, turn: np.ndarray, n: int, spin: float) -> np.ndarray:
-    """Map every dot's angle onto the band set, blended between neighbours.
+def angular_lut(ctx: Ctx, turn: np.ndarray, n: int, spin: float):
+    """The pieces behind :func:`angular_bands`: ``(lut, idx)``.
 
-    ``turn`` is the angle as a fraction of a full turn. Doing the lookup as a
-    single table index into a pre-blended ramp costs one gather instead of the
-    two gathers, a cosine and three multiplies the per-dot blend needed — worth
-    it when this runs over 100k dots a frame.
+    ``lut`` is 512 blended band levels around the circle; ``idx`` says which
+    entry each dot reads. :func:`angular_bands` is ``lut[idx]`` and that is
+    what most modes want.
+
+    This exists for the ones that then do arithmetic on the result. A mode
+    computing, say, ``max_r * (0.1 + 0.9 * nrg * nrg)`` is doing three passes
+    over every dot on the grid to produce a value that can only take 512
+    distinct forms — the same arithmetic on ``lut`` is 512 elements wide and
+    the gather is unchanged. At 400x100 that is 320,000 elements against 512,
+    per operation, for exactly the same numbers: ``f(lut)[idx]`` and
+    ``f(lut[idx])`` are the same float operations on the same inputs.
+
+    Transform the table, then gather. Not the other way round.
     """
     steps = 512
     bands = ctx.display_bands(n).astype(np.float32)
@@ -461,6 +470,18 @@ def angular_bands(ctx: Ctx, turn: np.ndarray, n: int, spin: float) -> np.ndarray
     # keep the spin bounded so float32 precision doesn't drift over a long session
     offset = np.float32(float(spin) % 1.0)
     idx = ((turn + offset) * np.float32(steps)).astype(np.int32) & (steps - 1)
+    return lut, idx
+
+
+def angular_bands(ctx: Ctx, turn: np.ndarray, n: int, spin: float) -> np.ndarray:
+    """Map every dot's angle onto the band set, blended between neighbours.
+
+    ``turn`` is the angle as a fraction of a full turn. Doing the lookup as a
+    single table index into a pre-blended ramp costs one gather instead of the
+    two gathers, a cosine and three multiplies the per-dot blend needed — worth
+    it when this runs over 100k dots a frame.
+    """
+    lut, idx = angular_lut(ctx, turn, n, spin)
     return lut[idx]
 
 

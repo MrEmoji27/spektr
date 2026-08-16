@@ -10,6 +10,7 @@ from ..render import cell_max, frac, noise, pack_braille
 from . import (
     Ctx,
     angular_bands as _angular_bands,
+    angular_lut as _angular_lut,
     band_columns,
     empty,
     mode,
@@ -164,7 +165,9 @@ def pulse(ctx: Ctx):
     n = min(16, ctx.n_display)
 
     avg = ctx.energy
-    nrg = _angular_bands(ctx, turn, n, ctx.t * (0.10 + avg * 0.30))
+    lut, idx = _angular_lut(ctx, turn, n, ctx.t * (0.10 + avg * 0.30))
+    r_lut = max_r * (0.1 + 0.9 * lut * lut)
+    halo_lut = lut * np.float32(0.4)
 
     st = ctx.scratch(
         "pulse",
@@ -202,7 +205,12 @@ def pulse(ctx: Ctx):
         strength = ctx.onset_strength if ctx.onsets else min(1.0, ctx.energy * 1.4)
         st["amp"][slot] = float(np.clip(0.35 + strength * 0.9, 0.0, 1.0))
 
-    r = max_r * (0.1 + 0.9 * nrg * nrg)
+    # The blob radius and the halo's brightness are both functions of the band
+    # level alone, so they are computed on the 512-entry table and gathered,
+    # rather than gathering the level and then running the arithmetic over
+    # 320,000 dots. Same numbers, three fewer full-grid passes. See
+    # :func:`angular_lut`.
+    r = r_lut[idx]
     nz = ctx.scratch(
         "pulse_grain", lambda: np.random.default_rng(419).random((dr, dc)).astype(np.float32)
     )
@@ -217,8 +225,10 @@ def pulse(ctx: Ctx):
 
     # Folded into one threshold field rather than a separate mask, a clipped
     # overshoot and a product: each of those is a pass over the whole dot grid
-    # and the halo was eleven of them.
-    hv = nrg * np.clip(1.0 - (dist - r) * 0.25, 0.0, 1.0) * 0.4
+    # and the halo was eleven of them. The 0.4 rides in the table with the
+    # band level, which is the same product with one grid pass fewer.
+    hv = np.clip(1.0 - (dist - r) * 0.25, 0.0, 1.0)
+    hv *= halo_lut[idx]
     lit |= (~inside) & (nz < hv)
 
     # A wave crosses the radius in ~0.9 s and fades over the same span, so its
@@ -239,11 +249,24 @@ def pulse(ctx: Ctx):
         # the per-cell values are the same float operations on the same
         # inputs as the old dense version. Cells outside the ring never had
         # their ``lit`` bit touched (``near & ...`` was false there).
-        edge = np.abs(dist - max_r * phase)
-        near = edge < band
-        wy, wx = np.nonzero(near)
+        # A ring of radius R cannot reach a row further than R + band from the
+        # centre, because ``dist`` is never smaller than the vertical offset
+        # alone. Clipping the rows first means a young wave — a small ring,
+        # which is most of a wave's visible life — tests a few dozen rows
+        # instead of all four hundred, and the membership pass stops being the
+        # expensive part of the mode. Cells outside the slice could not have
+        # been ``near``, so nothing is lost.
+        radius = max_r * phase
+        reach = radius + band
+        r0 = max(0, int(dr * 0.5 - reach))
+        r1 = min(dr, int(dr * 0.5 + reach) + 2)
+        if r1 <= r0:
+            continue
+        rows = lit[r0:r1]
+        edge = np.abs(dist[r0:r1] - radius)
+        wy, wx = np.nonzero(edge < band)
         if wy.size:
-            lit[wy, wx] |= nz[wy, wx] < (1.0 - edge[wy, wx] / band) * strength
+            rows[wy, wx] |= nz[r0:r1][wy, wx] < (1.0 - edge[wy, wx] / band) * strength
 
     lit |= core
     codes = pack_braille(lit)
