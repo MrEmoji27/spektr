@@ -926,6 +926,7 @@ usage: spektr [options]
   --no-plugins       skip loading plugins this run
   --list-modes       print visualiser names and exit
   --list-themes      print theme names and exit
+  --glyph-test       can this terminal draw the Fine/Ultra modes? and exit
   --version          print version and exit
   -h, --help         this text
 
@@ -943,6 +944,51 @@ _TRUST_WARNING = """
   This is Python. It runs with your privileges — it can read your files
   and reach the network. spektr cannot sandbox it. Read it first.
 """
+
+
+def _glyph_test() -> None:
+    """Show whether this terminal can draw the modes that need octants.
+
+    There is no way to ask a terminal "do you have a glyph for U+1CD1E". A
+    missing one renders as a replacement box, not as an error, and the modes
+    that use them are perfectly happy — so the only reliable detector is a
+    person looking at a row of characters. Hence this: print the ones that
+    matter beside a reference row everything can draw, and say plainly what to
+    conclude.
+
+    The three rows are three different questions. Block Elements have been in
+    every terminal font for decades and are the control. The octant block is
+    Unicode 16 (2024) and is what the ``Fine`` and ``Ultra`` modes are built
+    on. The last row is the handful of patterns Unicode did *not* put in the
+    octant block, which fonts ship least reliably — spektr already avoids
+    those in what it draws, and they are here because seeing which of them
+    work says how far ahead of the standard a font actually is.
+    """
+    from .render import OCTANT_BASE, OCTANT_LUT
+
+    def row(codes):
+        return "  ".join(chr(int(c)) for c in codes)
+
+    print()
+    print("  reference — every terminal draws these:")
+    print("    " + row((0x2580, 0x2584, 0x258C, 0x2590, 0x2596, 0x2597, 0x2598, 0x2588)))
+    print()
+    print("  octants (Unicode 16) — Kaleidoscope Fine, Valentine Fine and the rest:")
+    for start in range(0, 48, 16):
+        print("    " + row(range(OCTANT_BASE + start, OCTANT_BASE + start + 16)))
+    print()
+    print("  patterns held outside the octant block — spektr does not draw these,")
+    print("  they are here to show how complete the font is:")
+    print("    " + row((0x1CEA8, 0x1CEAB, 0x1CEA3, 0x1CEA0, 0x1FBE6, 0x1FBE7, 0x1FB82, 0x1FB85)))
+    print()
+    print("  If the first row is solid blocks and the octant rows are little")
+    print("  mosaics of squares, the Fine and Ultra modes will look right.")
+    print("  If the octant rows are boxes, question marks or blanks, this font")
+    print("  cannot draw them — use Windows Terminal 1.22+ with Cascadia Code,")
+    print("  kitty, ghostty or WezTerm, and stay on the plain modes here.")
+    print()
+    print(f"  ({len(OCTANT_LUT)} patterns, {OCTANT_BASE:#x}..0x1CDE5 plus Block Elements)")
+    print()
 
 
 def _plugins_cli(argv: list[str]) -> int:
@@ -1091,6 +1137,9 @@ def main() -> None:
         for m in mode_registry.MODES:
             tag = f"  [{m.plugin}]" if m.is_plugin else ""
             print(f"  {m.name:<10} {m.blurb}{tag}")
+        return
+    if "--glyph-test" in argv:
+        _glyph_test()
         return
     if "--list-themes" in argv:
         from .palette import AUTO, all_themes
