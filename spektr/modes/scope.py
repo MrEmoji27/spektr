@@ -125,7 +125,8 @@ def _scope(ctx: Ctx, octant: bool):
     return codes, cidx
 
 
-@mode("Scope", group="scope", blurb="trigger-synced oscilloscope — the trace holds still")
+@mode("Scope", group="scope", hidden=True,
+      blurb="trigger-synced oscilloscope — the trace holds still")
 def scope(ctx: Ctx):
     return _scope(ctx, octant=False)
 
@@ -252,7 +253,8 @@ def _ecg(ctx: Ctx, octant: bool):
     return codes, cidx
 
 
-@mode("ECG", group="scope", blurb="scrolling trace, like a heart monitor")
+@mode("ECG", group="scope", hidden=True,
+      blurb="scrolling trace, like a heart monitor")
 def ecg(ctx: Ctx):
     return _ecg(ctx, octant=False)
 
@@ -426,3 +428,5 @@ def goniometer(ctx: Ctx):
     codes = pack_braille(dots)
     cidx = ctx.ramp(np.sqrt(cell_max(field)))
     return codes, cidx
+
+

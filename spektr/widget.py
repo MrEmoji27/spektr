@@ -177,11 +177,26 @@ class AudioVisualizer(Widget):
 
     @property
     def mode_names(self) -> list[str]:
-        """Every mode that can currently be selected — quarantined ones are
-        hidden, so cycling can't land you back on something broken."""
-        return [n for n in mode_registry.names() if not self.quarantine.is_disabled(n)]
+        """Every mode the picker and the cycle keys offer.
+
+        Quarantined ones are left out so cycling cannot land you back on
+        something broken, and hidden ones because they have been superseded —
+        both are still registered and both still render if something asks for
+        them by name, which is what ``--mode`` and a saved config do.
+        """
+        return [
+            m.name
+            for m in mode_registry.listed()
+            if not self.quarantine.is_disabled(m.name)
+        ]
 
     def set_mode(self, name: str, *, remember: bool = True) -> None:
+        """Switch to a mode by name — including a hidden one, deliberately.
+
+        Hiding is about what the interface *offers*, not about what it will
+        run: a config file or ``--mode`` naming a superseded mode has to keep
+        working, or hiding one would silently change what someone's setup does.
+        """
         if mode_registry.get(name) is None or self.quarantine.is_disabled(name):
             return
         self.mode_name = name

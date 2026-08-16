@@ -262,6 +262,12 @@ class Mode:
     blurb: str = ""
     #: None for built-ins, otherwise the plugin that registered it
     plugin: str | None = None
+    #: Kept out of the picker and out of shuffle, but still registered, still
+    #: tested, and still reachable by name — ``spektr --mode "Chladni"``, or by
+    #: writing it into the config. Superseded modes live here: the octant
+    #: variants replaced their originals in the menu, and putting the pair
+    #: side by side there is a choice nobody wants to make forty times.
+    hidden: bool = False
 
     @property
     def is_plugin(self) -> bool:
@@ -281,7 +287,7 @@ class ModeNameTaken(Exception):
 
 
 def mode(name: str, group: str = "spectrum", blurb: str = "",
-         after: str | None = None):
+         after: str | None = None, hidden: bool = False):
     """Register a render mode.
 
     ``name`` must be unique — a plugin cannot silently replace a built-in or
@@ -300,13 +306,20 @@ def mode(name: str, group: str = "spectrum", blurb: str = "",
 
     An unknown ``after`` appends as usual — a plugin naming a built-in that a
     later version renames should still load.
+
+    ``hidden`` registers the mode without listing it: it stays out of the
+    picker and out of shuffle, and stays reachable by name. That is what a
+    superseded mode wants — the code is still there, still tested, still the
+    thing a plugin or a config file can ask for, without a menu that offers
+    the same picture twice.
     """
 
     def wrap(fn):
         if name in _BY_NAME:
             owner = _BY_NAME[name].plugin or "spektr"
             raise ModeNameTaken(f"mode {name!r} is already registered by {owner}")
-        m = Mode(name=name, fn=fn, group=group, blurb=blurb, plugin=_LOADING)
+        m = Mode(name=name, fn=fn, group=group, blurb=blurb, plugin=_LOADING,
+                 hidden=hidden)
         # keep "None" last in the cycle, however late a plugin arrives
         end = len(MODES) - 1 if MODES and MODES[-1].name == "None" else len(MODES)
         at = end
@@ -325,6 +338,16 @@ def get(name: str) -> Mode | None:
 
 def names() -> list[str]:
     return [m.name for m in MODES]
+
+
+def listed() -> list[Mode]:
+    """Every mode the interface offers — everything except the hidden ones.
+
+    The picker, the cycle keys and shuffle all go through here, so a
+    superseded mode disappears from all three at once while staying available
+    to ``--mode`` and to anything that already has its name.
+    """
+    return [m for m in MODES if not m.hidden]
 
 
 def unregister_plugin(plugin: str) -> list[str]:

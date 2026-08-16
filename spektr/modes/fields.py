@@ -171,7 +171,8 @@ def _plasma(ctx: Ctx, cells: str):
     return codes, idx[0::2], idx[1::2]
 
 
-@mode("Plasma", group="fields", blurb="solid colour field, warped by the spectrum")
+@mode("Plasma", group="fields", hidden=True,
+      blurb="solid colour field, warped by the spectrum")
 def plasma(ctx: Ctx):
     return _plasma(ctx, "half")
 
@@ -320,7 +321,7 @@ def _chladni(ctx: Ctx, cells: str):
     return codes, idx[0::2], idx[1::2]
 
 
-@mode("Chladni", group="fields",
+@mode("Chladni", group="fields", hidden=True,
       blurb="nodal interference pattern, plate modes set by the dominant pitch")
 def chladni(ctx: Ctx):
     return _chladni(ctx, "half")
@@ -460,6 +461,7 @@ def _chladni_flow(ctx: Ctx, cells: str):
 @mode(
     "Chladni Flow",
     group="fields",
+    hidden=True,
     blurb="a plate figure melting continuously from one resonance into the next",
 )
 def chladni_flow(ctx: Ctx):
@@ -699,6 +701,7 @@ def _chladni_extreme(ctx: Ctx, cells: str):
 @mode(
     "Chladni Extreme",
     group="fields",
+    hidden=True,
     blurb="a plate driven past its modes - morphs, escalates, and snaps on the beat",
 )
 def chladni_extreme(ctx: Ctx):
@@ -1486,7 +1489,7 @@ def _kaleido(ctx: Ctx, cells: str):
     return codes, idx[0::2], idx[1::2]
 
 
-@mode("Kaleidoscope", group="fields",
+@mode("Kaleidoscope", group="fields", hidden=True,
       blurb="a mirrored tube of stained glass — the wedge count follows the spectrum, beats shake the chamber")
 def kaleidoscope(ctx: Ctx):
     return _kaleido(ctx, "half")
@@ -1918,7 +1921,8 @@ def _valentine(ctx: Ctx, octant: bool):
     return codes, idx
 
 
-@mode("Valentine", group="fields", blurb="a heart that beats with the track, trailing smaller ones upward")
+@mode("Valentine", group="fields", hidden=True,
+      blurb="a heart that beats with the track, trailing smaller ones upward")
 def valentine(ctx: Ctx):
     return _valentine(ctx, octant=False)
 
@@ -2297,6 +2301,8 @@ def locket(ctx: Ctx):
     np.multiply(cm, np.float32(1.0 / 10.0), out=cm)
     idx = ctx.ramp(cm)
     return codes, idx
+
+
 
 
 

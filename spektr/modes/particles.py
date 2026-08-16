@@ -750,7 +750,8 @@ def _sonar(ctx: Ctx, octant: bool):
     return codes, cidx
 
 
-@mode("Sonar", group="particles", blurb="one sweep, not the whole spectrum — returns fade like CRT phosphor")
+@mode("Sonar", group="particles", hidden=True,
+      blurb="one sweep, not the whole spectrum — returns fade like CRT phosphor")
 def sonar(ctx: Ctx):
     return _sonar(ctx, octant=False)
 
@@ -1560,3 +1561,4 @@ def murmuration(ctx: Ctx):
     codes = pack_braille(dots)
     cidx = ctx.ramp(cell_max(vis))
     return codes, cidx
+

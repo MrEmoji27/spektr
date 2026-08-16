@@ -247,7 +247,7 @@ class Spektr(App):
         # only place the UI says a mode did not ship with spektr.
         labels = {
             m.name: (f"·{m.plugin}" if m.is_plugin else "")
-            for m in mode_registry.MODES
+            for m in mode_registry.listed()
         }
 
         def done(choice: str | None) -> None:
@@ -1153,9 +1153,13 @@ def main() -> None:
                 print(f"plugin {p.name}: {p.error.splitlines()[-1]}", file=sys.stderr)
 
     if "--list-modes" in argv:
+        # Hidden modes are listed here and nowhere else in the UI. They are
+        # still selectable by name, so a listing that omitted them would make
+        # them unfindable rather than merely unoffered.
         for m in mode_registry.MODES:
             tag = f"  [{m.plugin}]" if m.is_plugin else ""
-            print(f"  {m.name:<10} {m.blurb}{tag}")
+            mark = "  (superseded — still selectable with --mode)" if m.hidden else ""
+            print(f"  {m.name:<10} {m.blurb}{tag}{mark}")
         return
     if "--glyph-test" in argv:
         _glyph_test()
