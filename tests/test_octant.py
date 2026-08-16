@@ -343,6 +343,97 @@ def test_smoothing_tracks_coverage_on_a_gradient():
     )
 
 
+BLOCK_ELEMENTS = set(range(0x2580, 0x25A0)) | {SPACE}
+
+
+@pytest.fixture
+def quadrant_cells():
+    """Run a test with the packers in Block-Elements-only mode."""
+    from spektr import render
+
+    before = render.CELL_MODE
+    render.set_cell_mode("quadrant")
+    try:
+        yield
+    finally:
+        render.set_cell_mode(before)
+
+
+def test_quadrant_lut_is_entirely_block_elements():
+    """The reason the fallback exists: this set is complete, octants are not."""
+    from spektr.render import QUADRANT_LUT
+
+    assert len(QUADRANT_LUT) == 16
+    assert len(set(QUADRANT_LUT.tolist())) == 16
+    assert set(QUADRANT_LUT.tolist()) <= BLOCK_ELEMENTS
+
+
+@pytest.mark.parametrize(
+    "pattern, want, label",
+    [
+        ([[1, 0], [0, 0]], 0x2598, "QUADRANT UPPER LEFT"),
+        ([[0, 1], [0, 0]], 0x259D, "QUADRANT UPPER RIGHT"),
+        ([[0, 0], [1, 0]], 0x2596, "QUADRANT LOWER LEFT"),
+        ([[0, 0], [0, 1]], 0x2597, "QUADRANT LOWER RIGHT"),
+        ([[1, 1], [0, 0]], 0x2580, "UPPER HALF BLOCK"),
+        ([[0, 0], [1, 1]], 0x2584, "LOWER HALF BLOCK"),
+        ([[1, 0], [1, 0]], 0x258C, "LEFT HALF BLOCK"),
+        ([[0, 1], [0, 1]], 0x2590, "RIGHT HALF BLOCK"),
+        ([[1, 1], [1, 1]], 0x2588, "FULL BLOCK"),
+        ([[0, 0], [0, 0]], SPACE, "SPACE"),
+    ],
+)
+def test_quadrant_geometry(quadrant_cells, pattern, want, label):
+    """Same geometric pinning as the octant table, on the reduced grid.
+
+    Each quadrant covers two octant rows, so the pattern is written at octant
+    resolution and doubled down — which is also exactly what the reduction in
+    the packer has to undo.
+    """
+    grid = np.repeat(np.array(pattern, dtype=np.float32), 2, axis=0)
+    grid = np.tile(grid, (3, 3))
+    got = set(pack_octant_bits(grid.astype(bool)).ravel().tolist())
+    assert got == {want}, f"{label}: got U+{got.pop():04X}, wanted U+{want:04X}"
+
+
+def test_quadrant_mode_never_leaves_block_elements(quadrant_cells):
+    """Every one of the 256 subcell patterns, through all three packers."""
+    from spektr.render import pack_octant_smooth
+
+    for mask in range(256):
+        pattern = [[(mask >> (r * 2 + c)) & 1 for c in range(2)] for r in range(4)]
+        bits = np.array(pattern, dtype=bool)
+        field = np.tile(bits.astype(np.float32) * 0.8 + 0.1, (2, 2))
+        lo, hi = cell_hilo(field)
+        for got in (
+            int(pack_octant_bits(np.tile(bits, (2, 2)))[0, 0]),
+            int(pack_octant(field, lo, hi)[0, 0]),
+            int(pack_octant_smooth(field, lo, hi)[0, 0]),
+        ):
+            assert got in BLOCK_ELEMENTS, f"mask {mask:08b} emitted U+{got:04X}"
+
+
+def test_quadrant_keeps_a_thin_line(quadrant_cells):
+    """A one-row outline must thicken, never vanish.
+
+    Pairs of octant rows collapse by maximum for exactly this reason: a mean
+    would average a single lit row against its dark neighbour and drop it
+    below any threshold, which is how an outline mode loses its outline.
+    """
+    lit = np.zeros((8, 4), dtype=bool)
+    lit[0::4] = True   # the top octant row of every cell, and nothing else
+    codes = pack_octant_bits(lit)
+    assert set(codes.ravel().tolist()) == {0x2580}, "the top row was lost"
+
+
+def test_cell_mode_rejects_nonsense():
+    from spektr import render
+
+    with pytest.raises(ValueError):
+        render.set_cell_mode("sextant")
+    assert render.CELL_MODE in ("octant", "quadrant")
+
+
 def _mode(name):
     import spektr.modes as M
 

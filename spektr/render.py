@@ -244,6 +244,93 @@ def cell_hilo(field: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return lo, hi
 
 
+#: mask -> codepoint over a 2x2 cell, bits row-major (1 = upper left).
+#:
+#: All sixteen are Block Elements, which is the entire point: the quadrant set
+#: is *complete* where the octant set is not, and it has been in every terminal
+#: font for decades. Half the linear resolution of octants and twice that of
+#: the half-block trick.
+QUADRANT_LUT = np.array(
+    [
+        0x0020,  # ....
+        0x2598,  # UL
+        0x259D,  # UR
+        0x2580,  # UL UR      upper half
+        0x2596,  # LL
+        0x258C,  # UL LL      left half
+        0x259E,  # UR LL
+        0x259B,  # UL UR LL
+        0x2597,  # LR
+        0x259A,  # UL LR
+        0x2590,  # UR LR      right half
+        0x259C,  # UL UR LR
+        0x2584,  # LL LR      lower half
+        0x2599,  # UL LL LR
+        0x259F,  # UR LL LR
+        0x2588,  # all        full block
+    ],
+    dtype=np.int32,
+)
+
+#: Ordered thresholds down a 2x2 cell's two rows. Both columns equal, for the
+#: mirror reason in :data:`OCTANT_DITHER`.
+QUADRANT_DITHER = np.array([[0.25, 0.25], [0.75, 0.75]], dtype=np.float32)
+
+#: Which cell geometry the packers emit: ``"octant"`` (2x4 subcells, Unicode
+#: 16) or ``"quadrant"`` (2x2, Block Elements only).
+#:
+#: There is no way to ask a terminal which it can draw — a missing glyph comes
+#: back as a replacement box, not an error — so this is a setting, not a probe.
+#: It lives here rather than in each mode because it is a property of the
+#: *terminal*, and because a mode that has already built its field at subcell
+#: resolution should not have to know: the packers reduce.
+CELL_MODE = "octant"
+
+
+def set_cell_mode(mode: str) -> None:
+    """Choose octant or quadrant cells for every mode that draws with them."""
+    global CELL_MODE
+    if mode not in ("octant", "quadrant"):
+        raise ValueError(f"cell mode must be octant or quadrant, not {mode!r}")
+    CELL_MODE = mode
+
+
+def _quadrant_subcells(field: np.ndarray) -> tuple[list[np.ndarray], int, int]:
+    """A ``(4h, 2w)`` subcell field reduced to the four quadrants of each cell.
+
+    Pairs of octant rows collapse by maximum rather than by mean: these fields
+    carry thin features — a nodal line, a trace, the rim of a shape — and a
+    mean loses a one-row-thick one to its neighbour, where a maximum keeps it
+    and only thickens it.
+    """
+    h4, w2 = field.shape
+    h, w = h4 // 4, w2 // 2
+    g = field[: h * 4, : w * 2]
+    return (
+        [
+            np.maximum(g[0::4, 0::2], g[1::4, 0::2]),
+            np.maximum(g[0::4, 1::2], g[1::4, 1::2]),
+            np.maximum(g[2::4, 0::2], g[3::4, 0::2]),
+            np.maximum(g[2::4, 1::2], g[3::4, 1::2]),
+        ],
+        h,
+        w,
+    )
+
+
+def _pack_quadrant(field, lo, hi, dither: bool) -> np.ndarray:
+    sub, h, w = _quadrant_subcells(field)
+    span = hi - lo
+    mask = np.zeros((h, w), dtype=np.int32)
+    k = 0
+    for r in range(2):
+        for c in range(2):
+            thr = lo + span * (QUADRANT_DITHER[r, c] if dither else np.float32(0.5))
+            np.add(mask, np.where(sub[k] >= thr, 1 << k, 0), out=mask)
+            k += 1
+    return QUADRANT_LUT[mask]
+
+
 def pack_octant_bits(lit: np.ndarray) -> np.ndarray:
     """``(4h, 2w)`` bool subcell grid -> ``(h, w)`` octant codepoints.
 
@@ -258,6 +345,13 @@ def pack_octant_bits(lit: np.ndarray) -> np.ndarray:
     opaque, which is what the two-colour modes want and what a shape drawn
     against empty space does not.
     """
+    if CELL_MODE == "quadrant":
+        # OR, not maximum: a subcell pair is lit if either half is, so a
+        # one-row-thick outline survives the reduction as a thicker one rather
+        # than vanishing.
+        f = lit.astype(np.float32)
+        return _pack_quadrant(f, np.float32(0.0), np.float32(1.0), dither=False)
+
     sub, h, w = _octant_subcells(lit)
     mask = np.zeros((h, w), dtype=np.int32)
     k = 0
@@ -312,9 +406,12 @@ def pack_octant_smooth(
     first or this is an expensive no-op; Kaleidoscope Ultra's docstring has
     the measured version of that mistake.
     """
-    sub, h, w = _octant_subcells(field)
     if lo is None or hi is None:
         lo, hi = cell_hilo(field)
+    if CELL_MODE == "quadrant":
+        return _pack_quadrant(field, lo, hi, dither=True)
+
+    sub, h, w = _octant_subcells(field)
     span = hi - lo
 
     mask = np.zeros((h, w), dtype=np.int32)
@@ -341,6 +438,9 @@ def pack_octant(field: np.ndarray, lo: np.ndarray, hi: np.ndarray) -> np.ndarray
     Code 2404.03+) render them; older setups show tofu, so a mode using this
     should be reachable but not the default.
     """
+    if CELL_MODE == "quadrant":
+        return _pack_quadrant(field, lo, hi, dither=False)
+
     sub, h, w = _octant_subcells(field)
     thr = (lo + hi) * np.float32(0.5)
     mask = np.zeros((h, w), dtype=np.int32)
@@ -677,6 +777,9 @@ __all__ = [
     "OCTANT_DITHER",
     "OCTANT_LUT",
     "OCTANT_LUT_WIDE",
+    "QUADRANT_DITHER",
+    "QUADRANT_LUT",
+    "set_cell_mode",
     "RAMP_STEPS",
     "SHADES",
     "SPACE",

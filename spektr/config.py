@@ -76,6 +76,16 @@ class Settings:
     #: itself, only records these names for the mode to resolve on first use.
     ascii_reel: str = ""
     ascii_fx: str = "warp"
+    #: Which cell geometry the subcell modes draw with: ``"octant"`` (2x4
+    #: subcells, Unicode 16) or ``"quadrant"`` (2x2, Block Elements only).
+    #:
+    #: A setting rather than a probe because there is no probe: a terminal
+    #: returns a replacement box for a glyph it lacks, not an error. Octants
+    #: are the default because that is what the modes are designed around;
+    #: ``spektr --glyph-test`` shows in two seconds whether this terminal can
+    #: draw them, and ``--cells quadrant`` is the fallback that works
+    #: everywhere.
+    cells: str = "octant"
 
     def clamp(self) -> "Settings":
         """Force every field back into range, replacing junk with the default.
@@ -107,6 +117,7 @@ class Settings:
         self.bands = bands if bands == 0 else max(8, bands)
         self.mode = self.mode if isinstance(self.mode, str) and self.mode else "Bars"
         self.theme = self.theme if isinstance(self.theme, str) and self.theme else "classic"
+        self.cells = self.cells if self.cells in ("octant", "quadrant") else "octant"
         self.chrome = bool(self.chrome)
         # `shuffle` has been a bool and, briefly, a four-state string. Accept
         # both: a string means the scope came from the interim form, where

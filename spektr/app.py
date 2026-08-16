@@ -927,6 +927,9 @@ usage: spektr [options]
   --list-modes       print visualiser names and exit
   --list-themes      print theme names and exit
   --glyph-test       can this terminal draw the Fine/Ultra modes? and exit
+  --cells quadrant   draw the Fine/Ultra modes with block-element quadrants
+                     instead of Unicode 16 octants — half the resolution,
+                     works in every font. Saved, so set it once.
   --version          print version and exit
   -h, --help         this text
 
@@ -964,30 +967,46 @@ def _glyph_test() -> None:
     those in what it draws, and they are here because seeing which of them
     work says how far ahead of the standard a font actually is.
     """
+    import os
+
     from .render import OCTANT_BASE, OCTANT_LUT
 
     def row(codes):
-        return "  ".join(chr(int(c)) for c in codes)
+        return " ".join(chr(int(c)) for c in codes)
 
     print()
-    print("  reference — every terminal draws these:")
-    print("    " + row((0x2580, 0x2584, 0x258C, 0x2590, 0x2596, 0x2597, 0x2598, 0x2588)))
+    print("  terminal:")
+    for var in ("TERM_PROGRAM", "TERM", "COLORTERM", "WT_SESSION", "KITTY_WINDOW_ID"):
+        val = os.environ.get(var)
+        if val:
+            print(f"    {var:<16} {val if len(val) < 40 else val[:37] + '...'}")
     print()
-    print("  octants (Unicode 16) — Kaleidoscope Fine, Valentine Fine and the rest:")
-    for start in range(0, 48, 16):
-        print("    " + row(range(OCTANT_BASE + start, OCTANT_BASE + start + 16)))
+
+    print("  1. block elements — decades old, every font has them:")
+    print("     " + row((0x2580, 0x2584, 0x258C, 0x2590, 0x2596, 0x2597, 0x2598,
+                         0x2599, 0x259A, 0x259B, 0x259C, 0x259D, 0x259E, 0x259F, 0x2588)))
     print()
-    print("  patterns held outside the octant block — spektr does not draw these,")
-    print("  they are here to show how complete the font is:")
-    print("    " + row((0x1CEA8, 0x1CEAB, 0x1CEA3, 0x1CEA0, 0x1FBE6, 0x1FBE7, 0x1FB82, 0x1FB85)))
+    print("  2. quadrants alone — the safe fallback renderer, 2x2 per cell:")
+    print("     " + row((0x2596, 0x2597, 0x2598, 0x259D, 0x2580, 0x2584, 0x258C, 0x2590)))
     print()
-    print("  If the first row is solid blocks and the octant rows are little")
-    print("  mosaics of squares, the Fine and Ultra modes will look right.")
-    print("  If the octant rows are boxes, question marks or blanks, this font")
-    print("  cannot draw them — use Windows Terminal 1.22+ with Cascadia Code,")
-    print("  kitty, ghostty or WezTerm, and stay on the plain modes here.")
+
+    print("  3. the octant block, U+1CD00..U+1CDE5 — what the Fine modes draw.")
+    print("     Say which ROWS are broken; a font can ship part of this block.")
+    for i in range(0, 230, 16):
+        end = min(i + 16, 230)
+        print(f"     {OCTANT_BASE + i:05X}  " + row(range(OCTANT_BASE + i, OCTANT_BASE + end)))
     print()
-    print(f"  ({len(OCTANT_LUT)} patterns, {OCTANT_BASE:#x}..0x1CDE5 plus Block Elements)")
+
+    print("  4. outside the octant block — spektr never draws these; they only")
+    print("     say how complete the font is:")
+    print("     " + row((0x1CEA8, 0x1CEAB, 0x1CEA3, 0x1CEA0, 0x1FBE6, 0x1FBE7, 0x1FB82, 0x1FB85)))
+    print()
+    print("  Row 1 broken -> nothing here will work; the font is very old.")
+    print("  Rows 1-2 fine, row 3 broken or patchy -> run spektr --cells quadrant.")
+    print("     The Fine and Ultra modes then draw with row 2's characters: 2x2")
+    print("     subcells instead of 2x4, still twice what the plain modes get,")
+    print("     and nothing outside Block Elements. The setting is saved.")
+    print(f"  ({len(OCTANT_LUT)} patterns total, 230 in the block plus block elements)")
     print()
 
 
@@ -1159,6 +1178,17 @@ def main() -> None:
     theme = _arg(argv, "--theme")
     if theme:
         settings.theme = theme
+    cells = _arg(argv, "--cells")
+    if cells:
+        if cells not in ("octant", "quadrant"):
+            print(f"unknown cell geometry: {cells}   (octant or quadrant)")
+            return
+        settings.cells = cells
+    # Set before any mode draws: the subcell packers read it, so a mode never
+    # has to know which geometry it is being rendered into.
+    from .render import set_cell_mode
+
+    set_cell_mode(settings.cells)
     # ``unlimited`` spelled out, and 0 as its numeric form. ``if fps:`` would
     # have quietly dropped the sentinel on the floor, since 0 is falsy.
     fps_raw = _arg(argv, "--fps")
