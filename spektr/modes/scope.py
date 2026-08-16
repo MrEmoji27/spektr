@@ -12,7 +12,7 @@ import math
 
 import numpy as np
 
-from ..render import cell_max, pack_braille
+from ..render import cell_max, pack_braille, pack_octant_bits
 from . import Ctx, empty, mode
 
 
@@ -81,9 +81,22 @@ def wave(ctx: Ctx):
     return codes, cidx
 
 
-@mode("Scope", group="scope", blurb="trigger-synced oscilloscope — the trace holds still")
-def scope(ctx: Ctx):
+def _scope(ctx: Ctx, octant: bool):
     """A real oscilloscope, with edge triggering.
+
+    Two modes share this body. ``octant=False`` is the original: the trace
+    is a chain of separated braille dots, which is exactly what a trace
+    should not read as — a fast edge looks like stipple between two columns.
+    ``octant=True`` packs the identical dot set into Unicode 16 octant
+    glyphs, block mosaic at the same 4x2 resolution, so the fill between
+    consecutive sample points becomes a continuous stroke. Nothing else
+    differs — same trigger, same window, same colour. See
+    :func:`render.pack_octant_bits`.
+
+    The trace is a shape against empty space, so the foreground is the only
+    colour either version sets: an octant cell is opaque once it is given a
+    background index, and the space around the waveform has to stay the
+    terminal's own.
 
     Plain waveform display slides sideways because each frame starts at an
     arbitrary phase. Locking onto a rising zero crossing near the middle of the
@@ -107,14 +120,44 @@ def scope(ctx: Ctx):
 
     window = raw[start : start + span]
     dots, heat = _trace_dots(window, ctx.dot_rows, ctx.dot_cols)
-    codes = pack_braille(dots)
+    codes = pack_octant_bits(dots) if octant else pack_braille(dots)
     cidx = ctx.ramp(cell_max(heat))
     return codes, cidx
 
 
-@mode("ECG", group="scope", blurb="scrolling trace, like a heart monitor")
-def ecg(ctx: Ctx):
+@mode("Scope", group="scope", blurb="trigger-synced oscilloscope — the trace holds still")
+def scope(ctx: Ctx):
+    return _scope(ctx, octant=False)
+
+
+@mode("Scope Fine", after="Scope", group="scope",
+      blurb="the same trace as a continuous stroke — needs a terminal that draws Unicode 16 octants")
+def scope_fine(ctx: Ctx):
+    """Scope on octant cells.
+
+    Separate mode rather than a switch on the original, for the same reason
+    Kaleidoscope Fine is: octants are Unicode 16 and an older terminal or
+    font draws a grid of tofu, which is a thing to opt into rather than to
+    discover when a mode you liked stops working.
+    """
+    return _scope(ctx, octant=True)
+
+
+def _ecg(ctx: Ctx, octant: bool):
     """The waveform as history rather than as a snapshot.
+
+    Two modes share this body. ``octant=False`` is the original: the trace
+    is a chain of separated braille dots. ``octant=True`` packs the
+    identical dot set into Unicode 16 octant glyphs, block mosaic at the
+    same 4x2 resolution, so the filled band between each column's minimum
+    and maximum reads as a continuous stroke. Nothing else differs — same
+    scroll clock, same peak-preserving decimation, same age colouring. See
+    :func:`render.pack_octant_bits`.
+
+    Like Scope, the trace is a shape against empty space, so the foreground
+    is the only colour either version sets — a background index would paint
+    the whole cell opaque and the space around the trace has to stay the
+    terminal's own.
 
     ``Spectro`` scrolls the *spectrum*; nothing scrolled the raw signal. The
     buffer holds one value per dot column and shifts left by however many
@@ -130,7 +173,13 @@ def ecg(ctx: Ctx):
     if dr < 8 or dc < 8:
         return empty(ctx.w, ctx.h)
 
-    hist = ctx.scratch("ecg", lambda: np.zeros((2, dc), dtype=np.float32))
+    # The history and the scroll accumulator are the mode's mutable state,
+    # and each version keeps its own: sharing one would make the two modes
+    # advance each other's clock, so every frame would come out "different"
+    # for no reason.
+    hist = ctx.scratch(
+        "ecg" if not octant else "ecg_fine", lambda: np.zeros((2, dc), dtype=np.float32)
+    )
 
     mix = _stereo_mix(ctx.stereo)
     src = mix if mix is not None else ctx.wave
@@ -149,7 +198,10 @@ def ecg(ctx: Ctx):
     # 120 fps, against -13% too slow at 60 fps. Accumulating instead lets a
     # frame legitimately advance zero columns, which is what keeps the average
     # exact at any width and frame rate.
-    acc = ctx.scratch("ecg_acc", lambda: {"v": 0.0, "elapsed": 0.0})
+    acc = ctx.scratch(
+        "ecg_acc" if not octant else "ecg_acc_fine",
+        lambda: {"v": 0.0, "elapsed": 0.0},
+    )
     acc["v"] += dc * 0.55 * max(ctx.dt, 0.0)
     acc["elapsed"] += max(ctx.dt, 0.0)
     step = int(min(dc, acc["v"]))
@@ -195,9 +247,29 @@ def ecg(ctx: Ctx):
     # which is what makes the direction of travel readable
     age = (np.arange(dc, dtype=np.float64) / max(1, dc - 1)) ** 2
     heat = (0.18 + 0.82 * age)[None, :] * dots
-    codes = pack_braille(dots)
+    codes = pack_octant_bits(dots) if octant else pack_braille(dots)
     cidx = ctx.ramp(cell_max(heat))
     return codes, cidx
+
+
+@mode("ECG", group="scope", blurb="scrolling trace, like a heart monitor")
+def ecg(ctx: Ctx):
+    return _ecg(ctx, octant=False)
+
+
+@mode("ECG Fine", after="ECG", group="scope",
+      blurb="the same scrolling trace, drawn solid — needs a terminal that draws Unicode 16 octants")
+def ecg_fine(ctx: Ctx):
+    """ECG on octant cells.
+
+    Separate mode rather than a switch on the original, for the same reason
+    Kaleidoscope Fine is: octants are Unicode 16 and an older terminal or
+    font draws a grid of tofu, which is a thing to opt into rather than to
+    discover when a mode you liked stops working. The two versions also keep
+    separate scroll buffers in scratch, so switching between them never
+    advances the other's history.
+    """
+    return _ecg(ctx, octant=True)
 
 
 @mode("Strings", group="scope", blurb="plucked strings, bowed by their own band")
