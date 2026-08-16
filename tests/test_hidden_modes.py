@@ -64,6 +64,57 @@ def test_these_two_keep_their_place(name):
     assert m is not None and not m.hidden
 
 
+def _viz(**settings):
+    from spektr.config import Settings
+    from spektr.widget import AudioVisualizer
+
+    return AudioVisualizer(settings=Settings(**settings))
+
+
+def test_legacy_setting_puts_them_back_on_the_menu():
+    off, on = _viz(), _viz(legacy_modes=True)
+    hidden = {m.name for m in M.MODES if m.hidden}
+
+    assert not (hidden & set(off.mode_names)), "a hidden mode is being offered"
+    assert hidden <= set(on.mode_names), "legacy_modes did not bring them back"
+    assert len(on.mode_names) == len(off.mode_names) + len(hidden)
+
+
+def test_legacy_setting_flips_live():
+    """The settings panel toggles the attribute; the list follows immediately."""
+    viz = _viz()
+    assert "Chladni" not in viz.mode_names
+    viz.show_legacy = True
+    assert "Chladni" in viz.mode_names
+    viz.show_legacy = False
+    assert "Chladni" not in viz.mode_names
+
+
+def test_a_hidden_mode_can_still_be_selected_while_it_is_hidden():
+    """--mode and a saved config name one; hiding must not break either."""
+    viz = _viz()
+    viz.set_mode("Chladni")
+    assert viz.mode_name == "Chladni"
+
+
+def test_the_setting_survives_a_round_trip(tmp_path):
+    from spektr import config
+
+    s = config.Settings(legacy_modes=True, cells="quadrant")
+    config.save(s, config_dir=tmp_path)
+    back = config.load(config_dir=tmp_path)
+    assert back.legacy_modes is True
+    assert back.cells == "quadrant"
+
+
+def test_junk_in_the_config_falls_back_rather_than_raising():
+    from spektr.config import Settings
+
+    s = Settings(legacy_modes="yes please", cells="sextants").clamp()
+    assert s.legacy_modes is True          # any truthy string is "on"
+    assert s.cells == "octant"             # not a geometry spektr has
+
+
 def test_a_hidden_mode_still_draws():
     """The point of hiding rather than deleting."""
     from spektr.analysis import N_BANDS
