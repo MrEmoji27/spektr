@@ -7,7 +7,15 @@ import math
 import numpy as np
 
 from ..palette import RAMP_STEPS
-from ..render import SPACE, cell_max, frac, noise, pack_braille
+from ..render import (
+    SPACE,
+    cell_max,
+    frac,
+    noise,
+    noise_below,
+    noise_level,
+    pack_braille,
+)
 from . import (
     Ctx,
     angular_bands as _angular_bands,
@@ -384,30 +392,72 @@ def _tunnel(ctx, inward: bool):
         return empty(ctx.w, ctx.h)
 
     dist, turn, max_r = _polar(ctx)
+
+    # The corridor itself does not move. Depth is a function of distance from
+    # the centre, the spokes are a function of angle and depth, the fade is a
+    # function of distance, and none of those three has a time term in it —
+    # what moves is the rib phase sliding along a fixed depth axis and the
+    # per-band brightness. Recomputing the fixed part every frame cost about a
+    # fifth of the mode: at 400x100 the depth divide, the spoke ``frac`` and
+    # the fade clip together measured 2.1 ms of a 15.8 ms frame, on 320,000
+    # dots that produce the same numbers every time.
+    #
+    # One scratch entry, not five: the audit caps a mode at four keys, and
+    # these five arrays have exactly the same lifetime — they are all
+    # "everything about a corridor of this size".
+    def build():
+        depth = max_r / np.maximum(dist, 0.9)
+        walls = frac(turn * 16.0 + depth * 0.03) < 0.09
+        near = np.clip(dist / max_r, 0.0, 1.0)
+        return {
+            # Pre-scaled: the rib phase is subtracted from this every frame,
+            # and the multiply was a full pass over the dot grid for a
+            # constant.
+            "depth055": depth * np.float32(0.55),
+            # The spokes and the dead zone around the centre are both fixed
+            # masks, so combine them once. ``lit`` below then needs one OR and
+            # one AND rather than two ANDs and an OR.
+            "walls": walls & (dist > 1.5),
+            "far": dist > 1.5,
+            "near": near,
+            # The dither threshold rises with distance so the far end thins
+            # out. Held in the integer space the hash already lives in — see
+            # render.noise_level — so the per-frame dither is a comparison and
+            # nothing else.
+            "dither": noise_level(0.25 + near * np.float32(0.85)),
+        }
+
+    geo = ctx.scratch("tunnel_geo", build)
+    near = geo["near"]
+
     n = min(16, ctx.n_display)
     nrg = _angular_bands(ctx, turn, n, ctx.t * 0.024)
-
-    # inverse distance is the depth axis: near the centre is far away
-    depth = max_r / np.maximum(dist, 0.9)
 
     speed = 0.6 + ctx.energy * 2.4
     phase = ctx.scratch("tunnel{}_phase".format("_in" if inward else ""), lambda: {"v": 0.0})
     phase["v"] += speed * max(ctx.dt, 0.0)
     direction = -1 if inward else 1
-    rings = frac(depth * 0.55 - direction * phase["v"])
+    rings = frac(geo["depth055"] - direction * phase["v"])
     ribs = rings < (0.10 + 0.22 * nrg)
 
-    spokes = frac(turn * 16.0 + depth * 0.03)
-    walls = spokes < 0.09
-
-    lit = (ribs | walls) & (dist > 1.5)
-    # fade the far end out so the centre reads as distance, not a hole
-    near = np.clip(dist / max_r, 0.0, 1.0)
-    lit &= noise((dr, dc), ctx.frame) < (0.25 + near * 0.85)
+    # In place from here down. Every one of these is a 320,000-element array,
+    # so a temporary is 1.3 MB of allocation and a pass over it; ``ribs`` is
+    # already a fresh array nothing else holds, which makes it the buffer.
+    np.bitwise_and(ribs, geo["far"], out=ribs)
+    np.bitwise_or(ribs, geo["walls"], out=ribs)
+    lit = ribs
+    np.bitwise_and(lit, noise_below((dr, dc), ctx.frame, geo["dither"]), out=lit)
 
     codes = pack_braille(lit)
-    cidx = ctx.ramp(cell_max(near * (0.4 + 0.6 * nrg) * lit))
-    return codes, cidx
+    # Same product, one buffer: multiplication commutes exactly in IEEE, so
+    # starting from the only fresh array here and folding the rest in place is
+    # bit-identical to ``near * (0.4 + 0.6 * nrg) * lit`` and allocates two
+    # fewer dot-grid temporaries.
+    shade = nrg * np.float32(0.6)
+    shade += np.float32(0.4)
+    shade *= near
+    shade *= lit
+    return codes, ctx.ramp(cell_max(shade))
 
 
 @mode("Tunnel", group="scenes", blurb="flying down a pipe, ribbed by the beat")
