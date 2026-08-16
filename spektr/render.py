@@ -32,6 +32,11 @@ BRAILLE_BITS = np.array(
     dtype=np.uint32,
 )
 
+#: The two-colour half-block: foreground paints the top half of the cell,
+#: background the bottom. What every smooth field in the app is drawn with,
+#: and what :func:`shade_cells` falls back to for a cell holding no edge.
+UPPER_HALF = ord("▀")
+
 BLOCKS_UP = " ▁▂▃▄▅▆▇█"
 BLOCKS_LEFT = " ▏▎▍▌▋▊▉█"
 SHADES = " ░▒▓█"
@@ -516,7 +521,37 @@ def shade_cells(
     hi_i = np.minimum(hi_i, top)
     lo_i = np.minimum(lo_i, hi_i - np.float32(1.0))
 
+    # Where a cell holds no edge, do not dither it at all.
+    #
+    # This is the correction to the first version, and the screenshot that
+    # forced it showed why: a smooth field has an edge in almost no cells, so
+    # thresholding every one of them covered the whole screen in a 1-bit
+    # stipple. Dithering buys sub-cell *position*; a cell with nothing to
+    # position gets texture in exchange for nothing, and the half-block
+    # renderer it replaced — two exact colours, no pattern — was plainly
+    # better there.
+    #
+    # So a flat cell is drawn the half-block way: upper half foreground, lower
+    # half background, straight from the means of its two halves. A cell that
+    # does straddle an edge keeps the octant mask, which is where the extra
+    # resolution was ever worth having. The two agree at the boundary because
+    # a barely-flat cell's halves are nearly its extremes.
     span = hi_i - lo_i
+    # The *raw* range, not the snapped one: snapping forces a pair at least a
+    # block wide, so testing that would call every cell an edge and dither the
+    # whole screen — which is exactly the bug this guard exists to undo.
+    edge = (hi - lo) * top >= np.float32(1.5)
+
+    half = len(sub) // 2
+    top_mean = sub[0].copy()
+    for s in sub[1:half]:
+        top_mean += s
+    top_mean *= np.float32(1.0 / half)
+    bot_mean = sub[half].copy()
+    for s in sub[half + 1:]:
+        bot_mean += s
+    bot_mean *= np.float32(1.0 / half)
+
     mask = np.zeros((h, w), dtype=np.int32)
     k = 0
     for r in range(rows):
@@ -527,7 +562,16 @@ def shade_cells(
             k += 1
 
     lut = QUADRANT_LUT if CELL_MODE == "quadrant" else OCTANT_LUT_WIDE
-    return lut[mask], hi_i.astype(np.int32), lo_i.astype(np.int32)
+    codes = np.where(edge, lut[mask], np.int32(UPPER_HALF))
+
+    # A flat cell's colours are its two halves, exact and unquantised beyond
+    # the ramp itself — no block snapping, because there is no coverage to
+    # resolve inside the block and snapping would only band a smooth gradient.
+    flat_fg = np.clip(top_mean * top, 0.0, top)
+    flat_bg = np.clip(bot_mean * top, 0.0, top)
+    fg = np.where(edge, hi_i, flat_fg).astype(np.int32)
+    bg = np.where(edge, lo_i, flat_bg).astype(np.int32)
+    return codes, fg, bg
 
 
 def pack_octant_smooth(
@@ -933,6 +977,7 @@ __all__ = [
     "RAMP_STEPS",
     "SHADES",
     "SPACE",
+    "UPPER_HALF",
     "blank",
     "blocks_from_levels",
     "broadcast_rows",
@@ -952,6 +997,7 @@ __all__ = [
     "subcell_rows",
     "row_gradient",
 ]
+
 
 
 

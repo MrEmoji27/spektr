@@ -283,46 +283,80 @@ def test_kaleidoscope_fine_draws_octants():
     assert len(np.unique(codes)) > 8, "the glyph is barely varying; is the mask stuck?"
 
 
-def test_shading_resolves_finer_than_the_ramp():
-    """The whole claim of shade_cells, as a number.
-
-    A block spans N ramp steps and the dither resolves the subcell count plus
-    one position inside it, so a level costs block/subcells steps. That has to
-    land below 1.0 or the shading reproduces exactly what the 64-step ramp
-    already does and buys nothing — which is what the first version did, and
-    what "still pixelated" turned out to mean. Two things caused it: a mirror
-    safe dither whose equal columns halve the coverages, and a block equal to
-    the subcell count.
-    """
+def _shaded(field, cells):
     from spektr import render
-    from spektr.render import OCTANT_LUT, QUADRANT_LUT, shade_cells
 
-    for cells, rows, lut, nsub in (
-        ("quadrant", 2, QUADRANT_LUT, 4),
-        ("octant", 4, OCTANT_LUT, 8),
-    ):
-        before = render.CELL_MODE
-        render.set_cell_mode(cells)
-        try:
-            width = 128
-            ramp = np.linspace(0.0, 1.0, width * 2, dtype=np.float32)[None, :]
-            codes, fg, bg = shade_cells(np.repeat(ramp, rows, axis=0))
-        finally:
-            render.set_cell_mode(before)
+    before = render.CELL_MODE
+    render.set_cell_mode(cells)
+    try:
+        return render.shade_cells(field)
+    finally:
+        render.set_cell_mode(before)
 
-        popcount = {int(c): bin(i).count("1") for i, c in enumerate(lut)}
-        coverage = np.array(
-            [popcount[int(c)] for c in codes.ravel()], dtype=np.float32
-        ) / nsub
-        level = bg.ravel() + coverage * (fg.ravel() - bg.ravel())
 
-        step = np.median(np.diff(np.unique(level)))
-        assert step <= 0.75, (
-            f"{cells}: {step:.2f} ramp steps a level — no finer than the palette"
-        )
-        assert len(np.unique(coverage)) >= nsub - 1, (
-            f"{cells}: only {len(np.unique(coverage))} coverages of a possible {nsub + 1}"
-        )
+@pytest.mark.parametrize("cells, rows", [("quadrant", 2), ("octant", 4)])
+def test_a_smooth_field_is_not_dithered_at_all(cells, rows):
+    """The bug a screenshot caught, and the one arithmetic could not.
+
+    Dithering buys sub-cell *position*. A cell with no edge in it has no
+    position to resolve, so thresholding it trades colour precision for
+    texture and gets nothing back — and since a smooth field has an edge in
+    almost no cells, the first version covered the entire screen in stipple.
+    It measured perfectly: right picture, right cost, and visibly worse than
+    the half-block renderer it replaced.
+
+    A flat cell is now drawn the half-block way, which is what those modes
+    used before any of this.
+    """
+    from spektr.render import UPPER_HALF
+
+    ramp = np.linspace(0.0, 1.0, 256, dtype=np.float32)[None, :]
+    codes, fg, bg = _shaded(np.repeat(ramp, rows * 64, axis=0), cells)
+
+    assert set(codes.ravel().tolist()) == {UPPER_HALF}, (
+        "a smooth gradient came out dithered"
+    )
+    assert len(np.unique(np.stack([fg, bg]))) > 32, (
+        "the gradient lost its colour resolution as well"
+    )
+
+
+@pytest.mark.parametrize(
+    # How far the mask must travel as the boundary crosses the cell. A
+    # quadrant cell is two rows tall and an octant four, so the shallower
+    # geometry genuinely has less room to place an edge in — the expectation
+    # follows the geometry rather than pretending they are the same.
+    "cells, rows, nsub, travel", [("quadrant", 2, 4, 1), ("octant", 4, 8, 2)]
+)
+def test_an_edge_is_placed_between_subcells(cells, rows, nsub, travel):
+    """What the dither is actually for, now that flat cells opt out of it.
+
+    Tone comes from the flat path, which has the whole ramp to spend. What is
+    left for the mask is *position*: as a boundary sweeps through a cell, the
+    number of lit subcells has to follow it, so the edge appears to land
+    between subcells rather than snapping to one.
+    """
+    from spektr.render import OCTANT_LUT, QUADRANT_LUT, UPPER_HALF
+
+    lut = QUADRANT_LUT if cells == "quadrant" else OCTANT_LUT
+    popcount = {int(c): bin(i).count("1") for i, c in enumerate(lut)}
+    centres = (np.arange(rows, dtype=np.float32) + 0.5) / rows
+
+    seen = []
+    for edge in np.linspace(0.1, 0.9, 9, dtype=np.float32):
+        # one cell tall and wide, with a soft boundary crossing it at `edge`
+        col = np.clip((centres - edge) / np.float32(0.35) + 0.5, 0.0, 1.0)
+        field = np.repeat(col[:, None], 2, axis=1)
+        codes, _, _ = _shaded(field, cells)
+        code = int(codes[0, 0])
+        seen.append(nsub - popcount[code] if code != UPPER_HALF else None)
+
+    lit = [s for s in seen if s is not None]
+    assert len(lit) >= 6, f"{cells}: the edge path fired only {len(lit)} times of 9"
+    assert lit == sorted(lit), f"{cells}: coverage is not monotonic in the edge: {lit}"
+    assert max(lit) - min(lit) >= travel, (
+        f"{cells}: the mask barely moved as the boundary swept the cell: {lit}"
+    )
 
 
 def test_the_dither_matrix_survives_a_mirror():
