@@ -90,11 +90,14 @@ def flame(ctx: Ctx):
 
     # ``dist < fw`` is exactly ``edge < 1.0`` wherever fw is positive, which is
     # every alive cell, so the separate distance pass folds into this division.
-    # fw is ``>= 0.3 * seg / 2 > 0`` at every cell, so the old ``maximum(fw,
-    # 1e-6)`` guard could never fire and the pass over the grid to compute it
-    # was pure overhead — divide by ``fw`` directly, bit-identically.
+    # fw is ``>= 0.3 * seg / 2 > 0`` on every alive cell, but a dead cell below
+    # a quiet band drives ``tip`` negative and fw through zero — ``fw == 0``
+    # lands only on cells whose ``edge`` is never consulted, so the ``where=``
+    # guard skips the divide there (divide-by-zero warnings, and a hard
+    # FloatingPointError under ``np.seterr``) without touching the visible
+    # cells, and the old full-grid ``maximum(fw, 1e-6)`` pass stays gone.
     edge = np.abs(np.arange(dc, dtype=np.float32)[None, :] - centre + np.float32(0.5) - wobble)
-    edge /= fw
+    np.divide(edge, fw, out=edge, where=fw != 0)
 
     # Re-seeded every frame, and this is the one mode in the file where that
     # is right. Pulse, Auroras and Murmuration all moved to fixed grain
