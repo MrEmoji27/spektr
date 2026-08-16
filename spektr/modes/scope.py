@@ -16,6 +16,34 @@ from ..render import cell_max, pack_braille
 from . import Ctx, empty, mode
 
 
+def _stereo_mix(stereo: np.ndarray) -> np.ndarray | None:
+    """Mono mix of a stereo buffer; ``None`` when the buffer is empty.
+
+    The two channels of a ``(N, 2)`` buffer average to one trace; a 1-D buffer
+    is its own trace — a mono signal handed to a stereo slot is rendered rather
+    than dropped, and ``None`` sends callers to their mono fallback.
+    """
+    if stereo.ndim == 1:
+        return stereo if stereo.size else None
+    if stereo.size:
+        return stereo.mean(axis=1)
+    return None
+
+
+def _stereo_channels(stereo: np.ndarray) -> tuple[np.ndarray, np.ndarray] | None:
+    """The two channels of a stereo buffer; ``None`` when the buffer is empty.
+
+    A 1-D buffer becomes two identical channels, which is the same mono
+    treatment :func:`_stereo_mix` gives the mean-based scopes — one trace
+    renders as its own L/R pair instead of crashing the axis indexing.
+    """
+    if stereo.ndim == 1:
+        return (stereo, stereo) if stereo.size else None
+    if stereo.size:
+        return stereo[:, 0], stereo[:, 1]
+    return None
+
+
 def _trace_dots(values: np.ndarray, dot_rows: int, dot_cols: int, gain: float = 1.0):
     """Sample a signal across the width and fill between consecutive points.
 
@@ -61,7 +89,8 @@ def scope(ctx: Ctx):
     arbitrary phase. Locking onto a rising zero crossing near the middle of the
     buffer makes a steady tone sit still, which is the whole point of a scope.
     """
-    raw = ctx.stereo.mean(axis=1) if ctx.stereo.size else ctx.wave
+    mix = _stereo_mix(ctx.stereo)
+    raw = mix if mix is not None else ctx.wave
     n = len(raw)
     if n < 8:
         return empty(ctx.w, ctx.h)
@@ -103,7 +132,8 @@ def ecg(ctx: Ctx):
 
     hist = ctx.scratch("ecg", lambda: np.zeros((2, dc), dtype=np.float32))
 
-    src = ctx.stereo.mean(axis=1) if ctx.stereo.size else ctx.wave
+    mix = _stereo_mix(ctx.stereo)
+    src = mix if mix is not None else ctx.wave
     src = np.asarray(src, dtype=np.float32)
 
     # ~55% of the width per second, so a full sweep takes just under two
@@ -240,10 +270,10 @@ def helix(ctx: Ctx):
     if dr < 10 or dc < 20:
         return empty(ctx.w, ctx.h)
 
-    pts = ctx.stereo
-    if pts.size:
-        left = np.clip(pts[:, 0], -1.0, 1.0).astype(np.float64)
-        right = np.clip(pts[:, 1], -1.0, 1.0).astype(np.float64)
+    ch = _stereo_channels(ctx.stereo)
+    if ch is not None:
+        left = np.clip(ch[0], -1.0, 1.0).astype(np.float64)
+        right = np.clip(ch[1], -1.0, 1.0).astype(np.float64)
         energy = float((left * left + right * right).mean()) * 0.5
         corr = float((left * right).mean())
         c = 0.0 if energy < 1e-8 else float(np.clip(corr / energy, -1.0, 1.0))
@@ -306,10 +336,10 @@ def goniometer(ctx: Ctx):
     # decay is dt-correct, so the trail length doesn't change with frame rate
     field *= float(np.exp(-ctx.dt / 0.14))
 
-    pts = ctx.stereo
-    if pts.size and not ctx.silent:
-        left = np.clip(pts[:, 0], -1.0, 1.0)
-        right = np.clip(pts[:, 1], -1.0, 1.0)
+    ch = _stereo_channels(ctx.stereo)
+    if ch is not None and not ctx.silent:
+        left = np.clip(ch[0], -1.0, 1.0)
+        right = np.clip(ch[1], -1.0, 1.0)
         x = (right - left) * 0.7071
         y = (right + left) * 0.7071
 
