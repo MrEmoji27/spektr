@@ -556,7 +556,16 @@ def _chladni_extreme(ctx: Ctx, cells: str):
 
     octant = cells == "octant"
     rows2 = h * 4 if octant else h * 2
-    cols = w * 2 if octant else w
+    # Vertical only, unlike its three siblings: this is the heaviest field in
+    # the app -- two figures, a harmonic and a rotation -- and sampling it at
+    # 4x2 a cell put the frame over the 16.7 ms budget outright on a loaded
+    # machine. At 4x1 it costs half that and still quadruples the vertical
+    # resolution, which is the axis that matters: a text cell is about twice as
+    # tall as it is wide, so the half-block renderer's coarseness is vertical.
+    # The two subcell columns of a cell then share a value, which is a real
+    # loss on a near-vertical nodal line and no loss at all on the horizontal
+    # ones the figure is mostly made of.
+    cols = w
 
     def geo():
         # Centred once: every use of the grid here is relative to the middle.
@@ -683,6 +692,11 @@ def _chladni_extreme(ctx: Ctx, cells: str):
         # heaviest mode in the app and over half its frame is the strip
         # builder, and with the glyph carrying the band's shape the colour has
         # less left to say. See Chladni Fine.
+        #
+        # The field is one sample per subcell *row* here, so each cell's two
+        # subcell columns take the same value — one repeat rather than twice
+        # the trig, sines included.
+        nodal = np.repeat(nodal, 2, axis=1)
         lo, hi = cell_hilo(nodal)
         codes = pack_octant_smooth(nodal, lo, hi)
         grade = np.float32(1.0 / 6.0)
