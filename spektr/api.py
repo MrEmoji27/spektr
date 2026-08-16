@@ -58,6 +58,7 @@ from .render import (
     noise,
     pack_braille,
     pack_octant,
+    pack_octant_bits,
 )
 
 __all__ = [
@@ -79,6 +80,7 @@ __all__ = [
     "BRAILLE_BASE",
     # octant cells — dot-grid resolution with two colours a cell
     "pack_octant",
+    "pack_octant_bits",
     "cell_hilo",
     "OCTANT_BASE",
     # block characters

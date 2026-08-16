@@ -14,10 +14,14 @@ import numpy as np
 import pytest
 
 from spektr.render import (
+    BRAILLE_BASE,
     OCTANT_BASE,
     OCTANT_LUT,
+    SPACE,
     cell_hilo,
+    pack_braille,
     pack_octant,
+    pack_octant_bits,
 )
 
 # ── the table ────────────────────────────────────────────────────────────────
@@ -102,6 +106,59 @@ def test_flat_cell_is_solid():
     assert set(pack_octant(field, lo, hi).ravel().tolist()) == {0x2588}
 
 
+#: bit weight per subcell for each packer, indexed [row][col]. Braille numbers
+#: its dots down the left column then down the right; octants are row-major.
+#: Reusing one table for the other is the transposition these tests exist for.
+_BRAILLE_BITS = np.array([[1, 8], [2, 16], [4, 32], [64, 128]], dtype=np.int32)
+_OCTANT_BITS = np.array([[1, 2], [4, 8], [16, 32], [64, 128]], dtype=np.int32)
+
+
+def _unpack(codes, bits, base=None):
+    """Codepoints -> the ``(4h, 2w)`` bool subcell grid that produced them."""
+    if base is not None:
+        mask = codes - base
+    else:
+        inverse = {int(c): i for i, c in enumerate(OCTANT_LUT)}
+        mask = np.array([[inverse[int(c)] for c in row] for row in codes], dtype=np.int32)
+    h, w = codes.shape
+    out = np.zeros((h * 4, w * 2), dtype=bool)
+    for r in range(4):
+        for c in range(2):
+            out[r::4, c::2] = (mask & bits[r, c]) != 0
+    return out
+
+
+@pytest.mark.parametrize(
+    "pattern, want",
+    [
+        ([[1, 1], [1, 1], [0, 0], [0, 0]], 0x2580),
+        ([[1, 0], [0, 0], [0, 0], [0, 0]], 0x1CEA8),
+        ([[0, 0], [0, 0], [0, 0], [0, 1]], 0x1CEA0),
+        ([[1, 1], [1, 1], [1, 1], [1, 1]], 0x2588),
+        ([[0, 0], [0, 0], [0, 0], [0, 0]], SPACE),
+    ],
+)
+def test_pack_octant_bits_uses_the_same_geometry(pattern, want):
+    grid = np.tile(np.array(pattern, dtype=bool), (3, 3))
+    got = set(pack_octant_bits(grid).ravel().tolist())
+    assert got == {want}, f"got U+{got.pop():04X}, wanted U+{want:04X}"
+
+
+def test_pack_octant_bits_round_trips():
+    rng = np.random.default_rng(11)
+    lit = rng.random((4 * 9, 2 * 13)) > 0.5
+    assert np.array_equal(_unpack(pack_octant_bits(lit), _OCTANT_BITS), lit)
+
+
+def test_the_two_packers_agree_on_a_thresholded_field():
+    """``pack_octant`` is ``pack_octant_bits`` of its own threshold."""
+    rng = np.random.default_rng(5)
+    field = rng.random((4 * 6, 2 * 6), dtype=np.float32)
+    lo, hi = cell_hilo(field)
+    thr = np.repeat(np.repeat((lo + hi) * 0.5, 4, axis=0), 2, axis=1)
+    assert np.array_equal(pack_octant(field, lo, hi), pack_octant_bits(field >= thr))
+
+
 def test_cell_hilo_is_the_range_of_the_cell():
     rng = np.random.default_rng(3)
     field = rng.random((4 * 5, 2 * 7), dtype=np.float32)
@@ -158,6 +215,57 @@ def test_kaleidoscope_fine_draws_octants():
     octants = ((codes >= OCTANT_BASE) & (codes <= 0x1CDE5)).sum()
     assert octants > 0, "no octant glyph anywhere — the mode is not using them"
     assert len(np.unique(codes)) > 8, "the glyph is barely varying; is the mask stuck?"
+
+
+def _mode(name):
+    import spektr.modes as M
+
+    reg = {m.name: m for m in M.MODES}
+    if name not in reg:
+        pytest.skip(f"{name} is not registered")
+    return reg[name]
+
+
+def test_valentine_fine_draws_the_same_heart_solid():
+    """The port's whole promise: identical shape, drawn as a surface.
+
+    Valentine is a silhouette, so the octant version is not a different
+    picture — it is the same lit dots packed into block mosaic instead of
+    braille. If the dot sets ever diverge, the variant has stopped being a
+    rendering of the same mode.
+    """
+    from spektr.palette import BUILTIN, Palette
+
+    pal = Palette(BUILTIN["gruvbox"])
+    plain, fine = _mode("Valentine"), _mode("Valentine Fine")
+    sa: dict = {}
+    sb: dict = {}
+    for f in range(8):
+        codes_a, idx_a = plain.fn(_ctx(120, 30, f, sa, pal))
+        codes_b, idx_b = fine.fn(_ctx(120, 30, f, sb, pal))
+
+    assert np.array_equal(
+        _unpack(codes_a, _BRAILLE_BITS, base=BRAILLE_BASE),
+        _unpack(codes_b, _OCTANT_BITS),
+    ), "the octant variant lights a different set of dots"
+    assert np.array_equal(idx_a, idx_b), "the colour path is meant to be untouched"
+
+    solid = int((codes_b == 0x2588).sum())
+    partial = int(((codes_b != SPACE) & (codes_b != 0x2588)).sum())
+    assert solid > 0, "nothing came out solid — the heart is still stipple"
+    assert partial > 0, "no partial cells — the rim has no detail"
+
+
+def test_valentine_itself_still_draws_braille():
+    """The original must not have been quietly ported underneath the variant."""
+    from spektr.palette import BUILTIN, Palette
+
+    pal = Palette(BUILTIN["gruvbox"])
+    st: dict = {}
+    for f in range(6):
+        codes, _ = _mode("Valentine").fn(_ctx(120, 30, f, st, pal))
+    braille = (codes >= BRAILLE_BASE) & (codes <= BRAILLE_BASE + 0xFF)
+    assert bool((braille | (codes == SPACE)).all())
 
 
 def test_kaleidoscope_fine_stays_mirror_symmetric():

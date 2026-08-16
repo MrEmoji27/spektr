@@ -69,7 +69,8 @@ SELF_ANIMATING = {
     "Vinyl", "Rain", "Ember",
     # continuous spin (Kaleidoscope rotates its mirror array; the
     # scrollwork curls turn on their anchors even at a frozen spectrum)
-    "Kaleidoscope", "Kaleidoscope Fine", "Valentine", "Tunnel In", "Dither", "Locket",
+    "Kaleidoscope", "Kaleidoscope Fine", "Valentine", "Valentine Fine",
+    "Tunnel In", "Dither", "Locket",
     # every wave carries a phase that advances on its own, at a rate set by
     # the band driving it, and onset rings keep travelling outward after the
     # beat that threw them — so a frozen spectrum still moves, which is the

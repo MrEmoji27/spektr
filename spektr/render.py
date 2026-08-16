@@ -202,6 +202,30 @@ def cell_hilo(field: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return lo, hi
 
 
+def pack_octant_bits(lit: np.ndarray) -> np.ndarray:
+    """``(4h, 2w)`` bool subcell grid -> ``(h, w)`` octant codepoints.
+
+    The octant twin of :func:`pack_braille`, and the right one for a mode that
+    already knows which subcells are lit — a silhouette, an outline, a shape
+    with an inside and an outside. Same dot resolution as braille, drawn as
+    solid block mosaic rather than as separated dots, which is the difference
+    between a filled region reading as a surface and reading as stipple.
+
+    Colour it with a foreground alone and the unlit subcells stay the
+    terminal's background; give it a background index too and the cell becomes
+    opaque, which is what the two-colour modes want and what a shape drawn
+    against empty space does not.
+    """
+    sub, h, w = _octant_subcells(lit)
+    mask = np.zeros((h, w), dtype=np.int32)
+    k = 0
+    for r in range(4):
+        for c in range(2):
+            np.add(mask, np.where(sub[k], OCTANT_BITS[r, c], 0), out=mask)
+            k += 1
+    return OCTANT_LUT[mask]
+
+
 def pack_octant(field: np.ndarray, lo: np.ndarray, hi: np.ndarray) -> np.ndarray:
     """``(4h, 2w)`` float field -> ``(h, w)`` octant codepoints.
 
@@ -566,5 +590,6 @@ __all__ = [
     "noise_level",
     "pack_braille",
     "pack_octant",
+    "pack_octant_bits",
     "row_gradient",
 ]

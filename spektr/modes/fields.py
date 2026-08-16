@@ -8,7 +8,14 @@ import numpy as np
 
 from ..analysis import resample_bands
 from ..palette import RAMP_STEPS
-from ..render import SHADES, SPACE, cell_max, cell_mean, pack_braille
+from ..render import (
+    SHADES,
+    SPACE,
+    cell_max,
+    cell_mean,
+    pack_braille,
+    pack_octant_bits,
+)
 from . import Ctx, empty, mode, spread
 
 #: Spectro's scroll rate, in columns per second. Paced in seconds rather than
@@ -1493,9 +1500,21 @@ def dither(ctx: Ctx):
 _VAL_HEARTS = 24
 
 
-@mode("Valentine", group="fields", blurb="a heart that beats with the track, trailing smaller ones upward")
-def valentine(ctx: Ctx):
+def _valentine(ctx: Ctx, octant: bool):
     """A heart that actually beats, rather than a heart that pulses.
+
+    Two modes share this body. ``octant=False`` packs the lit dots into
+    braille; ``octant=True`` packs the identical dot set into Unicode 16
+    octant glyphs. Nothing else differs — same shape, same beat, same colour.
+
+    That one substitution is worth a mode here because this is a silhouette.
+    Braille draws eight separated round dots per cell, so a filled heart is a
+    field of stipple with a ragged edge; an octant cell is a solid block
+    mosaic at the same resolution, so the same dots become a surface with a
+    clean rim. The foreground is the only colour either version sets, which
+    leaves the unlit subcells showing the terminal's own background — a
+    background index would paint the space around the heart opaque, which is
+    exactly what a shape drawn against empty space must not do.
 
     The distinction is the whole mode. A shape scaled by ``ctx.energy`` swells
     and sags with the music's loudness, which is a throb, not a heartbeat — a
@@ -1675,9 +1694,28 @@ def valentine(ctx: Ctx):
         sub = field[r0:r1, c0:c1]
         np.maximum(sub, np.where(ff <= 0.0, np.float32(0.9), np.float32(0.0)), out=sub)
 
-    codes = pack_braille(field > 0.0)
+    lit = field > 0.0
+    codes = pack_octant_bits(lit) if octant else pack_braille(lit)
     idx = ctx.ramp(np.clip(cell_max(field), 0.0, 1.0))
     return codes, idx
+
+
+@mode("Valentine", group="fields", blurb="a heart that beats with the track, trailing smaller ones upward")
+def valentine(ctx: Ctx):
+    return _valentine(ctx, octant=False)
+
+
+@mode("Valentine Fine", after="Valentine", group="fields",
+      blurb="the same heart drawn solid instead of stippled — needs a terminal that draws Unicode 16 octants")
+def valentine_fine(ctx: Ctx):
+    """Valentine on octant cells.
+
+    Separate mode rather than a switch on the original, for the same reason
+    Kaleidoscope Fine is: octants are Unicode 16 and an older terminal or font
+    draws a grid of tofu. That is a thing to opt into, not to discover when a
+    mode you liked stops working.
+    """
+    return _valentine(ctx, octant=True)
 
 
 #: Concurrent pulses in Locket.
