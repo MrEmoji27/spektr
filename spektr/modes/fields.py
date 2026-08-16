@@ -11,10 +11,12 @@ from ..palette import RAMP_STEPS
 from ..render import (
     SHADES,
     SPACE,
+    cell_hilo,
     cell_max,
     cell_mean,
     pack_braille,
     pack_octant_bits,
+    pack_octant_smooth,
 )
 from . import Ctx, empty, mode, spread
 
@@ -84,11 +86,23 @@ def spectrogram(ctx: Ctx):
     return codes, cidx
 
 
-@mode("Plasma", group="fields", blurb="solid colour field, warped by the spectrum")
-def plasma(ctx: Ctx):
+def _plasma(ctx: Ctx, cells: str):
     """Drawn with ``▀`` so each cell carries two colours — foreground for the
     top half, background for the bottom. That doubles the vertical resolution
     for free, which matters a lot for a smooth gradient field.
+
+    ``cells="octant"`` samples the same field on the 4x2 subcell grid instead
+    of the 1x2 half-row one and draws it with octant glyphs: four times the
+    vertical detail and twice the horizontal, at the same two colours a cell.
+    That means evaluating the field over four times as many points, which is
+    only affordable because it now runs in float32 — 9.58 ms against 4.09 at
+    400x100 for the same arithmetic, and the half-block path went 2.03 to 0.65
+    on the same change.
+
+    Because the field is smooth everywhere, the octant path uses
+    :func:`render.pack_octant_smooth` directly: there is already a gradient
+    across every cell for the ordered threshold to work with, so unlike
+    Kaleidoscope this one needs no interpolation to antialias.
 
     That trick is also the expensive part. Two colours per cell means
     make_strips run-length-encodes on the (fg, bg) *pair*, not a single index,
@@ -107,39 +121,62 @@ def plasma(ctx: Ctx):
     if w < 2 or h < 2:
         return empty(w, h)
 
-    rows2 = h * 2
+    octant = cells == "octant"
+    rows2 = h * 4 if octant else h * 2
+    cols = w * 2 if octant else w
 
+    # float32 throughout, the same deal Flame's and Vinyl's docstrings make: a
+    # sine over a grid this size is memory-bound, and float64 moves twice the
+    # bytes for a value that ends up quantised to 64 ramp steps.
     def geo():
-        y = np.arange(rows2, dtype=np.float64)[:, None] / max(1, rows2 - 1)
-        x = np.arange(w, dtype=np.float64)[None, :] / max(1, w - 1)
+        y = np.arange(rows2, dtype=np.float32)[:, None] / np.float32(max(1, rows2 - 1))
+        x = np.arange(cols, dtype=np.float32)[None, :] / np.float32(max(1, cols - 1))
         return y, x
 
     y, x = ctx.scratch("plasma", geo)
 
-    t = ctx.t
+    t = np.float32(ctx.t)
     # fractions rather than fixed indices — this mode has no business knowing
     # how many bands the analyser happens to produce, and docs/plugins.md tells
     # plugin authors exactly this
-    lows = ctx.range(0.00, 0.20)
-    mids = ctx.range(0.25, 0.62)
-    highs = ctx.range(0.70, 1.00)
+    lows = np.float32(ctx.range(0.00, 0.20))
+    mids = np.float32(ctx.range(0.25, 0.62))
+    highs = np.float32(ctx.range(0.70, 1.00))
 
     v = (
-        np.sin((x * 3.0 + t * 0.7) * (1.0 + lows * 1.4))
-        + np.sin((y * 2.5 - t * 0.5) * (1.0 + mids * 1.2))
-        + np.sin(((x + y) * 2.0 + t * 0.9))
-        + np.sin(np.sqrt((x - 0.5) ** 2 * 2.2 + (y - 0.5) ** 2) * 7.0 - t * 2.2 * (0.4 + highs * 2.0))
+        np.sin((x * np.float32(3.0) + t * np.float32(0.7)) * (np.float32(1.0) + lows * np.float32(1.4)))
+        + np.sin((y * np.float32(2.5) - t * np.float32(0.5)) * (np.float32(1.0) + mids * np.float32(1.2)))
+        + np.sin(((x + y) * np.float32(2.0) + t * np.float32(0.9)))
+        + np.sin(
+            np.sqrt((x - np.float32(0.5)) ** 2 * np.float32(2.2) + (y - np.float32(0.5)) ** 2)
+            * np.float32(7.0)
+            - t * np.float32(2.2) * (np.float32(0.4) + highs * np.float32(2.0))
+        )
     )
-    field = (v + 4.0) / 8.0
-    field = np.clip(field * (0.35 + ctx.energy * 1.5), 0.0, 1.0)
+    field = (v + np.float32(4.0)) * np.float32(0.125)
+    field = np.clip(field * np.float32(0.35 + ctx.energy * 1.5), 0.0, 1.0)
+
+    if octant:
+        lo, hi = cell_hilo(field)
+        return pack_octant_smooth(field, lo, hi), ctx.ramp(hi), ctx.ramp(lo)
 
     idx = ctx.ramp(field)
     codes = np.full((h, w), _UPPER_HALF, dtype=np.int32)
     return codes, idx[0::2], idx[1::2]
 
 
-@mode("Chladni", group="fields", blurb="nodal interference pattern, plate modes set by the dominant pitch")
-def chladni(ctx: Ctx):
+@mode("Plasma", group="fields", blurb="solid colour field, warped by the spectrum")
+def plasma(ctx: Ctx):
+    return _plasma(ctx, "half")
+
+
+@mode("Plasma Fine", after="Plasma", group="fields",
+      blurb="the same field at eight samples a cell instead of two — needs Unicode 16 octants")
+def plasma_fine(ctx: Ctx):
+    return _plasma(ctx, "octant")
+
+
+def _chladni(ctx: Ctx, cells: str):
     """A vibrating-plate figure, not a warped colour field.
 
     Plasma is a smooth continuous field; this is the opposite kind of
@@ -177,7 +214,9 @@ def chladni(ctx: Ctx):
     if w < 4 or h < 4:
         return empty(w, h)
 
-    rows2 = h * 2
+    octant = cells == "octant"
+    rows2 = h * 4 if octant else h * 2
+    cols = w * 2 if octant else w
 
     def geo():
         # Cell *centres*, not corners. Sampling the exact boundary hits
@@ -185,8 +224,8 @@ def chladni(ctx: Ctx):
         # so the whole outer row and column come out as a perfect node and the
         # figure gets a solid lit frame around it that reads as a UI border
         # rather than as part of the plate.
-        y = (np.arange(rows2, dtype=np.float64)[:, None] + 0.5) / rows2
-        x = (np.arange(w, dtype=np.float64)[None, :] + 0.5) / w
+        y = (np.arange(rows2, dtype=np.float32)[:, None] + np.float32(0.5)) / np.float32(rows2)
+        x = (np.arange(cols, dtype=np.float32)[None, :] + np.float32(0.5)) / np.float32(cols)
         return y, x
 
     y, x = ctx.scratch("chladni_geo", geo)
@@ -225,15 +264,18 @@ def chladni(ctx: Ctx):
     if n == m:                             # m == n cancels the figure to zero
         n += 1.0
 
-    xr = x
-    yr = y
+    # Separable: each term is an outer product of two 1-D sines, so evaluating
+    # this on the 4x2 subcell grid rather than the 1x2 half-row one costs four
+    # times the combination and nothing extra in the trig — which is what makes
+    # the octant variant affordable at all.
+    sx_m = np.sin(np.float32(m * math.pi) * x)
+    sy_n = np.sin(np.float32(n * math.pi) * y)
+    sx_n = np.sin(np.float32(n * math.pi) * x)
+    sy_m = np.sin(np.float32(m * math.pi) * y)
+    z = sx_m * sy_n - sx_n * sy_m
 
-    z = np.sin(m * math.pi * xr) * np.sin(n * math.pi * yr) - np.sin(
-        n * math.pi * xr
-    ) * np.sin(m * math.pi * yr)
-
-    sharpness = 1.4 + ctx.energy * 3.2
-    nodal = np.clip(1.0 - np.abs(z) * sharpness, 0.0, 1.0)
+    sharpness = np.float32(1.4 + ctx.energy * 3.2)
+    nodal = np.clip(np.float32(1.0) - np.abs(z) * sharpness, 0.0, 1.0)
     nodal *= nodal
 
     # Quantised before ramping, for the ``make_strips`` reason in the
@@ -248,19 +290,57 @@ def chladni(ctx: Ctx):
     # with no curve left to read — and restricting the dither to the fringe
     # while keeping the ridge solid still broke the thin parts of the
     # figure, which is most of it. The clean field is the better picture.
-    nodal = np.round(nodal * 12.0) * (1.0 / 12.0)
+    if octant:
+        # Shape from the raw field, colour from the graded one -- the split
+        # Kaleidoscope Ultra's docstring explains. The ordered threshold needs
+        # the gradient to place a nodal line between subcells, and quantising
+        # first flattens exactly the information it works from; the two colours
+        # are graded afterwards, on the cell-resolution arrays, which is also a
+        # quarter of the rounding.
+        # Seven steps, not twelve. The half-block path needs twelve because
+        # colour is the only thing it has to describe a nodal band with; here
+        # the glyph carries the band's shape and the colour only has to say how
+        # bright it is. Twelve measured 9,217 colour runs and 12.58 ms at
+        # 400x100 — over the threshold where the widget starts reusing frames —
+        # against 7 steps at 6,800 and 10.2.
+        lo, hi = cell_hilo(nodal)
+        codes = pack_octant_smooth(nodal, lo, hi)
+        grade = np.float32(1.0 / 7.0)
+        return (
+            codes,
+            ctx.ramp(np.round(hi * np.float32(7.0)) * grade),
+            ctx.ramp(np.round(lo * np.float32(7.0)) * grade),
+        )
+
+    nodal = np.round(nodal * np.float32(12.0)) * np.float32(1.0 / 12.0)
 
     idx = ctx.ramp(nodal)
     codes = np.full((h, w), _UPPER_HALF, dtype=np.int32)
     return codes, idx[0::2], idx[1::2]
 
 
-@mode(
-    "Chladni Flow",
-    group="fields",
-    blurb="a plate figure melting continuously from one resonance into the next",
-)
-def chladni_flow(ctx: Ctx):
+@mode("Chladni", group="fields",
+      blurb="nodal interference pattern, plate modes set by the dominant pitch")
+def chladni(ctx: Ctx):
+    return _chladni(ctx, "half")
+
+
+@mode("Chladni Fine", after="Chladni", group="fields",
+      blurb="the same plate at eight samples a cell, nodal lines antialiased — needs Unicode 16 octants")
+def chladni_fine(ctx: Ctx):
+    """Chladni on octant cells.
+
+    The mode the rendering audit was written about. A nodal line is a thin
+    curve through a field with many local extrema, which is the worst case for
+    a renderer that can only place an edge on a cell boundary: at 1x2 samples
+    a cell the curve is a staircase, and the fix is not more colours but more
+    places to put the edge. Eight samples a cell and an ordered threshold puts
+    it between them.
+    """
+    return _chladni(ctx, "octant")
+
+
+def _chladni_flow(ctx: Ctx, cells: str):
     """A vibrating-plate figure that morphs rather than snapping.
 
     The middle of the three. ``Chladni`` uses integer mode numbers, so it
@@ -300,11 +380,13 @@ def chladni_flow(ctx: Ctx):
     if w < 4 or h < 4:
         return empty(w, h)
 
-    rows2 = h * 2
+    octant = cells == "octant"
+    rows2 = h * 4 if octant else h * 2
+    cols = w * 2 if octant else w
 
     def geo():
-        y = np.arange(rows2, dtype=np.float64)[:, None] / max(1, rows2 - 1)
-        x = np.arange(w, dtype=np.float64)[None, :] / max(1, w - 1)
+        y = np.arange(rows2, dtype=np.float32)[:, None] / np.float32(max(1, rows2 - 1))
+        x = np.arange(cols, dtype=np.float32)[None, :] / np.float32(max(1, cols - 1))
         return y, x
 
     y, x = ctx.scratch("chladni_flow_geo", geo)
@@ -330,15 +412,26 @@ def chladni_flow(ctx: Ctx):
     # a slow spin keeps a held tone's figure visibly alive rather than frozen
     ang = ctx.t * 0.06
     cs, sn = math.cos(ang), math.sin(ang)
-    xr = (x - 0.5) * cs - (y - 0.5) * sn + 0.5
-    yr = (x - 0.5) * sn + (y - 0.5) * cs + 0.5
 
-    z = np.sin(m * math.pi * xr) * np.sin(n * math.pi * yr) - np.sin(
-        n * math.pi * xr
-    ) * np.sin(m * math.pi * yr)
+    # Separated, the way Chladni Extreme has always done it. This built two
+    # rotated 2-D grids and took four sines over the whole field — the one
+    # thing _rot_sines exists to avoid, sitting next to it unused. Four
+    # transcendentals over 80,000 cells became four over a 400-long row and a
+    # 200-long column, which is most of why the octant variant fits at all.
+    ax = x - np.float32(0.5)
+    by = y - np.float32(0.5)
+    sx_m, sy_m = _rot_sines(m, cs, sn, ax, by)
+    sx_n, sy_n = _rot_sines(n, cs, sn, ax, by)
+    z = sx_m * sy_n - sx_n * sy_m
 
-    sharpness = 1.4 + ctx.energy * 3.2
-    nodal = np.clip(1.0 - np.abs(z) * sharpness, 0.0, 1.0) ** 2
+    # In place through ``z``, which nothing else holds: at the octant grid this
+    # is 320,000 elements and the operator form built four temporaries of it.
+    np.abs(z, out=z)
+    z *= np.float32(1.4 + ctx.energy * 3.2)
+    np.subtract(np.float32(1.0), z, out=z)
+    np.clip(z, 0.0, 1.0, out=z)
+    z *= z
+    nodal = z
 
     # Quantised before ramping, for the ``make_strips`` reason in the
     # docstring above. Twelve buckets rather than ten: the figure is smooth
@@ -352,11 +445,40 @@ def chladni_flow(ctx: Ctx):
     # with no curve left to read — and restricting the dither to the fringe
     # while keeping the ridge solid still broke the thin parts of the
     # figure, which is most of it. The clean field is the better picture.
-    nodal = np.round(nodal * 12.0) * (1.0 / 12.0)
+    if octant:
+        # Shape from the raw field, colour graded afterwards on the
+        # cell-resolution arrays, and graded coarser than the half-block path:
+        # the glyph carries the nodal band's shape now, so the colour only has
+        # to say how bright it is. See Chladni Fine.
+        lo, hi = cell_hilo(nodal)
+        codes = pack_octant_smooth(nodal, lo, hi)
+        grade = np.float32(1.0 / 7.0)
+        return (
+            codes,
+            ctx.ramp(np.round(hi * np.float32(7.0)) * grade),
+            ctx.ramp(np.round(lo * np.float32(7.0)) * grade),
+        )
+
+    nodal = np.round(nodal * np.float32(12.0)) * np.float32(1.0 / 12.0)
 
     idx = ctx.ramp(nodal)
     codes = np.full((h, w), _UPPER_HALF, dtype=np.int32)
     return codes, idx[0::2], idx[1::2]
+
+
+@mode(
+    "Chladni Flow",
+    group="fields",
+    blurb="a plate figure melting continuously from one resonance into the next",
+)
+def chladni_flow(ctx: Ctx):
+    return _chladni_flow(ctx, "half")
+
+
+@mode("Chladni Flow Fine", after="Chladni Flow", group="fields",
+      blurb="the melting plate at eight samples a cell — needs Unicode 16 octants")
+def chladni_flow_fine(ctx: Ctx):
+    return _chladni_flow(ctx, "octant")
 
 
 def _rot_sines(k: float, cs: float, sn: float, ax: np.ndarray, by: np.ndarray):
@@ -385,12 +507,7 @@ def _rot_sines(k: float, cs: float, sn: float, ax: np.ndarray, by: np.ndarray):
     )
 
 
-@mode(
-    "Chladni Extreme",
-    group="fields",
-    blurb="a plate driven past its modes - morphs, escalates, and snaps on the beat",
-)
-def chladni_extreme(ctx: Ctx):
+def _chladni_extreme(ctx: Ctx, cells: str):
     """``Chladni``, driven far past what a real plate would survive.
 
     Four differences from its siblings, in order of how much they matter.
@@ -437,12 +554,14 @@ def chladni_extreme(ctx: Ctx):
     if w < 4 or h < 4:
         return empty(w, h)
 
-    rows2 = h * 2
+    octant = cells == "octant"
+    rows2 = h * 4 if octant else h * 2
+    cols = w * 2 if octant else w
 
     def geo():
         # Centred once: every use of the grid here is relative to the middle.
-        by = (np.arange(rows2, dtype=np.float64)[:, None] / max(1, rows2 - 1)) - 0.5
-        ax = (np.arange(w, dtype=np.float64)[None, :] / max(1, w - 1)) - 0.5
+        by = (np.arange(rows2, dtype=np.float32)[:, None] / np.float32(max(1, rows2 - 1))) - np.float32(0.5)
+        ax = (np.arange(cols, dtype=np.float32)[None, :] / np.float32(max(1, cols - 1))) - np.float32(0.5)
         return by, ax
 
     by, ax = ctx.scratch("chladni_x_geo", geo)
@@ -545,22 +664,58 @@ def chladni_extreme(ctx: Ctx):
     # than as being struck. At 1.0 the charged figure stays legible (33%) and
     # the punch has somewhere to swing from -- a kick takes it to 25%, a
     # visible snap tighter without a blackout.
-    sharpness = 1.4 + ctx.energy * 3.2 + charge * 1.0 + punch * 2.2
-    nodal = np.clip(1.0 - np.abs(z) * sharpness, 0.0, 1.0)
-    nodal *= nodal
+    # In place through ``z``, which nothing else holds — see Chladni Flow.
+    np.abs(z, out=z)
+    z *= np.float32(1.4 + ctx.energy * 3.2 + charge * 1.0 + punch * 2.2)
+    np.subtract(np.float32(1.0), z, out=z)
+    np.clip(z, 0.0, 1.0, out=z)
+    z *= z
+    nodal = z
     # Eight buckets, not the twelve its two siblings use, and done in place:
     # this is the heaviest mode in the app and over half its frame is the strip
     # builder, which pays per colour boundary. Eight costs almost nothing
     # visually because sharpness runs to 7 and beyond, and a sharp nodal field
     # is already nearly bimodal - most cells sit hard against 0 or 1 rather
     # than in the midtones the extra buckets would resolve.
-    nodal *= 8.0
+    if octant:
+        # Shape from the raw field, colour graded on the cell-resolution
+        # arrays. Six steps against the half-block path's eight: this is the
+        # heaviest mode in the app and over half its frame is the strip
+        # builder, and with the glyph carrying the band's shape the colour has
+        # less left to say. See Chladni Fine.
+        lo, hi = cell_hilo(nodal)
+        codes = pack_octant_smooth(nodal, lo, hi)
+        grade = np.float32(1.0 / 6.0)
+        return (
+            codes,
+            ctx.ramp(np.round(hi * np.float32(6.0)) * grade),
+            ctx.ramp(np.round(lo * np.float32(6.0)) * grade),
+        )
+
+    nodal *= np.float32(8.0)
     np.round(nodal, 0, out=nodal)
-    nodal *= 1.0 / 8.0
+    nodal *= np.float32(1.0 / 8.0)
+
+
 
     idx = ctx.ramp(nodal)
     codes = np.full((h, w), _UPPER_HALF, dtype=np.int32)
     return codes, idx[0::2], idx[1::2]
+
+
+@mode(
+    "Chladni Extreme",
+    group="fields",
+    blurb="a plate driven past its modes - morphs, escalates, and snaps on the beat",
+)
+def chladni_extreme(ctx: Ctx):
+    return _chladni_extreme(ctx, "half")
+
+
+@mode("Chladni Extreme Fine", after="Chladni Extreme", group="fields",
+      blurb="the overdriven plate at eight samples a cell — needs Unicode 16 octants")
+def chladni_extreme_fine(ctx: Ctx):
+    return _chladni_extreme(ctx, "octant")
 
 
 @mode("VFD", group="fields", blurb="vacuum-fluorescent bargraph with phosphor afterglow")
@@ -2149,4 +2304,5 @@ def locket(ctx: Ctx):
     np.multiply(cm, np.float32(1.0 / 10.0), out=cm)
     idx = ctx.ramp(cm)
     return codes, idx
+
 

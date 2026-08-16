@@ -73,6 +73,8 @@ SELF_ANIMATING = {
     # scrollwork curls turn on their anchors even at a frozen spectrum)
     "Kaleidoscope", "Kaleidoscope Fine", "Kaleidoscope Ultra",
     "Valentine", "Valentine Fine",
+    # the octant variants animate for exactly the reasons their originals do
+    "Plasma Fine", "Chladni Flow Fine", "Chladni Extreme Fine",
     "Tunnel In", "Dither", "Locket",
     # every wave carries a phase that advances on its own, at a rate set by
     # the band driving it, and onset rings keep travelling outward after the
