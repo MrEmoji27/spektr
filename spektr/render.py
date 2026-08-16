@@ -441,9 +441,9 @@ def shade_block_for(cells: int, subcells: int) -> int:
     them subtends less.
     """
     fine = max(2, subcells // 2)
-    if cells <= 120_000:      # up to about 600x200
+    if cells <= 56_000:       # up to about 400x140, a maximised window
         return fine
-    if cells <= 200_000:
+    if cells <= 200_000:      # up to about 800x250
         return fine * 2
     return fine * 3
 
