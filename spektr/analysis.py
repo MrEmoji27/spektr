@@ -82,6 +82,15 @@ HOP = 256
 ANALYSES_PER_SEC = 48000 / HOP
 WAVE_POINTS = 512     # downsampled scope trace
 
+#: Most hops drained in one wake-up of the analyser thread.
+#:
+#: The analyser runs far faster than real time, so in steady operation there
+#: is never a backlog — the catch-up bound exists for stalls (suspend/resume,
+#: a device hiccup) that deliver a burst of old audio at once. Beyond this
+#: many hops the backlog is stale and we jump past it rather than grinding
+#: through seconds of it; the old loop dropped backlog the same way.
+MAX_HOPS_PER_WAKE = 64
+
 #: cava's defaults, and they are the right ones. Below 50 Hz you are looking at
 #: room rumble and DC offset; above 10 kHz there is nothing in most material
 #: loud enough to move a bar.
@@ -970,6 +979,12 @@ class Analyser:
         self._lock = threading.Lock()
         self._frame = Frame()
         self._seq = 0
+        #: Absolute sample position of the newest hop the analyser has consumed.
+        #: This is the analysis schedule: the analyser walks the ring forward
+        #: :data:`HOP` frames at a time no matter how the capture backend pushes,
+        #: which is what keeps the hop rate a property of the analyser rather
+        #: than of the device's block size.
+        self._at = 0
 
         self._plan: BandPlan | None = None
         self._plan_key = ()
@@ -1070,23 +1085,46 @@ class Analyser:
 
     # ── main loop ──
     def _run(self) -> None:
-        last_written = 0
+        self._at = 0
         while self._running:
-            written = self._ring.written
-            if written - last_written < HOP:
+            if self._ring.written - self._at < HOP:
                 # Poll finer than the hop period, which at HOP=256/48 kHz is
                 # 5.3 ms. The old 2 ms sleep was a fifth of a 10.7 ms period
                 # and is over a third of this one — enough quantisation to
                 # show up as jitter in the analysis interval.
                 time.sleep(0.001)
                 continue
-            # if we fell behind, jump to now rather than grinding through backlog
-            last_written = written
+            self._analyse_hops()
 
-            try:
-                self._analyse_once()
-            except Exception:
-                time.sleep(0.05)
+    def _analyse_hops(self) -> None:
+        """Drain the ring in HOP-sized hops, one analysis per hop.
+
+        This is where the hop rate is decoupled from the capture block size.
+        A backend that hands the ring a 512- or 1024-frame block at once is
+        not one analysis: it is two or four hops, each read from the window
+        ending exactly at that hop's own sample position and timestamped on
+        the signal's clock, so the detector sees the same hop sequence at
+        every block size — and a hop's worth of latency, not a block's.
+        """
+        sr = int(self._get_sr() or 48000)
+        while True:
+            available = self._ring.written - self._at
+            if available < HOP:
+                return
+            hops = available // HOP
+            if hops > MAX_HOPS_PER_WAKE:
+                # A stall (suspend, a device hiccup) leaves a backlog we will
+                # never catch up on; skip past it rather than grind through it.
+                self._at += (hops - MAX_HOPS_PER_WAKE) * HOP
+                hops = MAX_HOPS_PER_WAKE
+            for _ in range(hops):
+                self._at += HOP
+                try:
+                    self._analyse_once(end=self._at, now=self._at / sr)
+                except Exception:
+                    # one bad hop must not wedge the loop or flood it
+                    self._at = self._ring.written
+                    return
 
     def _band_sums(self, spec: np.ndarray, lower: np.ndarray, upper: np.ndarray) -> np.ndarray:
         """Sum the magnitudes in each bar's bin range, inclusive of both ends.
@@ -1097,12 +1135,20 @@ class Analyser:
         cum = np.concatenate(([0.0], np.cumsum(spec)))
         return cum[np.minimum(upper + 1, len(spec))] - cum[lower]
 
-    def _analyse_once(self) -> None:
+    def _analyse_once(self, end: int | None = None, now: float | None = None) -> None:
         sr = int(self._get_sr() or 48000)
         self._ensure_plan(sr)
         plan = self._plan
 
-        buf = self._ring.latest(plan.bass_size)
+        if end is None:
+            buf = self._ring.latest(plan.bass_size)
+        else:
+            # Read the window at the hop's own position rather than the newest
+            # one: when several hops arrive in one backend push, each must see
+            # the data ending at its own sample, or the extra hops would all
+            # read the same trailing window and the hop rate would halve again
+            # (two identical analyses per push instead of two real ones).
+            buf = self._ring.window(plan.bass_size, end)
         if buf is None:
             return
 
@@ -1111,7 +1157,7 @@ class Analyser:
         mono = (left + right) * 0.5
 
         rms = float(np.sqrt(np.mean(mono * mono))) + 1e-12
-        now = self._clock()
+        now = self._clock() if now is None else now
 
         # Noise gate: a *fixed* absolute threshold, deliberately. An adaptive
         # floor collapses onto the music when playback is already running as

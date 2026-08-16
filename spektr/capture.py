@@ -336,16 +336,31 @@ class RingBuffer:
 
     def latest(self, n: int) -> Optional[np.ndarray]:
         """The most recent n frames as ``(n, 2)``, or None if not filled yet."""
+        return self.window(n, self._written)
+
+    def window(self, n: int, end: int) -> Optional[np.ndarray]:
+        """``n`` frames ending at absolute frame index ``end`` (exclusive).
+
+        ``end`` counts frames since capture started, on the same scale as
+        :attr:`written`, so a consumer that drains the ring on its own
+        schedule can read the window ending at exactly the hop it has already
+        claimed rather than only ever the newest one. Returns None when those
+        frames have not been written yet, or have already wrapped out of the
+        ring.
+        """
         n = min(int(n), self._cap)
         with self._lock:
-            if self._written < n:
+            if end < n or end > self._written:
                 return None
-            start = (self._w - n) % self._cap
-            if start + n <= self._cap:
-                return self._buf[start : start + n].copy()
-            split = self._cap - start
+            start = end - n
+            if start < self._written - self._cap:
+                return None
+            s = start % self._cap
+            if s + n <= self._cap:
+                return self._buf[s : s + n].copy()
+            split = self._cap - s
             out = np.empty((n, 2), dtype=np.float32)
-            out[:split] = self._buf[start:]
+            out[:split] = self._buf[s:]
             out[split:] = self._buf[: n - split]
             return out
 
