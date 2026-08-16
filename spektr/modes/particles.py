@@ -351,8 +351,18 @@ def arcs(ctx: Ctx):
 
     lit = heat > 0.06
     codes = pack_braille(lit)
-    cidx = ctx.ramp(cell_max(heat * lit))
-    return codes, cidx
+    # Graded to twelve steps before ramping, the same trick and for the same
+    # reason as Chladni and Auroras. A ring is a radial gradient and colour
+    # runs are horizontal, so near the top and bottom of one every cell lands
+    # in a different ramp bucket from its neighbour: 47 distinct indices and
+    # 8,366 runs a frame at 400x100, which cost more than building the picture
+    # did. Twelve steps is finer than the eye separates on an annulus this
+    # thin and takes it to 6,716.
+    shade = cell_max(heat * lit)
+    shade *= np.float32(12.0)
+    np.round(shade, 0, out=shade)
+    shade *= np.float32(1.0 / 12.0)
+    return codes, ctx.ramp(shade)
 
 
 #: Ring outlines for bubble radii 1..4, as (dy, dx) offset pairs. Built once at
