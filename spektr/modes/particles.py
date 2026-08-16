@@ -6,7 +6,7 @@ import math
 
 import numpy as np
 
-from ..render import cell_max, frac, noise, pack_braille
+from ..render import cell_hilo, cell_max, frac, noise, pack_braille, pack_octant, pack_octant_bits
 from . import (
     Ctx,
     angular_bands as _angular_bands,
@@ -594,9 +594,22 @@ def _sonar_circ(ctx: Ctx, dist: np.ndarray) -> np.ndarray:
     )
 
 
-@mode("Sonar", group="particles", blurb="one sweep, not the whole spectrum — returns fade like CRT phosphor")
-def sonar(ctx: Ctx):
+def _sonar(ctx: Ctx, octant: bool):
     """A ship's sonar scope, not another way to draw a spectrum.
+
+    Two modes share this body. ``octant=False`` is the original: the lit
+    dots are packed into braille, so the sweep reads as a chain of dots and
+    a return as a clump of stipple. ``octant=True`` packs the identical dot
+    set into Unicode 16 octant glyphs — block mosaic at the same 4x2
+    resolution — so the same beam and the same returns read as a solid
+    stroke on the scope. Nothing else differs: same sweep rate, same
+    phosphor decay, same colours. See :func:`render.pack_octant_bits`.
+
+    That substitution is worth a mode here because this one is almost pure
+    edge. A sweep line and contact blips against empty space have no
+    interior to speak of, so the foreground is the only colour either
+    version sets: an octant cell is opaque once it is given a background
+    index, and the space around the beam has to stay the terminal's own.
 
     Radial already shows every band at once, wrapped into a static ring —
     the whole picture, all the time. This shows one bearing at a time: a
@@ -625,7 +638,14 @@ def sonar(ctx: Ctx):
     n = min(24, max(8, ctx.n_display))
     nrg = _angular_bands(ctx, turn, n, 0.0)
 
-    buf = ctx.scratch("sonar_buf", lambda: np.zeros((dr, dc), dtype=np.float32))
+    # The phosphor buffer is the mode's one piece of mutable state, and each
+    # version keeps its own: sharing one would make the two modes advance
+    # each other's decay, so every frame would come out "different" for no
+    # reason.
+    buf = ctx.scratch(
+        "sonar_buf" if not octant else "sonar_buf_fine",
+        lambda: np.zeros((dr, dc), dtype=np.float32),
+    )
 
     # SWEEP_TURNS_PER_SEC=0.15 is one full rotation every ~6.7s — slow enough
     # that a band's return is still clearly a fading trail behind the beam
@@ -696,9 +716,29 @@ def sonar(ctx: Ctx):
         buf[sel] = np.maximum(buf[sel], vals)
 
     dots = buf > 0.05
-    codes = pack_braille(dots)
+    codes = pack_octant_bits(dots) if octant else pack_braille(dots)
     cidx = ctx.ramp(cell_max(buf * dots))
     return codes, cidx
+
+
+@mode("Sonar", group="particles", blurb="one sweep, not the whole spectrum — returns fade like CRT phosphor")
+def sonar(ctx: Ctx):
+    return _sonar(ctx, octant=False)
+
+
+@mode("Sonar Fine", after="Sonar", group="particles",
+      blurb="the same sweep drawn solid instead of stippled — needs a terminal that draws Unicode 16 octants")
+def sonar_fine(ctx: Ctx):
+    """Sonar on octant cells.
+
+    Separate mode rather than a switch on the original, for the same reason
+    Kaleidoscope Fine is: octants are Unicode 16 and an older terminal or
+    font draws a grid of tofu, which is a thing to opt into rather than to
+    discover when a mode you liked stops working. The two versions also keep
+    separate phosphor buffers in scratch, so switching between them never
+    advances the other's decay.
+    """
+    return _sonar(ctx, octant=True)
 
 
 @mode("Orbit", group="particles", blurb="bodies on real elliptical orbits; loud bands swing out")

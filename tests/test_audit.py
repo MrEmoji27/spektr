@@ -43,8 +43,8 @@ SELF_ANIMATING = {
     "Matrix", "Spectro", "Plasma", "Gonio",
     # scroll (ECG), standing-wave phase (Strings), ring breathing and angular
     # spin (Arcs), travelling particles (Bubbles), curtain billow (Auroras),
-    # continuous sweep rotation (Sonar)
-    "ECG", "Strings", "Arcs", "Bubbles", "Auroras", "Sonar",
+    # continuous sweep rotation (Sonar, and the octant variant of it)
+    "ECG", "Strings", "Arcs", "Bubbles", "Auroras", "Sonar", "Sonar Fine",
     # continuous ticker scroll (Readout), continuous spin (Helix, and both
     # Chladni Flow and Chladni Extreme — but *not* plain Chladni, whose whole
     # point is that it holds a discrete figure and only snaps when the
