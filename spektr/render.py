@@ -295,6 +295,26 @@ def set_cell_mode(mode: str) -> None:
     CELL_MODE = mode
 
 
+def subcell_rows() -> int:
+    """Subcell rows per text cell in the current mode: 4 octant, 2 quadrant.
+
+    A mode that builds its own field should ask, and build ``h * subcell_rows()``
+    rows. Building four and letting the packer reduce is correct but wasteful,
+    and the waste is the whole frame at a large terminal: Plasma's field is
+    1.28 million points at 800x200 with four rows a cell, and half of them are
+    averaged away again before anything is drawn.
+    """
+    return 2 if CELL_MODE == "quadrant" else 4
+
+
+def _quadrant_direct(field: np.ndarray) -> tuple[list[np.ndarray], int, int]:
+    """The four quadrants of each cell, from a field already at ``(2h, 2w)``."""
+    h2, w2 = field.shape
+    h, w = h2 // 2, w2 // 2
+    g = field[: h * 2, : w * 2]
+    return [g[0::2, 0::2], g[0::2, 1::2], g[1::2, 0::2], g[1::2, 1::2]], h, w
+
+
 def _quadrant_subcells(field: np.ndarray) -> tuple[list[np.ndarray], int, int]:
     """A ``(4h, 2w)`` subcell field reduced to the four quadrants of each cell.
 
@@ -362,6 +382,26 @@ def pack_octant_bits(lit: np.ndarray) -> np.ndarray:
     return OCTANT_LUT_WIDE[mask]
 
 
+#: Ordered thresholds over the 4x2 cell with all eight distinct — a proper 2-D
+#: Bayer spread rather than the mirror-safe one below.
+#:
+#: This is the matrix for *shading*, and the distinction is worth stating
+#: because using the wrong one silently costs half the resolution. When the two
+#: columns share a threshold a cell can only ever show an even number of lit
+#: subcells: five coverages out of a possible nine, so the shading resolves
+#: half of what it could. Measured on a smooth ramp, that came out at exactly
+#: 1.00 ramp steps per level — the same granularity as no dithering at all,
+#: which is what "still pixelated" looks like.
+#:
+#: Kaleidoscope needs the symmetric one because a mirror swaps a cell's subcell
+#: columns and its whole promise is bilateral symmetry. Nothing else does.
+OCTANT_DITHER_2D = (
+    np.array([[0, 4], [6, 2], [1, 5], [7, 3]], dtype=np.float32) + 0.5
+) / 8.0
+
+#: The same for a 2x2 cell: four distinct thresholds, five coverages.
+QUADRANT_DITHER_2D = (np.array([[0, 2], [3, 1]], dtype=np.float32) + 0.5) / 4.0
+
 #: Ordered threshold offsets over the 4x2 cell, in (0, 1).
 #:
 #: A Bayer spread down the rows — neighbouring rows get thresholds far apart
@@ -382,8 +422,34 @@ OCTANT_DITHER = np.array(
 )
 
 
+def shade_block_for(cells: int, subcells: int) -> int:
+    """How wide the colour pair should be, in ramp steps.
+
+    The pair spans ``block`` steps and the dither resolves ``subcells + 1``
+    positions inside it, so a level costs ``block / subcells`` ramp steps. The
+    whole point is to land *below* one — a block equal to the subcell count
+    reproduces the ramp's own granularity exactly and buys nothing, which is
+    the trap the first version fell into: 4 steps across 4 quadrant subcells
+    measured 1.00 steps a level, indistinguishable from not dithering.
+
+    Half the subcell count is the default, so a level is half a ramp step and
+    the field carries roughly twice what the palette can name.
+
+    Above that the strip builder starts to bind — colour costs per *run* and
+    runs scale with cells — so a very large grid trades back toward the coarse
+    end. It can afford to: the cells are smaller, so a step between two of
+    them subtends less.
+    """
+    fine = max(2, subcells // 2)
+    if cells <= 120_000:      # up to about 600x200
+        return fine
+    if cells <= 200_000:
+        return fine * 2
+    return fine * 3
+
+
 def shade_cells(
-    field: np.ndarray, steps: int = RAMP_STEPS, block: int = 4
+    field: np.ndarray, steps: int = RAMP_STEPS, block: int | None = None
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """``(4h, 2w)`` field -> ``(codes, fg_index, bg_index)``, shaded not masked.
 
@@ -405,13 +471,34 @@ def shade_cells(
     steps — the same arithmetic degrades gracefully back into a shape cut
     between the two ends, because that is what the coverage then means.
 
+    The field must be ``(h * subcell_rows(), w * 2)`` — four rows a cell in
+    octant mode, two in quadrant. A mode that builds its own field should ask
+    :func:`subcell_rows` rather than always building four, because in quadrant
+    mode half of those samples are averaged away again and at a large terminal
+    that half is most of the frame.
+
     Returns palette indices directly rather than floats: the quantisation is
     the point here, so doing it once inside is both cheaper and the only way
     the two colours are guaranteed to land a single step apart.
     """
-    lo, hi = cell_hilo(field)
+    if CELL_MODE == "quadrant":
+        sub, h, w = _quadrant_direct(field)
+        dither, bits = QUADRANT_DITHER_2D, None
+        rows, cols = 2, 2
+    else:
+        sub, h, w = _octant_subcells(field)
+        dither, bits = OCTANT_DITHER_2D, OCTANT_BITS
+        rows, cols = 4, 2
+
+    lo = sub[0].copy()
+    hi = sub[0].copy()
+    for s in sub[1:]:
+        np.minimum(lo, s, out=lo)
+        np.maximum(hi, s, out=hi)
+
     top = np.float32(steps - 1)
-    b = np.float32(block)
+    nsub = rows * cols
+    b = np.float32(shade_block_for(h * w, nsub) if block is None else block)
 
     # Both ends snapped to a block of ramp steps, and the pair is *always* one
     # block wide unless the cell genuinely spans more.
@@ -430,15 +517,6 @@ def shade_cells(
     lo_i = np.minimum(lo_i, hi_i - np.float32(1.0))
 
     span = hi_i - lo_i
-    if CELL_MODE == "quadrant":
-        sub, h, w = _quadrant_subcells(field)
-        dither, bits = QUADRANT_DITHER, None
-        rows, cols = 2, 2
-    else:
-        sub, h, w = _octant_subcells(field)
-        dither, bits = OCTANT_DITHER, OCTANT_BITS
-        rows, cols = 4, 2
-
     mask = np.zeros((h, w), dtype=np.int32)
     k = 0
     for r in range(rows):
@@ -845,6 +923,8 @@ __all__ = [
     "OCTANT_BASE",
     "OCTANT_BITS",
     "OCTANT_DITHER",
+    "OCTANT_DITHER_2D",
+    "QUADRANT_DITHER_2D",
     "OCTANT_LUT",
     "OCTANT_LUT_WIDE",
     "QUADRANT_DITHER",
@@ -869,6 +949,9 @@ __all__ = [
     "pack_octant_bits",
     "pack_octant_smooth",
     "shade_cells",
+    "subcell_rows",
     "row_gradient",
 ]
+
+
 

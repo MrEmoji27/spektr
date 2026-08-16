@@ -64,6 +64,11 @@ class AudioVisualizer(Widget):
     ):
         super().__init__(**kwargs)
         self.settings = settings or Settings()
+        #: Whether the picker, the cycle keys and shuffle offer the superseded
+        #: modes. Read from the setting at construction and flipped live by the
+        #: settings panel; the modes themselves are registered and selectable
+        #: either way, so this only changes what is *offered*.
+        self.show_legacy = bool(getattr(self.settings, "legacy_modes", False))
         #: where user themes are read from; None means the platform default
         #: from palette.config_dir(). Handed straight to all_themes() so an
         #: injected config root redirects the theme-list read exactly like it
@@ -184,11 +189,19 @@ class AudioVisualizer(Widget):
         both are still registered and both still render if something asks for
         them by name, which is what ``--mode`` and a saved config do.
         """
-        return [
-            m.name
-            for m in mode_registry.listed()
-            if not self.quarantine.is_disabled(m.name)
-        ]
+        pool = mode_registry.MODES if self.show_legacy else mode_registry.listed()
+        return [m.name for m in pool if not self.quarantine.is_disabled(m.name)]
+
+    def redraw(self) -> None:
+        """Throw away the cached frame and build the next one from scratch.
+
+        For a change that alters how the *current* picture is drawn rather
+        than what is drawn — switching subcell geometry, say. Without it the
+        cached strips survive until something else invalidates them and the
+        setting looks like it did nothing.
+        """
+        self._strips = None
+        self.refresh()
 
     def set_mode(self, name: str, *, remember: bool = True) -> None:
         """Switch to a mode by name — including a hidden one, deliberately.

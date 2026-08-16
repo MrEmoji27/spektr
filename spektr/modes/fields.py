@@ -18,6 +18,7 @@ from ..render import (
     pack_octant_bits,
     pack_octant_smooth,
     shade_cells,
+    subcell_rows,
 )
 from . import Ctx, empty, mode, spread
 
@@ -123,7 +124,7 @@ def _plasma(ctx: Ctx, cells: str):
         return empty(w, h)
 
     octant = cells == "octant"
-    rows2 = h * 4 if octant else h * 2
+    rows2 = h * subcell_rows() if octant else h * 2
     cols = w * 2 if octant else w
 
     # float32 throughout, the same deal Flame's and Vinyl's docstrings make: a
@@ -222,7 +223,7 @@ def _chladni(ctx: Ctx, cells: str):
         return empty(w, h)
 
     octant = cells == "octant"
-    rows2 = h * 4 if octant else h * 2
+    rows2 = h * subcell_rows() if octant else h * 2
     cols = w * 2 if octant else w
 
     def geo():
@@ -383,7 +384,7 @@ def _chladni_flow(ctx: Ctx, cells: str):
         return empty(w, h)
 
     octant = cells == "octant"
-    rows2 = h * 4 if octant else h * 2
+    rows2 = h * subcell_rows() if octant else h * 2
     cols = w * 2 if octant else w
 
     def geo():
@@ -548,7 +549,7 @@ def _chladni_extreme(ctx: Ctx, cells: str):
         return empty(w, h)
 
     octant = cells == "octant"
-    rows2 = h * 4 if octant else h * 2
+    rows2 = h * subcell_rows() if octant else h * 2
     # Vertical only, unlike its three siblings: this is the heaviest field in
     # the app -- two figures, a harmonic and a rotation -- and sampling it at
     # 4x2 a cell put the frame over the 16.7 ms budget outright on a loaded
@@ -2301,6 +2302,7 @@ def locket(ctx: Ctx):
     np.multiply(cm, np.float32(1.0 / 10.0), out=cm)
     idx = ctx.ramp(cm)
     return codes, idx
+
 
 
 

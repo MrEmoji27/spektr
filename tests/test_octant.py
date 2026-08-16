@@ -283,6 +283,48 @@ def test_kaleidoscope_fine_draws_octants():
     assert len(np.unique(codes)) > 8, "the glyph is barely varying; is the mask stuck?"
 
 
+def test_shading_resolves_finer_than_the_ramp():
+    """The whole claim of shade_cells, as a number.
+
+    A block spans N ramp steps and the dither resolves the subcell count plus
+    one position inside it, so a level costs block/subcells steps. That has to
+    land below 1.0 or the shading reproduces exactly what the 64-step ramp
+    already does and buys nothing — which is what the first version did, and
+    what "still pixelated" turned out to mean. Two things caused it: a mirror
+    safe dither whose equal columns halve the coverages, and a block equal to
+    the subcell count.
+    """
+    from spektr import render
+    from spektr.render import OCTANT_LUT, QUADRANT_LUT, shade_cells
+
+    for cells, rows, lut, nsub in (
+        ("quadrant", 2, QUADRANT_LUT, 4),
+        ("octant", 4, OCTANT_LUT, 8),
+    ):
+        before = render.CELL_MODE
+        render.set_cell_mode(cells)
+        try:
+            width = 128
+            ramp = np.linspace(0.0, 1.0, width * 2, dtype=np.float32)[None, :]
+            codes, fg, bg = shade_cells(np.repeat(ramp, rows, axis=0))
+        finally:
+            render.set_cell_mode(before)
+
+        popcount = {int(c): bin(i).count("1") for i, c in enumerate(lut)}
+        coverage = np.array(
+            [popcount[int(c)] for c in codes.ravel()], dtype=np.float32
+        ) / nsub
+        level = bg.ravel() + coverage * (fg.ravel() - bg.ravel())
+
+        step = np.median(np.diff(np.unique(level)))
+        assert step <= 0.75, (
+            f"{cells}: {step:.2f} ramp steps a level — no finer than the palette"
+        )
+        assert len(np.unique(coverage)) >= nsub - 1, (
+            f"{cells}: only {len(np.unique(coverage))} coverages of a possible {nsub + 1}"
+        )
+
+
 def test_the_dither_matrix_survives_a_mirror():
     """Its two columns must be identical, or symmetric modes come out crooked.
 

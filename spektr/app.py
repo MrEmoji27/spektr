@@ -797,6 +797,24 @@ class Spektr(App):
                 self._set_chrome,
                 "same as f",
             ),
+            Setting(
+                "legacy_modes",
+                "legacy modes",
+                (False, True),
+                lambda v: "shown" if v else "hidden",
+                self._set_legacy_modes,
+                "the half-block originals the octant variants replaced — "
+                "they still work, they are just not offered by default",
+            ),
+            Setting(
+                "cells",
+                "subcell shape",
+                ("octant", "quadrant"),
+                lambda v: v,
+                self._set_cells,
+                "octants are 2x4 per cell and need Unicode 16; quadrants are "
+                "2x2 and work in any font — see spektr --glyph-test",
+            ),
             # An action row, not a value. It lives here because the editor is
             # otherwise only reachable from a keybinding nobody has been told
             # about — and "a keybinding you have to remember is not a
@@ -841,6 +859,8 @@ class Spektr(App):
             # for even while the pacer is throttling.
             "fps": s.fps,
             "bands": s.bands,
+            "legacy_modes": s.legacy_modes,
+            "cells": s.cells,
             "sensitivity": s.sensitivity,
             "gate": s.gate,
             "chrome": s.chrome,
@@ -901,6 +921,29 @@ class Spektr(App):
 
     def action_toggle_chrome(self) -> None:
         self._set_chrome(not self.settings.chrome)
+
+    def _set_legacy_modes(self, on: bool) -> None:
+        """Put the superseded modes back on the menu, or take them off again.
+
+        Nothing about the modes changes — they are registered either way, and
+        selectable by name either way. This is only whether the picker, the
+        cycle keys and shuffle offer them.
+
+        Turning it *off* while one is showing leaves it showing: the mode is
+        still perfectly good, and yanking the picture out from under someone
+        because a menu setting changed would be the wrong reading of what this
+        does. It simply stops being offered next time.
+        """
+        self.settings.legacy_modes = bool(on)
+        self.viz.show_legacy = bool(on)
+
+    def _set_cells(self, shape: str) -> None:
+        """Switch every subcell mode between octant and quadrant geometry."""
+        from .render import set_cell_mode
+
+        set_cell_mode(shape)
+        self.settings.cells = shape
+        self.viz.redraw()
 
 
 # ── cli ──────────────────────────────────────────────────────────────────────

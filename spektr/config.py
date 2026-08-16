@@ -86,6 +86,14 @@ class Settings:
     #: draw them, and ``--cells quadrant`` is the fallback that works
     #: everywhere.
     cells: str = "octant"
+    #: Offer the superseded half-block modes in the picker again.
+    #:
+    #: Nine of them were replaced by octant variants that draw the same picture
+    #: at four times the subcell resolution, and a menu that lists both twice
+    #: over is a choice nobody wants to make nine times. They are still
+    #: registered and still selectable by name whatever this says; this only
+    #: decides whether the interface offers them.
+    legacy_modes: bool = False
 
     def clamp(self) -> "Settings":
         """Force every field back into range, replacing junk with the default.
@@ -118,6 +126,7 @@ class Settings:
         self.mode = self.mode if isinstance(self.mode, str) and self.mode else "Bars"
         self.theme = self.theme if isinstance(self.theme, str) and self.theme else "classic"
         self.cells = self.cells if self.cells in ("octant", "quadrant") else "octant"
+        self.legacy_modes = bool(self.legacy_modes)
         self.chrome = bool(self.chrome)
         # `shuffle` has been a bool and, briefly, a four-state string. Accept
         # both: a string means the scope came from the interim form, where
