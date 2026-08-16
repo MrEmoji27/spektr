@@ -121,7 +121,15 @@ def vinyl(ctx: Ctx):
         sp["v"] += 1.4 * max(ctx.dt, 0.0)
 
     lv = ctx.display_bands(_VINYL_BANDS)
-    groove_level = lv[sv["band_at_r"]]
+    # Both things the groove level is used for — how wide the lit part of a
+    # groove is, and how bright it burns — are functions of the band alone, so
+    # they are computed on the band vector and gathered where they are needed.
+    # Gathering the level over the whole dot grid first and then running the
+    # arithmetic on 320,000 cells cost 2.1 ms at 400x100 for numbers with
+    # sixteen possible values.
+    band_at_r = sv["band_at_r"]
+    groove_width = 0.16 + 0.34 * lv
+    groove_heat = 0.12 + 0.80 * lv
 
     # float32 throughout the heat pipeline, the same deal Flame's docstring
     # makes: at 400x100 this is several passes over a 320k-cell grid, and
@@ -131,7 +139,7 @@ def vinyl(ctx: Ctx):
     period = 2.6
     ripple = dist + st["warm"] * 2.2 * np.sin(dist * 0.35 - sp["v"] * 3.0)
     groove = frac((ripple - sv["label_r"]) / period)
-    groove_lit = sv["groove_zone"] & (groove < (0.16 + 0.34 * groove_level))
+    groove_lit = sv["groove_zone"] & (groove < groove_width[band_at_r])
 
     # a narrow catch of light, not a wedge: 0.035 of a turn is 25 degrees of
     # solid fill sweeping the disc, which reads as a slab rather than a glint
@@ -139,7 +147,7 @@ def vinyl(ctx: Ctx):
     glint = sv["glint_zone"] & (np.abs(spin - 0.5) < 0.010)
 
     heat = np.zeros((dr, dc), dtype=np.float32)
-    heat[groove_lit] = (0.12 + 0.80 * groove_level)[groove_lit]
+    heat[groove_lit] = groove_heat[band_at_r[groove_lit]]
     heat[sv["label"]] = 0.35 + 0.5 * bass
     heat[sv["dust"]] = np.maximum(heat[sv["dust"]], 0.55)
     heat[glint] = np.maximum(heat[glint], 0.80 + 0.20 * skip)
