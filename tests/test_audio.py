@@ -407,7 +407,7 @@ def check_never_picks_mic() -> list[str]:
         cap.chosen = None
         cap.kind = ""
         cap._close = lambda: None
-        cap._settle = lambda src: setattr(cap, "chosen", src)
+        cap._settle = lambda src, session: setattr(cap, "chosen", src)
 
         def fake_open(dev, sr, ch, extra):
             cap.kind = next((s.kind for s in sources if s.device == dev), "?")

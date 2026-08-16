@@ -399,6 +399,13 @@ class Capture:
         #: why enumeration produced what it did — surfaced by --monitor
         self.notes: list[str] = []
         self._thread: threading.Thread | None = None
+        #: Bumped by every ``start()``. ``_reopen`` flips ``_running`` back to
+        #: True the moment the new thread starts, so an old thread's settle
+        #: loop that only watches ``_running`` never sees the gap and stays
+        #: alive forever — each press of `d` leaked another thread. Loops in
+        #: the capture thread remember the session they belong to and stop
+        #: when it changes.
+        self._session = 0
 
     # ── lifecycle ──
     def start(self) -> None:
@@ -426,6 +433,7 @@ class Capture:
             self.notes.append(f"enumeration on the calling thread failed: {exc}")
 
         self._running = True
+        self._session += 1
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
@@ -667,13 +675,14 @@ class Capture:
         # The capture thread enumerates devices as well as opening them, and
         # both go through COM. Give this thread an apartment for its lifetime.
         mine = _com_init()
+        session = self._session
         try:
-            self._run_inner()
+            self._run_inner(session)
         finally:
             if mine:
                 _com_uninit()
 
-    def _run_inner(self) -> None:
+    def _run_inner(self, session: int) -> None:
         last_err = None
         self._skipped = []
 
@@ -716,7 +725,7 @@ class Capture:
             order = order[skip:] + order[:skip]
 
         for src in order:
-            if not self._running:
+            if not self._running or session != self._session:
                 return
             try:
                 self._stream = self._open_source(src)
@@ -729,27 +738,31 @@ class Capture:
                 last_err = f"{src.label} -> {explain_hresult(exc)}"
                 self._skipped.append(last_err)
                 continue
-            self._settle(src)
+            if not self._running or session != self._session:
+                return
+            self._settle(src, session)
             return
 
-        if not self._running:
+        if not self._running or session != self._session:
             return
 
         # No output tap could be opened at all — the only case where a
         # microphone is a reasonable automatic choice, and it needs saying.
         for src in mics:
-            if not self._running:
+            if not self._running or session != self._session:
                 return
             try:
                 self._stream = self._open_source(src)
-                self._settle(src)
+                if not self._running or session != self._session:
+                    return
+                self._settle(src, session)
                 return
             except Exception as exc:
                 last_err = f"{src.label} -> {exc}"
 
         self._say(f"no audio source. last error: {last_err}")
 
-    def _settle(self, src: Source) -> None:
+    def _settle(self, src: Source, session: int) -> None:
         """Hold the chosen source open until asked to stop.
 
         The status line still distinguishes "audio is arriving" from "nothing
@@ -757,6 +770,10 @@ class Capture:
         display is flat. It just never acts on it — reporting silence and
         switching device in response to silence are very different things, and
         only the first one is useful.
+
+        ``session`` is the start() generation this thread belongs to. The loop
+        stops on either stop() or a new start() (``_reopen`` from `d`), so a
+        superseded thread cannot outlive its session.
         """
         self.label = src.label
         self.on_mic = src.kind == "mic"
@@ -768,7 +785,7 @@ class Capture:
         # bad automatic one unless it says so.
         why = ""
         if self._skip > 0:
-            why = f"  |  manual pick {self._skip + 1} — press D for the default output"
+            why = "  |  manual pick {self._skip + 1} — press D for the default output"
         elif self._skipped and src.kind != "loopback":
             why = "  |  skipped " + "; ".join(self._skipped[:2])
 
@@ -779,7 +796,7 @@ class Capture:
 
         quiet_since = time.time()
         reported_quiet = False
-        while self._running:
+        while self._running and session == self._session:
             buf = self.ring.latest(2048)
             if buf is not None and float(np.abs(buf).max()) > 3e-5:
                 quiet_since = time.time()
