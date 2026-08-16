@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-from spektr.analysis import HOP, N_BANDS, Analyser, BandPlan, resample_bands  # noqa: E402
+from spektr.analysis import HOP, N_BANDS, Analyser, BandPlan, Frame, resample_bands  # noqa: E402
 from spektr.capture import Capture, RingBuffer, Source  # noqa: E402
 from spektr.motion import Peaks, Spring  # noqa: E402
 
@@ -904,6 +904,61 @@ def check_knee_suppresses_floor() -> list[str]:
     return bad
 
 
+def check_nonfinite_capture_recovers() -> list[str]:
+    """One non-finite sample must not poison the display forever.
+
+    A NaN delivered by the device used to reach the FFT, the springs and the
+    scope trace, and because nothing downstream raises on it, Spring/Peaks/
+    Trace stayed NaN forever and the widget's mode quarantine never noticed.
+    The ring zeroes non-finite input at the single point every capture
+    backend funnels through, so the analyser keeps publishing finite frames
+    and the very next good block is analysed normally.
+    """
+    bad = []
+    ring = RingBuffer(SR)
+    an = Analyser(ring, lambda: SR)
+
+    def push_and_analyse(signal: np.ndarray) -> Frame:
+        ring.clear()
+        ring.push(signal)
+        an._analyse_once()
+        return an.frame
+
+    good = tone(440.0, FEED)
+    base = push_and_analyse(good)
+    if base.silent or not np.isfinite(base.bands).all():
+        return ["baseline frame is not live and finite"]
+
+    # a device glitch delivers one NaN and one inf inside a block
+    glitch = good.copy()
+    glitch[7, 0] = np.nan
+    glitch[8, 1] = np.inf
+    if np.isfinite(glitch).all():
+        bad.append("the glitch block did not actually contain a non-finite sample")
+    ring.clear()
+    ring.push(glitch)
+    if not np.isfinite(ring.latest(FEED)).all():
+        bad.append("a non-finite sample survived the ring's guard")
+    f = push_and_analyse(glitch)
+    for field in ("bands", "wave", "stereo"):
+        if not np.isfinite(getattr(f, field)).all():
+            bad.append(f"a non-finite sample leaked into frame.{field}")
+    if not np.isfinite(f.rms):
+        bad.append("a non-finite sample leaked into frame.rms")
+
+    # and the very next good block is analysed normally — nothing stuck
+    f = push_and_analyse(good)
+    if f.silent or not np.isfinite(f.bands).all():
+        bad.append("the analyser did not recover after the bad block")
+
+    # the springs that draw the display only ever see finite targets now
+    spring = Spring(N_BANDS)
+    spring.step(f.bands, 1.0 / 60.0)
+    if not np.isfinite(spring.x).all():
+        bad.append("a non-finite sample poisoned the display springs")
+    return bad
+
+
 TESTS = [
     ("ring buffer", check_ring_roundtrip),
     ("never auto-selects the microphone", check_never_picks_mic),
@@ -924,6 +979,7 @@ TESTS = [
     ("analysis rate", check_analysis_rate),
     ("frame-rate independence", check_framerate_independence),
     ("peak hold in seconds", check_peak_hold_seconds),
+    ("non-finite capture recovers", check_nonfinite_capture_recovers),
 ]
 
 
@@ -1028,6 +1084,11 @@ def test_framerate_independence() -> None:
 
 def test_peak_hold_seconds() -> None:
     bad = check_peak_hold_seconds()
+    assert not bad, "\n".join(bad)
+
+
+def test_nonfinite_capture_recovers() -> None:
+    bad = check_nonfinite_capture_recovers()
     assert not bad, "\n".join(bad)
 
 

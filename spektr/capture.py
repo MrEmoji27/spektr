@@ -319,6 +319,14 @@ class RingBuffer:
         n = block.shape[0]
         if n == 0:
             return
+        if not np.isfinite(block).all():
+            # A non-finite sample from the device would flow straight into
+            # the FFT, the springs and the scope trace, and because nothing
+            # downstream raises on it, the display would stay NaN forever —
+            # the widget's mode quarantine never sees it because nothing
+            # raised. Every capture backend funnels through this one method,
+            # so zeroing here is the single guard point.
+            block = np.where(np.isfinite(block), block, 0.0)
         if n >= self._cap:
             block = block[-self._cap :]
             n = self._cap
