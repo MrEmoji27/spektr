@@ -38,6 +38,7 @@ VARIANT_OF = [
     ("Scope", "Scope Fine"),
     ("ECG", "ECG Fine"),
     ("Radial", "Radial Fine"),
+    ("Maelstrom", "Maelstrom Fine"),
 ]
 
 #: bit weight per subcell for each packer, indexed [row][col]. Braille numbers
@@ -171,6 +172,18 @@ def _assert_two_colour(plain, fine, frames=8, w=120, h=30):
 
 def test_radial_fine_draws_two_colours():
     _assert_two_colour(_mode("Radial"), _mode("Radial Fine"))
+
+
+def test_maelstrom_fine_draws_two_colours():
+    _assert_two_colour(_mode("Maelstrom"), _mode("Maelstrom Fine"))
+
+
+def test_maelstrom_itself_still_draws_braille():
+    st: dict = {}
+    for f in range(6):
+        codes, _ = _mode("Maelstrom").fn(_ctx(120, 30, f, st, PAL))
+    braille = (codes >= BRAILLE_BASE) & (codes <= BRAILLE_BASE + 0xFF)
+    assert bool((braille | (codes == SPACE)).all())
 
 
 def test_radial_itself_still_draws_braille():

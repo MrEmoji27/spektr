@@ -41,17 +41,19 @@ PAL = Palette(BUILTIN["gruvbox"])
 SELF_ANIMATING = {
     "Scatter", "Flame", "Pulse", "Retro", "Tunnel", "Warp",
     "Matrix", "Spectro", "Plasma", "Gonio",
-    # scroll (ECG), standing-wave phase (Strings), ring breathing and angular
+    # scroll (ECG and its octant variant), standing-wave phase (Strings), ring
+    # breathing and angular
     # spin (Arcs), travelling particles (Bubbles), curtain billow (Auroras),
     # continuous sweep rotation (Sonar, and the octant variant of it)
-    "ECG", "Strings", "Arcs", "Bubbles", "Auroras", "Sonar", "Sonar Fine",
+    "ECG", "ECG Fine", "Strings", "Arcs", "Bubbles", "Auroras", "Sonar", "Sonar Fine",
     # continuous ticker scroll (Readout), continuous spin (Helix, and both
     # Chladni Flow and Chladni Extreme — but *not* plain Chladni, whose whole
     # point is that it holds a discrete figure and only snaps when the
     # spectrum moves),
     # continuous orbital motion (Orbit), continuous scroll (Keys), a real
     # playback clock (Flipbook), a persisted simulation that keeps evolving
-    # on its own (Maelstrom), state that accumulates over time by design
+    # on its own (Maelstrom, and the octant variant of it), state that
+    # accumulates over time by design
     # (Dune), and physics that keeps running after a trigger — a launched
     # firework doesn't stop just because the spectrum did (Fireworks) — plus
     # a boot log that keeps typing, scrolling, and blinking its cursor on its
@@ -65,7 +67,7 @@ SELF_ANIMATING = {
     # so the loop never looks paused (Rain), and embers keep drifting and
     # cooling on their own timers once spawned (Ember)
     "Readout", "Helix", "Chladni Flow", "Chladni Extreme", "Orbit", "Keys",
-    "Flipbook", "Maelstrom", "Dune", "Fireworks", "Boot", "Murmuration",
+    "Flipbook", "Maelstrom", "Maelstrom Fine", "Dune", "Fireworks", "Boot", "Murmuration",
     "Vinyl", "Rain", "Ember",
     # continuous spin (Kaleidoscope rotates its mirror array; the
     # scrollwork curls turn on their anchors even at a frozen spectrum)
@@ -80,7 +82,7 @@ SELF_ANIMATING = {
 }
 
 #: Modes driven by the waveform rather than the band levels.
-WAVEFORM_DRIVEN = {"Wave", "Scope", "Gonio", "ECG"}
+WAVEFORM_DRIVEN = {"Wave", "Scope", "Gonio", "ECG", "Scope Fine", "ECG Fine"}
 
 
 def ctx_for(w, h, frame, state, t, bands=None, silent=False, stereo=None, dt=1 / 60):
@@ -338,7 +340,7 @@ def check_scratch_does_not_leak() -> list[str]:
 
 #: Modes that scroll their own history buffer on a clock. Their content has to
 #: travel the same distance per *second* at any frame rate — see the check.
-SCROLL_PACED = ("Spectro", "ECG")
+SCROLL_PACED = ("Spectro", "ECG", "ECG Fine")
 
 
 def check_scroll_is_frame_rate_independent() -> list[str]:

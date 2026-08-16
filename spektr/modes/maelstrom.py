@@ -27,7 +27,7 @@ import math
 
 import numpy as np
 
-from ..render import cell_max, pack_braille
+from ..render import cell_hilo, cell_max, pack_braille, pack_octant
 from . import Ctx, empty, mode
 
 _SIM_H, _SIM_W = 54, 96
@@ -126,13 +126,35 @@ def _state() -> dict:
     }
 
 
-@mode("Maelstrom", group="fields", blurb="a real fluid sim, stirred by the music")
-def maelstrom(ctx: Ctx):
+def _maelstrom(ctx: Ctx, octant: bool):
+    """A real fluid sim, stirred by the music, drawn on octant cells.
+
+    Two modes share this body. ``octant=False`` is the original: the dye
+    field is thresholded against a fixed level and packed into braille, so
+    the fluid reads as a field of stipple with a ragged edge. ``octant=True``
+    draws the identical field as Unicode 16 octant glyphs, 2x4 subcells at
+    two colours a cell: ``cell_hilo`` pulls each cell's (min, max) into the
+    two ramp ends and ``pack_octant`` lights every subcell at or above the
+    cell's own midpoint. The fluid fills its whole viewport — it is a
+    continuous field, not a shape against empty space — which is exactly the
+    case the two-colour packer exists for. See :func:`render.pack_octant`.
+
+    The whole thing is simulated on a small **fixed** internal grid, independent
+    of terminal size, then upsampled onto the real dot grid for display. A
+    20-ish-iteration Jacobi solve is trivial at 54x96 and would not be at
+    dot-grid resolution on a large terminal (up to 800x400). This is the same
+    lesson ``RAMP_STEPS``'s RLE tension and ``render.frac`` vs ``np.mod`` already
+    taught this codebase, generalised: simulate at the resolution the maths
+    needs, render at the resolution the eye needs, and don't confuse the two.
+    """
     dr, dc = ctx.dot_rows, ctx.dot_cols
     if dr < 16 or dc < 16:
         return empty(ctx.w, ctx.h)
 
-    st = ctx.scratch("maelstrom", _state)
+    # The sim state is the mode's one piece of mutable state, and each version
+    # keeps its own: sharing one would make the two modes advance each other's
+    # fluid, so every frame would come out "different" for no reason.
+    st = ctx.scratch("maelstrom" if not octant else "maelstrom_fine", _state)
     vy, vx, dye = st["vy"], st["vx"], st["dye"]
     rng = st["rng"]
     dt = min(max(ctx.dt, 0.0), 1.0 / 20.0)   # capped so a stall can't blow the sim up
@@ -213,7 +235,7 @@ def maelstrom(ctx: Ctx):
     st["vy"], st["vx"], st["dye"] = vy, vx, dye
 
     up = ctx.scratch(
-        "maelstrom_upsample",
+        "maelstrom_upsample" if not octant else "maelstrom_upsample_fine",
         lambda: (
             np.clip((np.arange(dr) * _SIM_H) // max(dr, 1), 0, _SIM_H - 1),
             np.clip((np.arange(dc) * _SIM_W) // max(dc, 1), 0, _SIM_W - 1),
@@ -222,7 +244,31 @@ def maelstrom(ctx: Ctx):
     ys, xs = up
     field = dye[ys[:, None], xs[None, :]]
 
+    if octant:
+        lo_cell, hi_cell = cell_hilo(field)
+        codes = pack_octant(field, lo_cell, hi_cell)
+        return codes, ctx.ramp(hi_cell), ctx.ramp(lo_cell)
     dots = field > 0.06
     codes = pack_braille(dots)
     cidx = ctx.ramp(cell_max(field))
     return codes, cidx
+
+
+@mode("Maelstrom", group="fields", blurb="a real fluid sim, stirred by the music")
+def maelstrom(ctx: Ctx):
+    return _maelstrom(ctx, octant=False)
+
+
+@mode("Maelstrom Fine", after="Maelstrom", group="fields",
+      blurb="the same fluid as a solid field at two colours a cell — needs a terminal that draws Unicode 16 octants")
+def maelstrom_fine(ctx: Ctx):
+    """Maelstrom on octant cells.
+
+    Separate mode rather than a switch on the original, for the same reason
+    Kaleidoscope Fine is: octants are Unicode 16 and an older terminal or
+    font draws a grid of tofu, which is a thing to opt into rather than to
+    discover when a mode you liked stops working. The two versions also keep
+    separate sims in scratch, so switching between them never advances the
+    other's fluid.
+    """
+    return _maelstrom(ctx, octant=True)
