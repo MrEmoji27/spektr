@@ -69,7 +69,7 @@ SELF_ANIMATING = {
     "Vinyl", "Rain", "Ember",
     # continuous spin (Kaleidoscope rotates its mirror array; the
     # scrollwork curls turn on their anchors even at a frozen spectrum)
-    "Kaleidoscope", "Valentine", "Tunnel In", "Dither", "Locket",
+    "Kaleidoscope", "Kaleidoscope Fine", "Valentine", "Tunnel In", "Dither", "Locket",
     # every wave carries a phase that advances on its own, at a rate set by
     # the band driving it, and onset rings keep travelling outward after the
     # beat that threw them — so a frozen spectrum still moves, which is the
@@ -238,6 +238,60 @@ def check_output_sanity() -> list[str]:
                     bad.append(f"{m.name} produced a surrogate codepoint at {w}x{h}")
                 if cidx.min() < 0 or cidx.max() >= RAMP_STEPS:
                     bad.append(f"{m.name} ramp index out of range at {w}x{h}")
+    return bad
+
+
+#: Modes whose ramp usage is set by something other than the mode.
+#:
+#: ``Flipbook`` draws whatever ASCII art the user dropped in the folder, so the
+#: levels it emits are the art's, not the mode's. ``None`` is the off switch.
+_RAMP_EXEMPT = ("Flipbook", "None")
+
+
+def check_ramp_usage() -> list[str]:
+    """A mode has to spread its picture over the ramp it is handed.
+
+    A theme is a low/mid/high gradient resolved to 64 steps, and a mode that
+    only ever emits indices from a narrow slice of that is drawing in one
+    colour: its own structure is invisible, and the theme the user picked is
+    invisible with it, because the ends of the gradient never appear. This is
+    not about being bright — a dim mode can still run the full ramp and simply
+    sit low on it *while the audio is quiet*. It is about the picture having
+    contrast at all on ordinary material.
+
+    Kaleidoscope failed this at 4 distinct indices spanning 24 of 63: 187
+    fragments of glass quantised into three visible colours, which is what
+    "can't see the shapes" looks like from the render side. The floor is set
+    well under every other mode (the next lowest spans 42) so it catches a
+    mode that has collapsed, not one that is merely restrained.
+    """
+    bad = []
+    for m in M.MODES:
+        if m.name in _RAMP_EXEMPT:
+            continue
+        state: dict = {}
+        seen: set[int] = set()
+        for f in range(40):
+            # a pink-ish spectrum with a kick — ordinary music, not a test tone
+            bands = np.linspace(0.9, 0.15, N_BANDS) ** 1.4
+            bands = bands * (0.75 + 0.25 * np.sin(f * 0.11 + np.arange(N_BANDS) * 0.3))
+            if f % 30 < 6:
+                bands[:6] *= 1.6
+            ctx = ctx_for(80, 24, f, state, f / 60, bands=np.clip(bands, 0, 1))
+            ctx.tempo_bpm, ctx.beat_phase = 120.0, (f % 30) / 30.0
+            ctx.onsets = 1 if f % 30 == 0 else 0
+            out = m.fn(ctx)
+            if f >= 35:
+                for arr in out[1:]:
+                    if arr is not None:
+                        seen.update(np.unique(np.asarray(arr)).tolist())
+        span = max(seen) - min(seen)
+        if span < 32 or len(seen) < 6:
+            bad.append(
+                f"{m.name} draws in {len(seen)} of {RAMP_STEPS} ramp steps, "
+                f"spanning {span} of {RAMP_STEPS - 1} — its structure and the "
+                f"theme's gradient are both invisible"
+            )
     return bad
 
 
@@ -849,6 +903,7 @@ TESTS = [
     ("modes animate", check_animates),
     ("modes react to audio", check_audio_reactive),
     ("output sanity (no NaN/surrogates)", check_output_sanity),
+    ("modes use the ramp they are handed", check_ramp_usage),
     ("surrogates survive the strip builder", check_surrogates_survive_strips),
     ("no scratch leak across resizes", check_scratch_does_not_leak),
     ("scrolling modes scroll in seconds, not frames", check_scroll_is_frame_rate_independent),
@@ -892,6 +947,11 @@ def test_audio_reactive() -> None:
 
 def test_output_sanity() -> None:
     bad = check_output_sanity()
+    assert not bad, "\n".join(bad)
+
+
+def test_ramp_usage() -> None:
+    bad = check_ramp_usage()
     assert not bad, "\n".join(bad)
 
 

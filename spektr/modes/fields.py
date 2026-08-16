@@ -738,9 +738,10 @@ def vu(ctx: Ctx):
 #: ``_KAL_NU`` is the angular resolution and has to stay a power of two: the
 #: per-dot gather masks with ``& (nu - 1)`` rather than taking a modulus. It
 #: is sized against the fraction of the chamber one wedge actually shows
-#: (:data:`_KAL_SECTOR`) rather than against the dot grid: a wedge spans
-#: ``_KAL_SECTOR`` of the patch, so it gets ``_KAL_NU * _KAL_SECTOR`` = 85
-#: samples, which is the number that has to beat the dots competing for them.
+#: (:data:`_KAL_SECTOR_K`) rather than against the dot grid: a wedge spans
+#: ``_KAL_SECTOR_K / k`` of the patch, so at the busiest mirror count it still
+#: gets ``512 * 2 / 20`` = 51 samples, which is the number that has to beat the
+#: dots competing for them.
 _KAL_NU, _KAL_NR = 512, 128
 
 #: How much of the chamber's circumference one mirror wedge looks at.
@@ -752,16 +753,30 @@ _KAL_NU, _KAL_NR = 512, 128
 #: of rays rather than as pieces of anything. Fragments need an aspect ratio
 #: close to one to read as fragments, and that is set here.
 #:
-#: A sixth, fixed, rather than the physically exact ``1 / k``. The real object
-#: has the wedge angle and the chamber sector locked together, so a 20-mirror
-#: tube shows a twentieth of the glass; honouring that would make the
-#: fragments visibly thinner every time the spectrum pushed the mirror count
-#: up, which is backwards — more mirrors should mean more repeats of the same
-#: pretty thing, not a worse thing repeated more often. Holding the sector
-#: fixed keeps fragment shape constant and lets the count follow the music
-#: freely. It is the same trade the shard widths made in the version before
-#: this one, for the same reason.
-_KAL_SECTOR = 1.0 / 6.0
+#: Proportional to the wedge, not fixed, and the reasoning that made it fixed
+#: was exactly backwards.
+#:
+#: It used to be a sixth of the circumference whatever the mirror count, on the
+#: argument that the physically exact ``1 / k`` would thin the fragments every
+#: time the spectrum pushed the count up. The opposite happens. A screen wedge
+#: spans ``2*pi / k``; showing ``s`` of the glass inside it compresses the
+#: source tangentially by ``s * k``, so a *fixed* sector squeezes harder the
+#: more mirrors there are. Measured as the median piece's width against its
+#: height on the rendered grid, cell aspect corrected — 1.0 being a chunk and
+#: below it a radial sliver:
+#:
+#:     mirrors      fixed 1/6      2/k
+#:           8           0.99     0.99
+#:          12           0.78     0.92
+#:          16           0.68     0.85
+#:          20           0.63     0.83
+#:
+#: Tying the sector to the wedge is what the real object does, and it holds the
+#: piece shape steady across the whole range the centroid can ask for. What a
+#: high mirror count now costs is *how much* glass is in view — 91 pieces at 8
+#: mirrors against 49 at 20 — which is the honest trade, and the one a real
+#: tube makes: more mirrors, more repeats of less glass.
+_KAL_SECTOR_K = 2.0
 
 #: How many straight cuts shatter the glass, and how many different chambers
 #: are kept ready to swap between.
@@ -770,9 +785,9 @@ _KAL_SECTOR = 1.0 / 6.0
 #: :func:`_kal_glass` for the construction.
 #:
 #: The count is set by the *worst* wedge, not the average one. What a wedge
-#: shows is a 60-degree slice of the chamber, and with too few cuts the odds
-#: are decent that a given slice at a given rotation falls almost entirely
-#: inside one fragment — at which point the frame is a flat wash with a thin
+#: shows is a slice of the chamber, and with too few cuts the odds are decent
+#: that a given slice at a given rotation falls almost entirely inside one
+#: fragment — at which point the frame is a flat wash with a thin
 #: figure in it. Swept over six chambers and twelve rotations, measuring how
 #: much of the wedge the largest visible fragment takes:
 #:
@@ -782,12 +797,48 @@ _KAL_SECTOR = 1.0 / 6.0
 #:       22         180            25.5       25%           48%
 #:       32         368            45.9       17%           37%
 #:
-#: 22 is where the worst case stops being a flat frame. Past it the average
-#: fragment drops below a few cells at ordinary terminal sizes, where the
-#: reduction to half-blocks starts dropping pieces rather than drawing them,
-#: and every extra fragment is another colour boundary for the strip builder.
-_KAL_CUTS = 22
+#: 22 was chosen off that table and it was still too few. The table measures
+#: the largest fragment as a share of one *wedge*; what the eye judges is its
+#: share of the *screen*, and by that measure 22 cuts put a third of the frame
+#: inside a single piece of glass — one flat region with a few slivers around
+#: it, which is what "I can't see the shapes" describes. Measured over the
+#: rendered cell grid at 80x24, largest fragment as a share of the screen:
+#:
+#:     cuts   fragments   visible   largest   400x100 total   segments
+#:       22         187        42    26-34%         7.3 ms       5200
+#:       40         540       ~90    13-20%         9.7 ms       7200
+#:       48         794       111    13-20%        10.0 ms       8700
+#:
+#: The count then has to be read together with :data:`_KAL_SECTOR_K`, because
+#: what costs milliseconds is not how finely the glass is cut but how many
+#: pieces land on screen, and the sector decides how much glass is in view.
+#: Against a ``2/k`` sector, measured through the real mode over four terminal
+#: sizes and two spectra — largest piece as a share of the frame, and total
+#: cost at 400x100:
+#:
+#:     cuts   colours   largest   400x100
+#:       28     18-25    16-31%    8.0 ms
+#:       32     19-27    15-23%    7.8 ms
+#:       36     19-28    17-21%    7.9 ms
+#:       40     19-26    15-22%    8.9 ms
+#:
+#: 36 is where no piece dominates at *any* mirror count — 28 was fine at eight
+#: mirrors and let a piece take a third of the frame at twenty, where the
+#: sector is narrowest and the glass in view is magnified most. Past 40 the
+#: average fragment drops below a few cells at ordinary terminal sizes, where
+#: the reduction to half-blocks starts dropping pieces rather than drawing them.
+_KAL_CUTS = 36
 _KAL_CHAMBERS = 4
+
+#: Brightness levels the picture is graded to, applied after the field has been
+#: stretched over the range that is actually on screen.
+#:
+#: The old value was eight, applied *before* that stretch — so eighths of a
+#: scale the picture only ever occupied the bottom quarter of. Three colours
+#: survived out of sixty-four, and the tiling was invisible. Thirty-two after
+#: the stretch merges only fragments the eye was not going to separate, which
+#: is what keeps the strip builder's segment count near where it was.
+_KAL_LEVELS = 32
 
 #: Screen radius that maps to the rim of the chamber.
 #:
@@ -811,11 +862,18 @@ _KAL_RIM = 1.45
 #:
 #: Looking at an annular sector instead removes the shared centre: the glass
 #: in view has no radial structure relative to the screen, because the point
-#: everything is radial about is not in the picture. It also squares the
-#: fragments up. The visible region spans 0.45..1.0 in radius against a 60
-#: degree arc, which at mid-radius is 0.55 by 0.73 — near enough one to one
-#: that a fragment reads as a piece rather than as a band.
-_KAL_CORE = 0.45
+#: everything is radial about is not in the picture.
+#:
+#: 0.20 rather than the 0.45 it started at. The core does two things at once
+#: and they pull opposite ways — it keeps the singular centre of the source
+#: disc out of frame, where every cut converges and the glass would shatter
+#: into slivers too fine to draw, and it decides how much of the chamber's
+#: radius is in view. At 0.45 only 0.55 of the radius was, magnified onto the
+#: whole screen, and the magnification is what made a single piece cover a
+#: sixth of the frame. Widening to 0.80 of the radius brings enough glass into
+#: view that no piece dominates (largest 11-17% against 15-16%) and rounds the
+#: pieces out, while 0.20 is still clear of the convergence at the centre.
+_KAL_CORE = 0.20
 
 def _kal_glass(seed: int) -> tuple[np.ndarray, int]:
     """One chamber of shattered glass, as a fragment index per patch sample.
@@ -834,10 +892,10 @@ def _kal_glass(seed: int) -> tuple[np.ndarray, int]:
     other along straight seams and cover the whole field, with no privileged
     centre and no radial banding. So build exactly that.
 
-    Seven random lines are drawn across the source disc. Every sample records
-    which side of each line it fell on, giving a 7-bit code; samples sharing a
-    code are on the same side of every cut, which is precisely the definition
-    of one convex cell of the arrangement. Those cells are the fragments. The
+    :data:`_KAL_CUTS` random lines are drawn across the source disc. Every
+    sample records which side of each line it fell on, giving one bit per cut;
+    samples sharing a code are on the same side of every cut, which is
+    precisely the definition of one convex cell of the arrangement. Those cells are the fragments. The
     edges are hard because the code changes discontinuously at a line, which
     is free — there is no anti-aliasing to switch off and no width to tune.
 
@@ -887,9 +945,9 @@ _KAL_GLASS = [_kal_glass(0x6C1A55 + i) for i in range(_KAL_CHAMBERS)]
 #: of glass does not change colour — the light behind it changes.
 #:
 #: Sized from the chambers actually built rather than from ``1 << _KAL_CUTS``.
-#: Twenty-two cuts have an upper bound of four million sign codes and produce
-#: about a hundred and eighty regions; allocating for the bound would be four
-#: million entries per array to use a hundred and eighty of them.
+#: Forty cuts have an upper bound of a million million sign codes and produce
+#: about three hundred and seventy regions; allocating for the bound is not
+#: merely wasteful but impossible.
 _KAL_MAX_CELLS = max(n for _, n in _KAL_GLASS)
 _KAL_RNG = np.random.default_rng(0x91A55)
 _KAL_FRAG_BAND = _KAL_RNG.integers(0, 8, _KAL_MAX_CELLS).astype(np.int32)
@@ -897,10 +955,16 @@ _KAL_FRAG_TONE = _KAL_RNG.uniform(0.30, 1.0, _KAL_MAX_CELLS).astype(np.float32)
 _KAL_FRAG_PHASE = _KAL_RNG.uniform(0.0, 2.0 * math.pi, _KAL_MAX_CELLS).astype(np.float32)
 
 
-@mode("Kaleidoscope", group="fields",
-      blurb="a mirrored tube of stained glass — the wedge count follows the spectrum, beats shake the chamber")
-def kaleidoscope(ctx: Ctx):
+def _kaleido(ctx: Ctx, octant: bool):
     """A mirrored tube looking at a chamber of broken glass.
+
+    Two modes share this body. ``octant=False`` is the original: every cell is
+    a two-colour ``▀`` pair, one colour per half-row. ``octant=True`` keeps the
+    identical geometry, glass and colour grading and changes only the cell
+    reduction, drawing each cell as one of 256 Unicode 16 octant glyphs — 2x4
+    subcells instead of 1x2, at the same two colours and very nearly the same
+    strip cost, because the extra detail rides in the glyph rather than in the
+    colour runs the strip builder charges for. See :func:`render.pack_octant`.
 
     Three parts, and they map one-to-one onto the physical object: a chamber
     of coloured fragments (:func:`_kal_glass`), a ring of mirrors around it,
@@ -909,7 +973,9 @@ def kaleidoscope(ctx: Ctx):
 
     **The mirrors.** A ring of 8, 12, 16 or 20 of them, eased by the spectral
     centroid and snapped on a beat, each showing the same source slice
-    reflected left-right alternately. Every dot's angle is wrapped into its
+    reflected left-right alternately. The slice narrows as the count rises
+    (:data:`_KAL_SECTOR_K`), which is what a real tube does and what keeps a
+    piece of glass the same shape whether it is repeated eight times or twenty. Every dot's angle is wrapped into its
     sector, then even sectors read the source forward and odd sectors read it
     reversed, so adjacent sectors mirror across the shared boundary and the
     picture is symmetric about every mirror line. Only a multiple of four puts
@@ -933,8 +999,8 @@ def kaleidoscope(ctx: Ctx):
 
     **The glass.** Hard-edged convex fragments tiling the whole source disc,
     cut once at import and never rebuilt. What changes per frame is only how
-    brightly each fragment is lit: one value per fragment, forty-odd of them,
-    then a single gather turns that into the source table. That is a much
+    brightly each fragment is lit: one value per fragment, a few hundred of
+    them, then a single gather turns that into the source table. That is a much
     smaller per-frame job than the twelve gaussians this used to evaluate over
     a 128x512 table, and it is the reason the mode now costs less than the
     version that looked worse.
@@ -962,15 +1028,18 @@ def kaleidoscope(ctx: Ctx):
 
     Colour: every cell renders as a solid two-colour ``▀`` pair — the top half
     from the max over the cell's top two dot rows, the bottom half from its
-    bottom two — quantised to eight buckets before ramping. Quantisation is
-    the Chladni Flow lesson: the two-colour strip builder pays per colour
-    boundary. Flat fragments make that cheap here rather than merely bearable.
+    bottom two. The field is then stretched over the range that is actually in
+    view and graded to :data:`_KAL_LEVELS`, in that order. Doing it the other
+    way round is what made this mode unreadable: the values were quantised
+    against an absolute scale they occupied the bottom quarter of, so three
+    colours reached the screen out of sixty-four and the tiling — and the
+    theme's gradient with it — was invisible.
     """
     dr, dc = ctx.dot_rows, ctx.dot_cols
     if dr < 8 or dc < 8:
         return empty(ctx.w, ctx.h)
 
-    from ..render import frac
+    from ..render import cell_hilo, frac, pack_octant
 
     # Geometry on the |x|-folded grid: dot (x, y) and its L/R mirror
     # (dc - 1 - x, y) compute identical turn and radius, so any function of
@@ -1017,6 +1086,8 @@ def kaleidoscope(ctx: Ctx):
     st = ctx.scratch("kaleido", lambda: {
         "kc": 8.0, "spin": 0.0, "k": None, "folded": None,
         "chamber": 0, "shimmer": 0.0,
+        # eased bounds of the visible field, for the stretch at the end
+        "lo": 0.10, "hi": 1.0,
     })
     # ctx.onsets, not a private difference of ctx.onset_seq. Scratch survives
     # a mode switch, so differencing here would replay every beat that played
@@ -1046,30 +1117,64 @@ def kaleidoscope(ctx: Ctx):
     # ring exactly like physical mirror tubes. It depends only on the sector
     # count, which takes four values, so it is cached; the per-frame path is
     # just the phase shift and the gather below.
+    #
+    # The fold is pre-scaled by the sector while it is being cached, because the
+    # sector is now a function of ``k`` and so changes at exactly the same
+    # moments the fold does. That keeps the per-frame path one multiply-free
+    # add, as it was when the sector was a constant.
     if st["k"] != k:
         wedge = turn * np.float32(k)
         m = np.floor(wedge).astype(np.int32)
         u = wedge - np.float32(m)
-        st["folded"] = np.where((m & 1) == 0, u, np.float32(1.0) - u)
+        u = np.where((m & 1) == 0, u, np.float32(1.0) - u)
+        st["folded"] = (u * np.float32(min(0.5, _KAL_SECTOR_K / k))).astype(np.float32)
         st["k"] = k
     folded = st["folded"]
 
     # ── how brightly each fragment is lit ──
-    # One value per fragment — forty-odd numbers — then a single gather builds
-    # the whole source table. The old build evaluated twelve 2-D gaussians
+    # One value per fragment — a few hundred numbers — then a single gather
+    # builds the whole source table. The old build evaluated twelve 2-D gaussians
     # over the table every frame; this is the same table for a fraction of the
     # arithmetic, and it comes out with hard edges instead of soft ones.
     cell_id, n_cells = _KAL_GLASS[st["chamber"]]
     band = _KAL_FRAG_BAND[:n_cells]
     tone = _KAL_FRAG_TONE[:n_cells]
     shim = 0.80 + 0.20 * np.sin(_KAL_FRAG_PHASE[:n_cells] + np.float32(st["shimmer"]))
-    lit = bands8[band] * shim * tone
-    # Floor so unlit glass still reads as glass rather than as a hole: a dark
-    # fragment is a dark fragment, not an absence of one, and the seams have
-    # to stay visible for the tiling to be legible at all.
-    val = (np.float32(0.12) + np.float32(0.88) * lit) * np.float32(
-        (0.62 + 0.55 * ctx.energy) * (1.0 + 0.14 * breathe))
-    np.clip(val, 0.0, 1.0, out=val)
+
+    # Transmittance sets the fragment apart from its neighbour; the band decides
+    # how hard the light behind it is pushed. The two were multiplied, which
+    # means a fragment on a quiet band went to zero *whatever* its glass was
+    # like — and with a pink spectrum most bands are quiet, so most fragments
+    # collapsed onto the same value and the tiling disappeared into a wash.
+    # Forty fragments were visible and eight colours were drawn. Keeping a
+    # floor under the band term leaves every fragment separated by its own
+    # glass at all times, and still lets the spectrum pick which ones flare.
+    lit = (np.float32(0.35) + np.float32(0.65) * bands8[band] * shim) * tone
+
+    # Spread the fragments across the ramp before anything else touches them.
+    #
+    # ``lit`` is a product of three factors that are each well under one most
+    # of the time — a band level, a transmittance averaging 0.66, a shimmer —
+    # so on ordinary material it lands in a narrow strip near the bottom of
+    # 0..1. Scaling that by level and quantising it to eighths, which is what
+    # this did, put 187 fragments into three colours spanning 24 of the 64 ramp
+    # steps: the tiling was invisible, and so was the theme, because neither
+    # end of its gradient was ever asked for. Normalising against the frame's
+    # own range makes a fragment's colour mean "brighter than its neighbour"
+    # rather than "some fraction of an absolute scale nothing reaches".
+    #
+    # A silent frame has no range to normalise — every fragment is unlit — and
+    # falls through to a flat dark chamber, which is the correct picture for
+    # it.
+    lo = float(lit.min())
+    span = max(float(lit.max()) - lo, 1e-4)
+    spread = (lit - np.float32(lo)) * np.float32(1.0 / span)
+
+    # Structure only — no level in here. Level arrives at the very end, after
+    # the picture has been stretched over the ramp, so that dimming the rosette
+    # cannot flatten it. The floor keeps unlit glass reading as glass rather
+    # than as a hole: a dark fragment is a dark fragment, not an absence of one.
+    val = np.float32(0.10) + np.float32(0.90) * spread
 
     table = val[cell_id]
 
@@ -1078,44 +1183,119 @@ def kaleidoscope(ctx: Ctx):
     # bit-for-bit, so the right half is a reversed copy of the left. That
     # halves the frac, the index arithmetic and the gather without averaging,
     # and the rendered frame stays symmetric by construction.
-    src = frac(folded * np.float32(_KAL_SECTOR) + np.float32(spin / (2 * math.pi)))
+    src = frac(folded + np.float32(spin / (2 * math.pi)))
     iu = (src * np.float32(_KAL_NU)).astype(np.int32) & (_KAL_NU - 1)
     b_half = table.ravel()[ir * _KAL_NU + iu]
     bright[:, :hw] = b_half
     bright[:, hw:] = b_half[:, ::-1]
 
-    # Two colour samples per text cell, one per half-row: the top half is the
-    # max over the cell's top two dot rows, the bottom half over its bottom
-    # two. The bright grid is symmetric about the middle column, so these
-    # reductions are too — every half-row equals its mirror, bit for bit.
-    top = np.maximum(bright[0::4, 0::2], bright[1::4, 0::2])
-    top = np.maximum(top, bright[0::4, 1::2])
-    top = np.maximum(top, bright[1::4, 1::2])
-    bot = np.maximum(bright[2::4, 0::2], bright[3::4, 0::2])
-    bot = np.maximum(bot, bright[2::4, 1::2])
-    bot = np.maximum(bot, bright[3::4, 1::2])
+    # Two colour samples per text cell. Both reductions run on the same
+    # |x|-symmetric dot grid, so both are symmetric bit for bit — every sample
+    # equals its mirror.
+    if octant:
+        # The cell's range rather than two half-row maxima: the foreground
+        # takes the brightest subcell and the background the darkest, and the
+        # glyph says which of the eight subcells are on which side of the
+        # midpoint. Four times the vertical detail of the half-block path for
+        # one extra pass over the same array.
+        lo_cell, hi_cell = cell_hilo(bright)
+        top, bot = hi_cell, lo_cell
+    else:
+        # One colour per half-row: the top half is the max over the cell's top
+        # two dot rows, the bottom half over its bottom two.
+        top = np.maximum(bright[0::4, 0::2], bright[1::4, 0::2])
+        top = np.maximum(top, bright[0::4, 1::2])
+        top = np.maximum(top, bright[1::4, 1::2])
+        bot = np.maximum(bright[2::4, 0::2], bright[3::4, 0::2])
+        bot = np.maximum(bot, bright[2::4, 1::2])
+        bot = np.maximum(bot, bright[3::4, 1::2])
 
     field = np.empty((2 * top.shape[0], top.shape[1]), dtype=np.float32)
     field[0::2] = top
     field[1::2] = bot
 
-    # Quantised to eight buckets before ramping: the two-colour ▀ strip
-    # builder pays per colour boundary, and an unquantised field with this
-    # many local extrema pushed Chladni Flow to 9-14 ms a frame (its docstring
-    # records the numbers). Flat fragments already produce long runs, so this
-    # mostly guards the shimmer against splitting them.
+    # Stretch what is actually on screen over the ramp.
     #
-    # No radial vignette. The old version blended the cell radius in at half
-    # weight, which is a concentric gradient laid over everything and one of
-    # the two things making the mode read as an iris; the other was the
-    # gaussians. Both are gone.
-    field *= 8.0
-    np.round(field, 0, out=field)
-    field *= 1.0 / 8.0
+    # A wedge sees a slice of the chamber across part of its radius — fifty to
+    # ninety fragments of the several hundred, depending on the mirror count,
+    # and no reason for those to span the full range the chamber does. Normalising the fragment vector alone therefore still left
+    # five colours on screen out of sixty-four, most of the frame in one of
+    # them. This is the same normalisation applied where the question is
+    # settled: the half-row field, which is both the smallest array in the mode
+    # and exactly what gets ramped.
+    #
+    # The bounds are eased rather than taken raw. A chamber swap or a fast spin
+    # changes which fragments are visible between one frame and the next, and
+    # rescaling instantly on that reads as the whole picture flinching.
+    flo, fhi = float(field.min()), float(field.max())
+    ease = min(1.0, max(ctx.dt, 0.0) * 3.0)
+    st["lo"] += (flo - st["lo"]) * ease
+    st["hi"] += (fhi - st["hi"]) * ease
+    field -= np.float32(st["lo"])
+    field *= np.float32(1.0 / max(st["hi"] - st["lo"], 0.05))
+    np.clip(field, 0.0, 1.0, out=field)
 
+    # Quantise *after* the stretch, not before it.
+    #
+    # The strip builder pays per colour boundary, and full grading over eight
+    # hundred fragments costs about 8700 segments a frame at 400x100 against
+    # 5200 for the old flat wash. Rounding here merges only fragments that are
+    # already within a thirty-second of each other, which the eye was not going
+    # to separate anyway, and it does so on the normalised range — where a
+    # thirty-second means a thirty-second of what is *on screen*. That is the
+    # difference from the old eighths, which were a thirty-second of a scale
+    # the picture never reached.
+    field *= np.float32(_KAL_LEVELS)
+    np.round(field, 0, out=field)
+    field *= np.float32(1.0 / _KAL_LEVELS)
+
+    # Level, last: it scales a picture that already has its contrast, so a
+    # quiet passage dims the rosette without collapsing it into one colour.
+    field *= np.float32(
+        (0.34 + 0.66 * min(1.0, ctx.energy * 1.7)) * (1.0 + 0.14 * breathe)
+    )
+
+    # No quantisation here. It used to happen on this grid, which is both more
+    # work than quantising the fragments (above) and lossier: the reduction
+    # from dots to half-rows can only ever return a value some fragment already
+    # had, so rounding the grid rounds the same numbers again, one per cell
+    # instead of one per fragment.
+    #
+    # No radial vignette either. The old version blended the cell radius in at
+    # half weight, which is a concentric gradient laid over everything and one
+    # of the two things making the mode read as an iris; the other was the
+    # gaussians. Both are gone.
     idx = ctx.ramp(field)
-    codes = np.full((ctx.h, ctx.w), _UPPER_HALF, dtype=np.int32)
+    # The mask is taken from the raw dot grid, not the graded field: the
+    # threshold is each cell's own midpoint, and every step between here and
+    # there — stretch, quantise, level — is monotonic, so grading first would
+    # produce the same eight bits after more arithmetic and one more chance to
+    # lose them to a flat quantisation bucket.
+    if octant:
+        codes = pack_octant(bright, lo_cell, hi_cell)
+    else:
+        codes = np.full((ctx.h, ctx.w), _UPPER_HALF, dtype=np.int32)
     return codes, idx[0::2], idx[1::2]
+
+
+@mode("Kaleidoscope", group="fields",
+      blurb="a mirrored tube of stained glass — the wedge count follows the spectrum, beats shake the chamber")
+def kaleidoscope(ctx: Ctx):
+    return _kaleido(ctx, octant=False)
+
+
+@mode("Kaleidoscope Fine", after="Kaleidoscope", group="fields",
+      blurb="the same tube at four times the vertical detail — needs a terminal that draws Unicode 16 octants")
+def kaleidoscope_fine(ctx: Ctx):
+    """Kaleidoscope on octant cells.
+
+    Kept as a separate mode rather than a switch on the original because the
+    glyphs are Unicode 16 (2024) and a terminal or font without them shows a
+    grid of tofu — which is a thing to opt into, not something to discover
+    when the original mode stops working. Everything else is identical, so the
+    two can be compared directly by switching between them.
+    """
+    return _kaleido(ctx, octant=True)
 
 
 @mode("Dither", group="fields", blurb="the spectrum printed as a newspaper halftone, in one-bit crosshatch")
@@ -1524,6 +1704,22 @@ def locket(ctx: Ctx):
     accelerates as it grows, so it reads as something travelling outward past
     you rather than a shape inflating in place. Constant growth loses that.
 
+    **The rings are soft-edged, and they are all drawn by one gather.** A pulse
+    is a band around one value of ``scale``, and it used to be exactly that: a
+    single brightness inside the band and nothing outside it. At braille
+    resolution that is a stack of hard steps which shears as the radius moves
+    between frames, so the pulses read as chunky arcs rather than as travelling
+    light. They now carry a squared falloff across the same width — bright in
+    the middle, dissolving at both edges — and they fade *in* over the first
+    tenth of their journey, so a ring emerges from the heart instead of
+    appearing at full strength on top of it.
+
+    Both would be expensive done per pulse over the dot grid: four passes each,
+    twelve pulses in flight, 13 ms of build at 400x100. Since every pulse is a
+    function of ``scale`` alone, the whole set of them is resolved on a
+    1024-entry table over ``scale`` and read back with one gather — the same
+    shape of trick the rim uses over angle — which puts it back at 8 ms.
+
     **``z`` decays geometrically, and the birth radius sits on the outline.**
     Both were wrong together, and the symptom was the mode's whole premise
     failing to land: you did not see hearts shooting out, you saw a long
@@ -1617,8 +1813,28 @@ def locket(ctx: Ctx):
         # it cannot light a single dot, so it is finished — see the retirement
         # below. Measured rather than guessed: the coordinates are normalised,
         # so this is 2.024 at every terminal size.
-        return {"scale": scale, "aidx": aidx, "nt": nt,
-                "rmax": float(scale.max())}
+        rmax = float(scale.max())
+
+        # Every pulse is a function of ``scale`` alone — a band around one
+        # value of it — so the whole set of them can be answered by a table
+        # over ``scale`` and one gather, exactly as the rim is answered by a
+        # table over angle. Without this, a soft-edged ring costs four passes
+        # over the dot grid *per pulse* and twelve can be in flight: 13 ms of
+        # build at 400x100 against 2 ms for a table 1024 long.
+        #
+        # 1024 buckets puts 7 to 35 of them across a ring, whose width runs
+        # 0.014 to 0.069 of the same scale — fine enough that the falloff
+        # arrives graded rather than stepped.
+        # int16, not int32: the index only has to reach 1023, and the gather
+        # below is a random read over 320k dots, where halving the index
+        # traffic is worth more than the cast costs once per size.
+        nsc = 1024
+        sidx = np.clip((scale * np.float32((nsc - 1) / max(rmax, 1e-6))
+                        ).astype(np.int32), 0, nsc - 1).astype(np.int16)
+        sc_at = np.linspace(0.0, rmax, nsc, dtype=np.float32)
+
+        return {"scale": scale, "aidx": aidx, "nt": nt, "rmax": rmax,
+                "sidx": sidx, "sc_at": sc_at, "nsc": nsc}
 
     _g = ctx.scratch("locket_geo", geo)
     sfield = _g["scale"]
@@ -1647,7 +1863,13 @@ def locket(ctx: Ctx):
     st["beat"] *= math.exp(-max(ctx.dt, 0.0) / 0.14)
     if onsets:
         st["beat"] = min(1.5, st["beat"] + 0.8 + 0.5 * ctx.onset_strength)
-    core = float(0.30 + 0.05 * bass + 0.07 * st["beat"])
+    # 0.22 rather than 0.30. The heart is the *source*, not the subject: at
+    # 0.30 it took a third of the height and a pulse spent its first half
+    # crossing it, so the frame read as one big heart with rings stuck to it.
+    # Smaller leaves the travel visible, which is the motion the mode is about,
+    # and the outline is no less legible for it — the notch that makes the
+    # silhouette a heart survives down to about a sixth of the height.
+    core = float(0.22 + 0.04 * bass + 0.05 * st["beat"])
 
     # The spectrum, read around the rim.
     #
@@ -1678,7 +1900,10 @@ def locket(ctx: Ctx):
              + np.float32(0.25) * st["beat"]).astype(np.float32)
     ai = _g["aidx"]
     rim = np.abs(sfield - rim_r_t[ai]) < rim_w_t[ai]
-    glow = (val_t[ai] * rim).astype(np.float32)
+    # No astype here. ``val_t`` is float32 and a float32 times a bool is
+    # float32, so the cast was a second full-size copy of the dot grid that
+    # changed nothing — 320k floats a frame at 400x100.
+    glow = val_t[ai] * rim
 
     # No interior fill, and that is a decision rather than an omission. A
     # flat wash was tried and turned the heart into a silhouette; a sparse
@@ -1763,19 +1988,56 @@ def locket(ctx: Ctx):
         gone = (st["z"] > 0.0) & (st["r0"] > st["z"] * np.float32(_g["rmax"]))
         st["z"][gone] = np.float32(0.0)
 
+    # Every live pulse, resolved on a 1024-entry table over ``scale`` and read
+    # back with one gather. Soft edges, not a hard band: the ring used to be
+    # one value across its whole width and nothing outside it, which at braille
+    # resolution is a stack of hard steps that shears as the radius moves
+    # between frames — the pulses read as chunky arcs rather than as travelling
+    # light. A squared falloff across the same width grades the ramp instead,
+    # so a ring has a bright middle and dissolves at both edges.
+    sc_at = _g["sc_at"]
+    lut = None
     for i in np.flatnonzero(st["z"] > 0.0):
         z = float(st["z"][i])
         sc = float(st["r0"][i]) / z
         w = 0.014 + 0.055 * (1.0 - z)
-        band = np.abs(sfield - np.float32(sc)) < np.float32(w)
+        d = np.abs(sc_at - np.float32(sc))
+        band = d < np.float32(w)
         if not band.any():
             continue
-        # Fade as it goes, so the ring dissolves outward instead of hitting
-        # the frame edge at full strength.
-        a = float(st["amp"][i]) * (0.30 + 0.70 * z)
-        np.maximum(glow, np.where(band, np.float32(a), np.float32(0.0)), out=glow)
+        # Fade as it goes, so the ring dissolves outward instead of hitting the
+        # frame edge at full strength, and fade *in* over the first tenth of
+        # the journey so it emerges from the heart rather than appearing at
+        # full strength on top of it. ``1 - z`` is how far along the pulse is
+        # and is already integrated through dt, so the ramp costs nothing and
+        # stays frame-rate independent.
+        a = float(st["amp"][i]) * (0.30 + 0.70 * z) * min(1.0, (1.0 - z) / 0.10)
+        dm = d * np.float32(1.0 / w)
+        soft = np.where(band, np.float32(a) * (np.float32(1.0) - dm * dm),
+                        np.float32(0.0))
+        lut = soft if lut is None else np.maximum(lut, soft, out=lut)
+
+    if lut is not None:
+        # ``lut[idx]`` rather than ``np.take(lut, idx, out=buf)``. The out=
+        # form was tried to save the 1.3 MB allocation and measured slower over
+        # three runs each — 10.1-10.8 ms of build against 8.7-9.0 — because
+        # take's bounds-checked path over 320k dots costs more than the
+        # allocation it avoids.
+        np.maximum(glow, lut[_g["sidx"]], out=glow)
 
     lit = glow > np.float32(0.10)
     codes = pack_braille(lit)
-    idx = ctx.ramp(np.clip(cell_max(glow), 0.0, 1.0))
+
+    # Graded values are what the soft edge is for, but the two-colour strip
+    # builder pays per colour boundary and a continuous falloff hands it one
+    # per cell: strips went from 0.8 ms to 4.2 ms at 400x100 when the rings
+    # stopped being flat. Rounding to twelve levels — done on the *cell* grid,
+    # which is an eighth the size of the dot grid — gives most of that back and
+    # is not visible: twelve steps across a ring three to eight cells wide is
+    # finer than the ramp itself resolves.
+    cm = np.clip(cell_max(glow), 0.0, 1.0)
+    np.multiply(cm, np.float32(10.0), out=cm)
+    np.round(cm, 0, out=cm)
+    np.multiply(cm, np.float32(1.0 / 10.0), out=cm)
+    idx = ctx.ramp(cm)
     return codes, idx
