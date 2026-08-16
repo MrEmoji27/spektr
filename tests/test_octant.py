@@ -67,14 +67,10 @@ def _tiled(pattern):
         ([[0, 0], [0, 0], [1, 1], [1, 1]], 0x2584, "LOWER HALF BLOCK"),
         ([[1, 0], [1, 0], [1, 0], [1, 0]], 0x258C, "LEFT HALF BLOCK"),
         ([[0, 1], [0, 1], [0, 1], [0, 1]], 0x2590, "RIGHT HALF BLOCK"),
-        ([[1, 1], [0, 0], [0, 0], [0, 0]], 0x1FB82, "UPPER ONE QUARTER BLOCK"),
         ([[0, 0], [0, 0], [0, 0], [1, 1]], 0x2582, "LOWER ONE QUARTER BLOCK"),
         ([[1, 0], [1, 0], [0, 0], [0, 0]], 0x2598, "QUADRANT UPPER LEFT"),
         ([[0, 0], [0, 0], [0, 1], [0, 1]], 0x2597, "QUADRANT LOWER RIGHT"),
-        ([[1, 0], [0, 0], [0, 0], [0, 0]], 0x1CEA8, "LEFT HALF UPPER ONE QUARTER"),
-        ([[0, 0], [0, 0], [0, 0], [0, 1]], 0x1CEA0, "RIGHT HALF LOWER ONE QUARTER"),
-        ([[0, 0], [1, 0], [1, 0], [0, 0]], 0x1FBE6, "MIDDLE LEFT ONE QUARTER"),
-        ([[0, 0], [0, 1], [0, 1], [0, 0]], 0x1FBE7, "MIDDLE RIGHT ONE QUARTER"),
+        ([[1, 1], [1, 1], [1, 1], [0, 1]], 0x1CDAB, "BLOCK OCTANT-1234568"),
     ],
 )
 def test_known_patterns_render_as_the_right_character(pattern, want, label):
@@ -86,16 +82,23 @@ def test_known_patterns_render_as_the_right_character(pattern, want, label):
 
 
 def test_row_major_bit_order():
-    """A single lit subcell walks the mask through 1, 2, 4, ... row-major."""
+    """A single lit subcell walks the mask through 1, 2, 4, ... row-major.
+
+    Against the exact table, not through a packer: four of the eight
+    single-subcell patterns are widened before they are drawn (see
+    :data:`_OCTANT_WIDEN`), and this is the property that decides whether the
+    picture is transposed, which has to be checked where it is still exact.
+    """
+    from spektr.render import _OCTANT_ELSEWHERE
+
     for r in range(4):
         for c in range(2):
-            pat = [[0, 0] for _ in range(4)]
-            pat[r][c] = 1
-            field = _tiled(pat)
-            lo, hi = cell_hilo(field)
-            code = int(pack_octant(field, lo, hi)[0, 0])
-            mask = int(np.flatnonzero(OCTANT_LUT == code)[0])
-            assert mask == 1 << (r * 2 + c)
+            mask = 1 << (r * 2 + c)
+            code = int(OCTANT_LUT[mask])
+            if mask in _OCTANT_ELSEWHERE:
+                assert code == _OCTANT_ELSEWHERE[mask]
+            else:
+                assert OCTANT_BASE <= code <= 0x1CDE5
 
 
 def test_flat_cell_is_solid():
@@ -132,10 +135,11 @@ def _unpack(codes, bits, base=None):
     "pattern, want",
     [
         ([[1, 1], [1, 1], [0, 0], [0, 0]], 0x2580),
-        ([[1, 0], [0, 0], [0, 0], [0, 0]], 0x1CEA8),
-        ([[0, 0], [0, 0], [0, 0], [0, 1]], 0x1CEA0),
         ([[1, 1], [1, 1], [1, 1], [1, 1]], 0x2588),
         ([[0, 0], [0, 0], [0, 0], [0, 0]], SPACE),
+        # widened: a lone subcell has no widely drawn glyph of its own
+        ([[1, 0], [0, 0], [0, 0], [0, 0]], 0x2598),
+        ([[0, 0], [0, 0], [0, 0], [0, 1]], 0x2597),
     ],
 )
 def test_pack_octant_bits_uses_the_same_geometry(pattern, want):
@@ -144,10 +148,72 @@ def test_pack_octant_bits_uses_the_same_geometry(pattern, want):
     assert got == {want}, f"got U+{got.pop():04X}, wanted U+{want:04X}"
 
 
-def test_pack_octant_bits_round_trips():
+def test_widening_only_ever_adds_subcells():
+    """A lit subcell is never dropped, and few are added.
+
+    Widening exists so the eight patterns without a widely drawn glyph get
+    one; it must not turn into a licence to redraw the picture. Growing is the
+    safe direction — a hole in an outline is visible where a subcell of extra
+    thickness at 4x4 pixels is not.
+    """
     rng = np.random.default_rng(11)
     lit = rng.random((4 * 9, 2 * 13)) > 0.5
-    assert np.array_equal(_unpack(pack_octant_bits(lit), _OCTANT_BITS), lit)
+    back = _unpack(pack_octant_bits(lit), _OCTANT_BITS)
+
+    assert np.array_equal(back & lit, lit), "a lit subcell was dropped"
+    added = int((back & ~lit).sum())
+    assert added <= lit.size * 0.05, f"{added} subcells added of {lit.size}"
+
+
+def test_no_packer_emits_a_glyph_from_the_thinly_supported_blocks():
+    """The whole point of the widening table.
+
+    Fonts that ship the entire octant block routinely miss the four
+    single-subcell characters at U+1CEA0 and the two middle quarters at
+    U+1FBE6/7 — and those are exactly the patterns the rim of any shape is
+    made of, so the mode that hits them is the one drawing a silhouette.
+    Nothing reaching the terminal may come from there.
+    """
+    thin = {0x1CEA0, 0x1CEA3, 0x1CEA8, 0x1CEAB, 0x1FB82, 0x1FB85, 0x1FBE6, 0x1FBE7}
+
+    for mask in range(256):
+        pattern = [[(mask >> (r * 2 + c)) & 1 for c in range(2)] for r in range(4)]
+        grid = np.array(pattern, dtype=bool)
+        got = int(pack_octant_bits(grid)[0, 0])
+        assert got not in thin, f"mask {mask:08b} emitted U+{got:04X}"
+        assert got == SPACE or got == 0x2588 or 0x2580 <= got <= 0x259F or (
+            OCTANT_BASE <= got <= 0x1CDE5
+        ), f"mask {mask:08b} emitted U+{got:04X}, outside Block Elements and the octant block"
+
+
+def test_widening_keeps_its_mirror_partner():
+    """Kaleidoscope's symmetry is a property of the glyphs, not just the field.
+
+    Mirroring a cell swaps its subcell columns. If a widened pattern's
+    substitute were not the mirror of its mirror's substitute, a symmetric
+    field would come out asymmetric — which is the one thing that mode
+    promises.
+    """
+    def swap(mask):
+        out = 0
+        for r in range(4):
+            left, right = 1 << (2 * r), 1 << (2 * r + 1)
+            if mask & left:
+                out |= right
+            if mask & right:
+                out |= left
+        return out
+
+    for mask in range(256):
+        pattern = [[(mask >> (r * 2 + c)) & 1 for c in range(2)] for r in range(4)]
+        grid = np.array(pattern, dtype=bool)
+        mirrored = np.array(
+            [[(swap(mask) >> (r * 2 + c)) & 1 for c in range(2)] for r in range(4)],
+            dtype=bool,
+        )
+        a = _unpack(pack_octant_bits(grid), _OCTANT_BITS)
+        b = _unpack(pack_octant_bits(mirrored), _OCTANT_BITS)
+        assert np.array_equal(a[:, ::-1], b), f"mask {mask:08b} widens asymmetrically"
 
 
 def test_the_two_packers_agree_on_a_thresholded_field():
@@ -244,10 +310,16 @@ def test_valentine_fine_draws_the_same_heart_solid():
         codes_a, idx_a = plain.fn(_ctx(120, 30, f, sa, pal))
         codes_b, idx_b = fine.fn(_ctx(120, 30, f, sb, pal))
 
-    assert np.array_equal(
-        _unpack(codes_a, _BRAILLE_BITS, base=BRAILLE_BASE),
-        _unpack(codes_b, _OCTANT_BITS),
-    ), "the octant variant lights a different set of dots"
+    braille_dots = _unpack(codes_a, _BRAILLE_BITS, base=BRAILLE_BASE)
+    octant_dots = _unpack(codes_b, _OCTANT_BITS)
+    assert np.array_equal(octant_dots & braille_dots, braille_dots), (
+        "the octant variant dropped dots the braille one draws"
+    )
+    # The rim picks up a few subcells where a lone lit one is widened to its
+    # quadrant, because the exact glyph for a lone subcell is one most fonts
+    # do not have. Anything beyond a couple of percent means the shape moved.
+    extra = int((octant_dots & ~braille_dots).sum())
+    assert extra <= braille_dots.size * 0.02, f"{extra} extra dots"
     assert np.array_equal(idx_a, idx_b), "the colour path is meant to be untouched"
 
     solid = int((codes_b == 0x2588).sum())

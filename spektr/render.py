@@ -177,6 +177,48 @@ def _octant_lut() -> np.ndarray:
 #: mask -> codepoint, all 256. Built once; 230 octants plus the 26 above.
 OCTANT_LUT = _octant_lut()
 
+#: Eight patterns rendered as their nearest neighbour instead of exactly.
+#:
+#: Of the 26 patterns held outside the octant block, eighteen are Block
+#: Elements — quadrants, halves, quarters, the full block — which every
+#: terminal font has had for decades. The other eight are not: the four
+#: single-subcell patterns live in the Symbols for Legacy Computing
+#: *Supplement* at U+1CEA0, and the middle quarters at U+1FBE6/U+1FBE7 were
+#: added by Unicode 16 alongside the octants themselves. A font can ship the
+#: whole octant block and still miss all eight, which is exactly what happens
+#: in practice — and the patterns are not exotic: an isolated lit subcell is
+#: what the *rim of any shape* is made of, so a mode like Valentine produces
+#: them constantly while a continuous field like Kaleidoscope almost never
+#: does. One mode looks perfect and the next is speckled with tofu.
+#:
+#: Each one is widened to the nearest pattern that is either a Block Element
+#: or inside the octant block: an isolated subcell grows to its quadrant, the
+#: top row grows to the top half, a middle quarter picks up the subcell above
+#: it, and three-quarters fills. Growing rather than dropping, so a lit
+#: subcell is never silently erased — at a 4x4 pixel subcell the difference is
+#: not visible, where a hole in an outline is.
+#:
+#: Every substitution keeps its mirror partner's substitution its own mirror
+#: (1 and 2 to the two upper quadrants, 64 and 128 to the two lower ones,
+#: 20 and 40 to left and right, 3 and 63 both self-mirrored). Kaleidoscope's
+#: bilateral symmetry is a property of the glyphs, not just of the field, and
+#: an asymmetric substitution table would break it.
+_OCTANT_WIDEN = {
+    0b00000001: 0b00000101,   # subcell 1      -> quadrant upper left
+    0b00000010: 0b00001010,   # subcell 2      -> quadrant upper right
+    0b00000011: 0b00001111,   # top row        -> upper half
+    0b00010100: 0b00010101,   # middle left    -> left column, rows 1-3
+    0b00101000: 0b00101010,   # middle right   -> right column, rows 1-3
+    0b00111111: 0b11111111,   # upper 3/4      -> full block
+    0b01000000: 0b01010000,   # subcell 7      -> quadrant lower left
+    0b10000000: 0b10100000,   # subcell 8      -> quadrant lower right
+}
+
+#: What the packers actually emit: :data:`OCTANT_LUT` with the eight patterns
+#: above widened. Keep :data:`OCTANT_LUT` for anything that needs the exact
+#: mapping — it is the one the character names verify against.
+OCTANT_LUT_WIDE = OCTANT_LUT[[_OCTANT_WIDEN.get(m, m) for m in range(256)]]
+
 
 def _octant_subcells(field: np.ndarray) -> tuple[list[np.ndarray], int, int]:
     h4, w2 = field.shape
@@ -223,7 +265,7 @@ def pack_octant_bits(lit: np.ndarray) -> np.ndarray:
         for c in range(2):
             np.add(mask, np.where(sub[k], OCTANT_BITS[r, c], 0), out=mask)
             k += 1
-    return OCTANT_LUT[mask]
+    return OCTANT_LUT_WIDE[mask]
 
 
 def pack_octant(field: np.ndarray, lo: np.ndarray, hi: np.ndarray) -> np.ndarray:
@@ -248,7 +290,7 @@ def pack_octant(field: np.ndarray, lo: np.ndarray, hi: np.ndarray) -> np.ndarray
         for c in range(2):
             np.add(mask, np.where(sub[k] >= thr, OCTANT_BITS[r, c], 0), out=mask)
             k += 1
-    return OCTANT_LUT[mask]
+    return OCTANT_LUT_WIDE[mask]
 
 
 _NOISE_BASE: dict[tuple[int, int], np.ndarray] = {}
@@ -574,6 +616,7 @@ __all__ = [
     "OCTANT_BASE",
     "OCTANT_BITS",
     "OCTANT_LUT",
+    "OCTANT_LUT_WIDE",
     "RAMP_STEPS",
     "SHADES",
     "SPACE",
@@ -593,3 +636,4 @@ __all__ = [
     "pack_octant_bits",
     "row_gradient",
 ]
+
