@@ -47,14 +47,17 @@ from .render import (
     BLOCKS_LEFT,
     BLOCKS_UP,
     BRAILLE_BASE,
+    OCTANT_BASE,
     SHADES,
     SPACE,
     blocks_from_levels,
+    cell_hilo,
     cell_max,
     cell_mean,
     frac,
     noise,
     pack_braille,
+    pack_octant,
 )
 
 __all__ = [
@@ -74,6 +77,10 @@ __all__ = [
     "noise",
     "frac",
     "BRAILLE_BASE",
+    # octant cells — dot-grid resolution with two colours a cell
+    "pack_octant",
+    "cell_hilo",
+    "OCTANT_BASE",
     # block characters
     "blocks_from_levels",
     "BLOCKS_UP",

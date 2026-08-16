@@ -97,6 +97,136 @@ def cell_mean(field: np.ndarray) -> np.ndarray:
     return total * 0.125
 
 
+# ── octant cells ─────────────────────────────────────────────────────────────
+
+OCTANT_BASE = 0x1CD00
+
+#: octant -> bit, indexed [row][col] over the 4x2 cell. Row-major, matching the
+#: numbering Unicode uses in the character names:
+#:
+#:      1 2
+#:      3 4
+#:      5 6
+#:      7 8
+#:
+#: Deliberately *not* the braille bit order — braille numbers its dots down the
+#: left column then down the right, and reusing that table here silently
+#: transposes the picture.
+OCTANT_BITS = np.array(
+    [
+        [0x01, 0x02],
+        [0x04, 0x08],
+        [0x10, 0x20],
+        [0x40, 0x80],
+    ],
+    dtype=np.int32,
+)
+
+#: The 26 patterns the octant block does not contain, because characters for
+#: them already existed when it was encoded (Unicode 16). Everything else lives
+#: contiguously in U+1CD00..U+1CDE5 in ascending mask order, which is what
+#: :func:`_octant_lut` relies on.
+#:
+#: The four single-subcell patterns are the ones worth pointing at: they are
+#: *not* in the octant block at all but in the half-by-quarter set at U+1CEA0,
+#: and U+1FBE6/U+1FBE7 — the middle-left and middle-right quarter blocks — were
+#: added by Unicode 16 specifically so this set could be completed. Every entry
+#: was checked against the real character names rather than derived by eye.
+_OCTANT_ELSEWHERE = {
+    0b00000000: 0x0020,   # SPACE
+    0b00000001: 0x1CEA8,  # LEFT HALF UPPER ONE QUARTER BLOCK
+    0b00000010: 0x1CEAB,  # RIGHT HALF UPPER ONE QUARTER BLOCK
+    0b00000011: 0x1FB82,  # UPPER ONE QUARTER BLOCK
+    0b00000101: 0x2598,   # QUADRANT UPPER LEFT
+    0b00001010: 0x259D,   # QUADRANT UPPER RIGHT
+    0b00001111: 0x2580,   # UPPER HALF BLOCK
+    0b00010100: 0x1FBE6,  # MIDDLE LEFT ONE QUARTER BLOCK
+    0b00101000: 0x1FBE7,  # MIDDLE RIGHT ONE QUARTER BLOCK
+    0b00111111: 0x1FB85,  # UPPER THREE QUARTERS BLOCK
+    0b01000000: 0x1CEA3,  # LEFT HALF LOWER ONE QUARTER BLOCK
+    0b01010000: 0x2596,   # QUADRANT LOWER LEFT
+    0b01010101: 0x258C,   # LEFT HALF BLOCK
+    0b01011010: 0x259E,   # QUADRANT UPPER RIGHT AND LOWER LEFT
+    0b01011111: 0x259B,   # QUADRANT UPPER LEFT AND UPPER RIGHT AND LOWER LEFT
+    0b10000000: 0x1CEA0,  # RIGHT HALF LOWER ONE QUARTER BLOCK
+    0b10100000: 0x2597,   # QUADRANT LOWER RIGHT
+    0b10100101: 0x259A,   # QUADRANT UPPER LEFT AND LOWER RIGHT
+    0b10101010: 0x2590,   # RIGHT HALF BLOCK
+    0b10101111: 0x259C,   # QUADRANT UPPER LEFT AND UPPER RIGHT AND LOWER RIGHT
+    0b11000000: 0x2582,   # LOWER ONE QUARTER BLOCK
+    0b11110000: 0x2584,   # LOWER HALF BLOCK
+    0b11110101: 0x2599,   # QUADRANT UPPER LEFT AND LOWER LEFT AND LOWER RIGHT
+    0b11111010: 0x259F,   # QUADRANT UPPER RIGHT AND LOWER LEFT AND LOWER RIGHT
+    0b11111100: 0x2586,   # LOWER THREE QUARTERS BLOCK
+    0b11111111: 0x2588,   # FULL BLOCK
+}
+
+
+def _octant_lut() -> np.ndarray:
+    lut = np.zeros(256, dtype=np.int32)
+    n = 0
+    for mask in range(256):
+        cp = _OCTANT_ELSEWHERE.get(mask)
+        if cp is None:
+            cp = OCTANT_BASE + n
+            n += 1
+        lut[mask] = cp
+    return lut
+
+
+#: mask -> codepoint, all 256. Built once; 230 octants plus the 26 above.
+OCTANT_LUT = _octant_lut()
+
+
+def _octant_subcells(field: np.ndarray) -> tuple[list[np.ndarray], int, int]:
+    h4, w2 = field.shape
+    h, w = h4 // 4, w2 // 2
+    g = field[: h * 4, : w * 2]
+    return [g[r::4, c::2] for r in range(4) for c in range(2)], h, w
+
+
+def cell_hilo(field: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """``(4h, 2w)`` dot field -> per-cell ``(lo, hi)``.
+
+    The two-colour companion to :func:`cell_max`: an octant cell carries a
+    background and a foreground, so it needs both ends of the cell's range
+    rather than one. Seven pairwise min/max over strided views, for the same
+    reason :func:`cell_max` is written that way.
+    """
+    sub, _, _ = _octant_subcells(field)
+    lo = sub[0].copy()
+    hi = sub[0].copy()
+    for s in sub[1:]:
+        np.minimum(lo, s, out=lo)
+        np.maximum(hi, s, out=hi)
+    return lo, hi
+
+
+def pack_octant(field: np.ndarray, lo: np.ndarray, hi: np.ndarray) -> np.ndarray:
+    """``(4h, 2w)`` float field -> ``(h, w)`` octant codepoints.
+
+    The dot-grid resolution of :func:`pack_braille` with two colours a cell
+    instead of one, which is the whole point: ``make_strips`` bills per colour
+    *run*, so shape carried by the glyph is shape that costs nothing. A subcell
+    lights when it is at or above its own cell's midpoint, leaving ``lo`` and
+    ``hi`` to be ramped into the background and foreground.
+
+    Octants are Unicode 16 (2024). Terminals that custom-draw block glyphs
+    (kitty, ghostty, Windows Terminal 1.22+) and fonts that ship them (Cascadia
+    Code 2404.03+) render them; older setups show tofu, so a mode using this
+    should be reachable but not the default.
+    """
+    sub, h, w = _octant_subcells(field)
+    thr = (lo + hi) * np.float32(0.5)
+    mask = np.zeros((h, w), dtype=np.int32)
+    k = 0
+    for r in range(4):
+        for c in range(2):
+            np.add(mask, np.where(sub[k] >= thr, OCTANT_BITS[r, c], 0), out=mask)
+            k += 1
+    return OCTANT_LUT[mask]
+
+
 _NOISE_BASE: dict[tuple[int, int], np.ndarray] = {}
 _INV24 = np.float32(1.0 / 0x1000000)
 
@@ -383,17 +513,22 @@ __all__ = [
     "BLOCKS_LEFT",
     "BLOCKS_UP",
     "BRAILLE_BASE",
+    "OCTANT_BASE",
+    "OCTANT_BITS",
+    "OCTANT_LUT",
     "RAMP_STEPS",
     "SHADES",
     "SPACE",
     "blank",
     "blocks_from_levels",
     "broadcast_rows",
+    "cell_hilo",
     "cell_max",
     "cell_mean",
     "frac",
     "make_strips",
     "noise",
     "pack_braille",
+    "pack_octant",
     "row_gradient",
 ]
