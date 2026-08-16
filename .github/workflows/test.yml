@@ -1,0 +1,45 @@
+name: tests
+
+# The test suite and both gates used to run only when a v* tag was cut, so a
+# regression sat silently until release time — caught at tag time, on a
+# release build, blocking the release with a red gate. This lightweight
+# workflow runs them on every push and pull request instead. It does not build
+# anything; the release workflows (build-windows.yml, build-linux.yml) keep
+# doing that, tag-gated as they always were.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Run the test suites
+        # No audio device on a runner — every one of these is written to work
+        # without one. pytest collects everything under tests/; test_app.py and
+        # test_plugins.py are script-style with their own main(), so they are
+        # named explicitly on top of it (pytest collects nothing from the first
+        # and one test from the second).
+        run: |
+          python -m pytest tests/ -q
+          python tests/test_app.py
+          python tests/test_plugins.py
+
+      - name: Check onset accuracy
+        # Gates the detector against its labelled corpus. Does not need an
+        # audio device. bench.py is deliberately not here: its cost ratchet
+        # belongs on the release gate, and this workflow should stay fast.
+        run: python tests/onset_score.py
