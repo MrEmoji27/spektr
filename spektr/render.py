@@ -382,6 +382,76 @@ OCTANT_DITHER = np.array(
 )
 
 
+def shade_cells(
+    field: np.ndarray, steps: int = RAMP_STEPS, block: int = 4
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """``(4h, 2w)`` field -> ``(codes, fg_index, bg_index)``, shaded not masked.
+
+    The other packers treat a cell's two colours as its extremes and the glyph
+    as a shape cut between them. That is right for an edge and wrong for a
+    gradient: a smooth field has no shape to cut, so thresholding it turns
+    colour precision into texture and the picture comes out *more* pixelated
+    than the half-block renderer it replaced. Plasma is the mode that shows it.
+
+    Here the two colours are **adjacent ramp steps** bracketing what is in the
+    cell, and the glyph says what fraction of the way between them the cell
+    sits. Neighbouring steps are nearly the same colour, so the pattern does
+    not read as texture — it reads as a shade between them, and the field gets
+    roughly eight times the levels the 64-step ramp can name. That is ordinary
+    two-colour dithering, and it is how you draw a gradient smoother than your
+    palette rather than coarser.
+
+    Where the cell *does* straddle an edge — its range covering several ramp
+    steps — the same arithmetic degrades gracefully back into a shape cut
+    between the two ends, because that is what the coverage then means.
+
+    Returns palette indices directly rather than floats: the quantisation is
+    the point here, so doing it once inside is both cheaper and the only way
+    the two colours are guaranteed to land a single step apart.
+    """
+    lo, hi = cell_hilo(field)
+    top = np.float32(steps - 1)
+    b = np.float32(block)
+
+    # Both ends snapped to a block of ramp steps, and the pair is *always* one
+    # block wide unless the cell genuinely spans more.
+    #
+    # Without this the two colours track the cell's own range, which is fine on
+    # a smooth field and ruinous on a sharp one: every edge cell picks its own
+    # pair and the strip builder pays a run boundary for each. Measured on
+    # Chladni at 400x100 — 11,039 colour runs against 7,300, and Chladni
+    # Extreme at 17,621. Snapping to blocks leaves ``steps / block`` distinct
+    # pairs for the whole frame, so neighbouring cells share one and merge,
+    # while the dither still resolves the value *inside* the block: sixteen
+    # blocks of eight subcell gradations is 128 levels where the ramp names 64.
+    lo_i = np.floor(np.clip(lo, 0.0, 1.0) * top / b) * b
+    hi_i = np.maximum(np.ceil(np.clip(hi, 0.0, 1.0) * top / b) * b, lo_i + b)
+    hi_i = np.minimum(hi_i, top)
+    lo_i = np.minimum(lo_i, hi_i - np.float32(1.0))
+
+    span = hi_i - lo_i
+    if CELL_MODE == "quadrant":
+        sub, h, w = _quadrant_subcells(field)
+        dither, bits = QUADRANT_DITHER, None
+        rows, cols = 2, 2
+    else:
+        sub, h, w = _octant_subcells(field)
+        dither, bits = OCTANT_DITHER, OCTANT_BITS
+        rows, cols = 4, 2
+
+    mask = np.zeros((h, w), dtype=np.int32)
+    k = 0
+    for r in range(rows):
+        for c in range(cols):
+            on = sub[k] * top >= lo_i + span * dither[r, c]
+            weight = (1 << k) if bits is None else bits[r, c]
+            np.add(mask, np.where(on, weight, 0), out=mask)
+            k += 1
+
+    lut = QUADRANT_LUT if CELL_MODE == "quadrant" else OCTANT_LUT_WIDE
+    return lut[mask], hi_i.astype(np.int32), lo_i.astype(np.int32)
+
+
 def pack_octant_smooth(
     field: np.ndarray, lo: np.ndarray | None = None, hi: np.ndarray | None = None
 ) -> np.ndarray:
@@ -798,6 +868,7 @@ __all__ = [
     "pack_octant",
     "pack_octant_bits",
     "pack_octant_smooth",
+    "shade_cells",
     "row_gradient",
 ]
 

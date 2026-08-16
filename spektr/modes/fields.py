@@ -17,6 +17,7 @@ from ..render import (
     pack_braille,
     pack_octant_bits,
     pack_octant_smooth,
+    shade_cells,
 )
 from . import Ctx, empty, mode, spread
 
@@ -157,8 +158,13 @@ def _plasma(ctx: Ctx, cells: str):
     field = np.clip(field * np.float32(0.35 + ctx.energy * 1.5), 0.0, 1.0)
 
     if octant:
-        lo, hi = cell_hilo(field)
-        return pack_octant_smooth(field, lo, hi), ctx.ramp(hi), ctx.ramp(lo)
+        # Shaded, not masked. This field is smooth everywhere, so there is no
+        # shape in a cell to cut — thresholding it against the cell's own
+        # extremes turns a gradient into texture, which is how the first
+        # version of this variant came out looking *more* pixelated than the
+        # mode it varies. shade_cells dithers between adjacent ramp steps
+        # instead, which reads as a shade rather than as a pattern.
+        return shade_cells(field)
 
     idx = ctx.ramp(field)
     codes = np.full((h, w), _UPPER_HALF, dtype=np.int32)
@@ -297,20 +303,15 @@ def _chladni(ctx: Ctx, cells: str):
         # first flattens exactly the information it works from; the two colours
         # are graded afterwards, on the cell-resolution arrays, which is also a
         # quarter of the rounding.
-        # Seven steps, not twelve. The half-block path needs twelve because
-        # colour is the only thing it has to describe a nodal band with; here
-        # the glyph carries the band's shape and the colour only has to say how
-        # bright it is. Twelve measured 9,217 colour runs and 12.58 ms at
-        # 400x100 — over the threshold where the widget starts reusing frames —
-        # against 7 steps at 6,800 and 10.2.
-        lo, hi = cell_hilo(nodal)
-        codes = pack_octant_smooth(nodal, lo, hi)
-        grade = np.float32(1.0 / 7.0)
-        return (
-            codes,
-            ctx.ramp(np.round(hi * np.float32(7.0)) * grade),
-            ctx.ramp(np.round(lo * np.float32(7.0)) * grade),
-        )
+        # Shaded rather than masked. A nodal field is smooth between its
+        # lines, so cutting each cell against its own extremes turned the
+        # gradient either side of a line into texture — the figure came out
+        # reading as pixels, which is the opposite of the point. shade_cells
+        # dithers between adjacent ramp steps instead, so the same coverage
+        # carries both the line's position and the shading around it, and it
+        # grades itself: the hand-tuned bucket count that used to live here is
+        # gone with it.
+        return shade_cells(nodal)
 
     nodal = np.round(nodal * np.float32(12.0)) * np.float32(1.0 / 12.0)
 
@@ -446,18 +447,8 @@ def _chladni_flow(ctx: Ctx, cells: str):
     # while keeping the ridge solid still broke the thin parts of the
     # figure, which is most of it. The clean field is the better picture.
     if octant:
-        # Shape from the raw field, colour graded afterwards on the
-        # cell-resolution arrays, and graded coarser than the half-block path:
-        # the glyph carries the nodal band's shape now, so the colour only has
-        # to say how bright it is. See Chladni Fine.
-        lo, hi = cell_hilo(nodal)
-        codes = pack_octant_smooth(nodal, lo, hi)
-        grade = np.float32(1.0 / 7.0)
-        return (
-            codes,
-            ctx.ramp(np.round(hi * np.float32(7.0)) * grade),
-            ctx.ramp(np.round(lo * np.float32(7.0)) * grade),
-        )
+        # Shaded rather than masked — see Chladni Fine.
+        return shade_cells(nodal)
 
     nodal = np.round(nodal * np.float32(12.0)) * np.float32(1.0 / 12.0)
 
@@ -687,24 +678,12 @@ def _chladni_extreme(ctx: Ctx, cells: str):
     # is already nearly bimodal - most cells sit hard against 0 or 1 rather
     # than in the midtones the extra buckets would resolve.
     if octant:
-        # Shape from the raw field, colour graded on the cell-resolution
-        # arrays. Six steps against the half-block path's eight: this is the
-        # heaviest mode in the app and over half its frame is the strip
-        # builder, and with the glyph carrying the band's shape the colour has
-        # less left to say. See Chladni Fine.
+        # Shaded rather than masked — see Chladni Fine.
         #
         # The field is one sample per subcell *row* here, so each cell's two
         # subcell columns take the same value — one repeat rather than twice
         # the trig, sines included.
-        nodal = np.repeat(nodal, 2, axis=1)
-        lo, hi = cell_hilo(nodal)
-        codes = pack_octant_smooth(nodal, lo, hi)
-        grade = np.float32(1.0 / 6.0)
-        return (
-            codes,
-            ctx.ramp(np.round(hi * np.float32(6.0)) * grade),
-            ctx.ramp(np.round(lo * np.float32(6.0)) * grade),
-        )
+        return shade_cells(np.repeat(nodal, 2, axis=1), block=8)
 
     nodal *= np.float32(8.0)
     np.round(nodal, 0, out=nodal)
@@ -2318,5 +2297,8 @@ def locket(ctx: Ctx):
     np.multiply(cm, np.float32(1.0 / 10.0), out=cm)
     idx = ctx.ramp(cm)
     return codes, idx
+
+
+
 
 
