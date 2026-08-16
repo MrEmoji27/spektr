@@ -214,7 +214,7 @@ def make_strips(
     # nothing on the normal path.
     text_all = codes.astype("<u4", copy=False).tobytes().decode("utf-32-le", errors="replace")
 
-    if h == 0:
+    if h == 0 or w == 0:
         return strips
 
     # Whole-grid run starts: column 0 of every row, plus every cell that
