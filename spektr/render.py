@@ -387,26 +387,6 @@ def pack_octant_bits(lit: np.ndarray) -> np.ndarray:
     return OCTANT_LUT_WIDE[mask]
 
 
-#: Ordered thresholds over the 4x2 cell with all eight distinct — a proper 2-D
-#: Bayer spread rather than the mirror-safe one below.
-#:
-#: This is the matrix for *shading*, and the distinction is worth stating
-#: because using the wrong one silently costs half the resolution. When the two
-#: columns share a threshold a cell can only ever show an even number of lit
-#: subcells: five coverages out of a possible nine, so the shading resolves
-#: half of what it could. Measured on a smooth ramp, that came out at exactly
-#: 1.00 ramp steps per level — the same granularity as no dithering at all,
-#: which is what "still pixelated" looks like.
-#:
-#: Kaleidoscope needs the symmetric one because a mirror swaps a cell's subcell
-#: columns and its whole promise is bilateral symmetry. Nothing else does.
-OCTANT_DITHER_2D = (
-    np.array([[0, 4], [6, 2], [1, 5], [7, 3]], dtype=np.float32) + 0.5
-) / 8.0
-
-#: The same for a 2x2 cell: four distinct thresholds, five coverages.
-QUADRANT_DITHER_2D = (np.array([[0, 2], [3, 1]], dtype=np.float32) + 0.5) / 4.0
-
 #: Ordered threshold offsets over the 4x2 cell, in (0, 1).
 #:
 #: A Bayer spread down the rows — neighbouring rows get thresholds far apart
@@ -464,17 +444,25 @@ def shade_cells(
     colour precision into texture and the picture comes out *more* pixelated
     than the half-block renderer it replaced. Plasma is the mode that shows it.
 
-    Here the two colours are **adjacent ramp steps** bracketing what is in the
-    cell, and the glyph says what fraction of the way between them the cell
-    sits. Neighbouring steps are nearly the same colour, so the pattern does
-    not read as texture — it reads as a shade between them, and the field gets
-    roughly eight times the levels the 64-step ramp can name. That is ordinary
-    two-colour dithering, and it is how you draw a gradient smoother than your
-    palette rather than coarser.
+    So each cell is sorted into one of two kinds, and the deciding question is
+    whether it holds an edge at all:
 
-    Where the cell *does* straddle an edge — its range covering several ramp
-    steps — the same arithmetic degrades gracefully back into a shape cut
-    between the two ends, because that is what the coverage then means.
+    * **Flat** — the cell's range is under about a ramp step and a half. It is
+      drawn exactly the way the half-block renderer drew it: ``▀``, the top
+      half's mean as the foreground and the bottom half's as the background,
+      both straight off the 64-step ramp with no snapping. There is no shape in
+      the cell, so nothing is spent trying to describe one.
+    * **Edge** — the cell straddles a boundary. Now the glyph earns its keep:
+      the subcells are cut against a single midpoint, so the mask is the shape
+      the boundary makes and the boundary lands *inside* the cell instead of on
+      its border. Four subcell rows instead of one is the whole reason these
+      modes have octant variants.
+
+    Both mistakes on the way here were the same mistake — spending the glyph on
+    a cell with no shape in it — and both measured fine. Ordered dithering
+    every cell turned smooth fields into an all-over stipple; ordered dithering
+    only the edge cells turned Chladni's nodal lines into a halftone screen.
+    Neither survived being rasterised to pixels and looked at.
 
     The field must be ``(h * subcell_rows(), w * 2)`` — four rows a cell in
     octant mode, two in quadrant. A mode that builds its own field should ask
@@ -488,11 +476,11 @@ def shade_cells(
     """
     if CELL_MODE == "quadrant":
         sub, h, w = _quadrant_direct(field)
-        dither, bits = QUADRANT_DITHER_2D, None
+        bits = None
         rows, cols = 2, 2
     else:
         sub, h, w = _octant_subcells(field)
-        dither, bits = OCTANT_DITHER_2D, OCTANT_BITS
+        bits = OCTANT_BITS
         rows, cols = 4, 2
 
     lo = sub[0].copy()
@@ -536,11 +524,35 @@ def shade_cells(
     # does straddle an edge keeps the octant mask, which is where the extra
     # resolution was ever worth having. The two agree at the boundary because
     # a barely-flat cell's halves are nearly its extremes.
-    span = hi_i - lo_i
     # The *raw* range, not the snapped one: snapping forces a pair at least a
-    # block wide, so testing that would call every cell an edge and dither the
-    # whole screen — which is exactly the bug this guard exists to undo.
+    # block wide, so testing that would call every cell an edge and take the
+    # edge path for the whole screen — the bug this guard exists to undo.
     edge = (hi - lo) * top >= np.float32(1.5)
+
+    # An edge cell is *cut*, not stippled: every subcell is decided against one
+    # midpoint, so the lit set is the shape the boundary actually makes.
+    #
+    # This replaced an ordered (Bayer) threshold, and the pictures settled it.
+    # A Bayer matrix scatters its thresholds deliberately — that is what turns
+    # a coverage fraction into a tone — so the subcells it lights are spread
+    # across the cell rather than lying where the field is high. For a gradient
+    # that is exactly right. For a *line* it is destruction: Chladni's nodal
+    # curves came out as a halftone screen rather than as curves, which is what
+    # "the old ones were much better in looks" was about. Rasterising the cells
+    # to pixels and looking at them showed it in a second; the numbers had
+    # called it correct for weeks.
+    #
+    # Tone is not lost with it. A flat cell keeps the whole 64-step ramp below,
+    # and a cell holding a real edge has an edge to draw — there is nothing
+    # left for a stipple to buy.
+    #
+    # The midpoint comes from the cell's *own* range, not from the snapped pair,
+    # so ``block`` moves only the two colours and never the shape. Snapping the
+    # threshold too would tie the boundary's position to the colour
+    # quantisation: a mode passing a coarser block to buy back strip time would
+    # find its edges drifting off the field as a side effect, which is not a
+    # trade anyone would knowingly make.
+    mid = (lo + hi) * np.float32(0.5) * top
 
     half = len(sub) // 2
     top_mean = sub[0].copy()
@@ -556,7 +568,7 @@ def shade_cells(
     k = 0
     for r in range(rows):
         for c in range(cols):
-            on = sub[k] * top >= lo_i + span * dither[r, c]
+            on = sub[k] * top >= mid
             weight = (1 << k) if bits is None else bits[r, c]
             np.add(mask, np.where(on, weight, 0), out=mask)
             k += 1
@@ -967,8 +979,6 @@ __all__ = [
     "OCTANT_BASE",
     "OCTANT_BITS",
     "OCTANT_DITHER",
-    "OCTANT_DITHER_2D",
-    "QUADRANT_DITHER_2D",
     "OCTANT_LUT",
     "OCTANT_LUT_WIDE",
     "QUADRANT_DITHER",

@@ -321,42 +321,73 @@ def test_a_smooth_field_is_not_dithered_at_all(cells, rows):
     )
 
 
-@pytest.mark.parametrize(
-    # How far the mask must travel as the boundary crosses the cell. A
-    # quadrant cell is two rows tall and an octant four, so the shallower
-    # geometry genuinely has less room to place an edge in — the expectation
-    # follows the geometry rather than pretending they are the same.
-    "cells, rows, nsub, travel", [("quadrant", 2, 4, 1), ("octant", 4, 8, 2)]
-)
-def test_an_edge_is_placed_between_subcells(cells, rows, nsub, travel):
-    """What the dither is actually for, now that flat cells opt out of it.
+def _boundary(rows, nx, ny, edge):
+    """One cell holding a soft straight boundary with normal ``(nx, ny)``."""
+    yc = (np.arange(rows, dtype=np.float32)[:, None] + 0.5) / rows
+    xc = (np.arange(2, dtype=np.float32)[None, :] + 0.5) / 2.0
+    return np.clip((xc * nx + yc * ny - edge) / np.float32(0.35) + 0.5, 0.0, 1.0)
 
-    Tone comes from the flat path, which has the whole ramp to spend. What is
-    left for the mask is *position*: as a boundary sweeps through a cell, the
-    number of lit subcells has to follow it, so the edge appears to land
-    between subcells rather than snapping to one.
+
+def test_a_horizontal_boundary_travels_down_an_octant_cell():
+    """What the mask is for, now that flat cells opt out of it.
+
+    Tone comes from the flat path, which has the whole 64-step ramp to spend.
+    What is left for the mask is *position*: as a boundary sweeps down a cell,
+    the number of lit subcells has to follow it, so the edge appears to land
+    between subcell rows rather than snapping to the cell border. Four rows is
+    the entire reason these modes have octant variants.
     """
-    from spektr.render import OCTANT_LUT, QUADRANT_LUT, UPPER_HALF
+    from spektr.render import OCTANT_LUT, UPPER_HALF
 
-    lut = QUADRANT_LUT if cells == "quadrant" else OCTANT_LUT
-    popcount = {int(c): bin(i).count("1") for i, c in enumerate(lut)}
-    centres = (np.arange(rows, dtype=np.float32) + 0.5) / rows
-
+    popcount = {int(c): bin(i).count("1") for i, c in enumerate(OCTANT_LUT)}
     seen = []
     for edge in np.linspace(0.1, 0.9, 9, dtype=np.float32):
-        # one cell tall and wide, with a soft boundary crossing it at `edge`
-        col = np.clip((centres - edge) / np.float32(0.35) + 0.5, 0.0, 1.0)
-        field = np.repeat(col[:, None], 2, axis=1)
-        codes, _, _ = _shaded(field, cells)
+        codes, _, _ = _shaded(_boundary(4, 0.0, 1.0, edge), "octant")
         code = int(codes[0, 0])
-        seen.append(nsub - popcount[code] if code != UPPER_HALF else None)
+        seen.append(8 - popcount[code] if code != UPPER_HALF else None)
 
     lit = [s for s in seen if s is not None]
-    assert len(lit) >= 6, f"{cells}: the edge path fired only {len(lit)} times of 9"
-    assert lit == sorted(lit), f"{cells}: coverage is not monotonic in the edge: {lit}"
-    assert max(lit) - min(lit) >= travel, (
-        f"{cells}: the mask barely moved as the boundary swept the cell: {lit}"
-    )
+    assert len(lit) >= 6, f"the edge path fired only {len(lit)} times of 9"
+    assert lit == sorted(lit), f"coverage is not monotonic in the edge: {lit}"
+    assert max(lit) - min(lit) >= 2, f"the mask barely moved: {lit}"
+
+
+def test_two_rows_cannot_place_a_horizontal_boundary_and_do_not_pretend_to():
+    """The limit of quadrant mode, pinned so nobody re-derives it by eye.
+
+    Cut against a single midpoint, a cell of two rows holding a monotonic
+    gradient always lights exactly the upper one — there is no threshold that
+    puts a horizontal boundary anywhere but the middle. So for a *horizontal*
+    edge, quadrant mode is the half-block renderer and cannot be better.
+
+    Trying to beat it is what produced both stipple bugs: an ordered threshold
+    does vary the count, but it does so by lighting subcells away from where
+    the field is high, which is a halftone screen rather than a boundary.
+    Quadrant mode earns its keep on the other axis — see the test below — and
+    on colour, not here.
+    """
+    from spektr.render import QUADRANT_LUT
+
+    popcount = {int(c): bin(i).count("1") for i, c in enumerate(QUADRANT_LUT)}
+    for edge in np.linspace(0.1, 0.9, 9, dtype=np.float32):
+        codes, _, _ = _shaded(_boundary(2, 0.0, 1.0, edge), "quadrant")
+        assert popcount[int(codes[0, 0])] in (0, 2, 4)
+
+
+@pytest.mark.parametrize("cells, rows", [("quadrant", 2), ("octant", 4)])
+def test_the_mask_follows_the_boundary_angle(cells, rows):
+    """Both geometries are two columns wide, so both carry a boundary's slope.
+
+    This is the half of the gain quadrant mode keeps: a diagonal edge lights a
+    different set of subcells than a flat one, so the glyph reports which way
+    the boundary runs. A half-block cell has one column and cannot.
+    """
+    seen = set()
+    for nx, ny in ((0.0, 1.0), (1.0, 1.0), (1.0, 0.0), (1.0, -1.0)):
+        for edge in np.linspace(0.0, 1.0, 7, dtype=np.float32):
+            codes, _, _ = _shaded(_boundary(rows, nx, ny, edge), cells)
+            seen.add(int(codes[0, 0]))
+    assert len(seen) >= 4, f"{cells}: the mask ignores the boundary angle: {seen}"
 
 
 def test_the_dither_matrix_survives_a_mirror():

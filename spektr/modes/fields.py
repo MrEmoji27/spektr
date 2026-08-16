@@ -101,10 +101,13 @@ def _plasma(ctx: Ctx, cells: str):
     400x100 for the same arithmetic, and the half-block path went 2.03 to 0.65
     on the same change.
 
-    Because the field is smooth everywhere, the octant path uses
-    :func:`render.pack_octant_smooth` directly: there is already a gradient
-    across every cell for the ordered threshold to work with, so unlike
-    Kaleidoscope this one needs no interpolation to antialias.
+    Because the field is smooth everywhere, almost every cell takes
+    :func:`render.shade_cells`' flat path and comes out as a plain half-block
+    with two exact colours. What the octant grid buys here is not the glyph but
+    the *sampling*: eight points a cell averaged down to two colours instead of
+    two points taken raw, so the colours are right even where the glyph has
+    nothing to say. The cells that do hold an edge — the ridges, at a small
+    terminal — get the mask.
 
     That trick is also the expensive part. Two colours per cell means
     make_strips run-length-encodes on the (fg, bg) *pair*, not a single index,
@@ -163,8 +166,7 @@ def _plasma(ctx: Ctx, cells: str):
         # shape in a cell to cut — thresholding it against the cell's own
         # extremes turns a gradient into texture, which is how the first
         # version of this variant came out looking *more* pixelated than the
-        # mode it varies. shade_cells dithers between adjacent ramp steps
-        # instead, which reads as a shade rather than as a pattern.
+        # mode it varies. shade_cells leaves a cell with no edge in it alone.
         return shade_cells(field)
 
     idx = ctx.ramp(field)
@@ -299,20 +301,20 @@ def _chladni(ctx: Ctx, cells: str):
     # while keeping the ridge solid still broke the thin parts of the
     # figure, which is most of it. The clean field is the better picture.
     if octant:
-        # Shape from the raw field, colour from the graded one -- the split
-        # Kaleidoscope Ultra's docstring explains. The ordered threshold needs
-        # the gradient to place a nodal line between subcells, and quantising
-        # first flattens exactly the information it works from; the two colours
-        # are graded afterwards, on the cell-resolution arrays, which is also a
-        # quarter of the rounding.
-        # Shaded rather than masked. A nodal field is smooth between its
-        # lines, so cutting each cell against its own extremes turned the
-        # gradient either side of a line into texture — the figure came out
-        # reading as pixels, which is the opposite of the point. shade_cells
-        # dithers between adjacent ramp steps instead, so the same coverage
-        # carries both the line's position and the shading around it, and it
-        # grades itself: the hand-tuned bucket count that used to live here is
-        # gone with it.
+        # The field goes in raw, *not* through the 12-bucket quantisation
+        # below. A cut needs the gradient to find the midpoint with, and
+        # quantising first flattens exactly the information it works from.
+        #
+        # Shaded rather than masked, and this mode is the one that settled how.
+        # A nodal field is two different problems at once: smooth almost
+        # everywhere, with thin sharp curves through it. shade_cells splits it
+        # the same way — the smooth part is drawn as a half-block with two exact
+        # colours, and only a cell the curve passes through spends its glyph on
+        # the shape. Dithering was tried for both halves and was wrong for both:
+        # it turned the smooth part into an all-over stipple, and then, once
+        # that was fixed, it turned the curves themselves into a halftone
+        # screen. It also grades itself, so the hand-tuned bucket count that
+        # used to live here is gone.
         return shade_cells(nodal)
 
     nodal = np.round(nodal * np.float32(12.0)) * np.float32(1.0 / 12.0)
@@ -337,8 +339,8 @@ def chladni_fine(ctx: Ctx):
     curve through a field with many local extrema, which is the worst case for
     a renderer that can only place an edge on a cell boundary: at 1x2 samples
     a cell the curve is a staircase, and the fix is not more colours but more
-    places to put the edge. Eight samples a cell and an ordered threshold puts
-    it between them.
+    places to put the edge. Eight samples a cell, cut against the cell's own
+    midpoint, put it between them.
     """
     return _chladni(ctx, "octant")
 
@@ -450,7 +452,17 @@ def _chladni_flow(ctx: Ctx, cells: str):
     # figure, which is most of it. The clean field is the better picture.
     if octant:
         # Shaded rather than masked — see Chladni Fine.
-        return shade_cells(nodal)
+        #
+        # A coarser colour block than the default, the same as Chladni Extreme
+        # and for the same reason: this figure sweeps continuously, so a broad
+        # nodal region is crossed by many cells each picking a slightly
+        # different colour pair, and every distinct pair is a run boundary
+        # make_strips has to pay for. At 400x100 that measured 14,721 runs
+        # against 9,919, worth 1.3 ms of the frame — which is the difference
+        # between sitting on the 16.7 ms budget and sitting clear of it. It
+        # costs nothing visible: the block moves the two colours, never the
+        # threshold, so the nodal lines land in exactly the same place.
+        return shade_cells(nodal, block=8)
 
     nodal = np.round(nodal * np.float32(12.0)) * np.float32(1.0 / 12.0)
 
