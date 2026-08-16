@@ -394,6 +394,59 @@ class OnsetDetector:
     #: numerical noise by nearly zero and manufactures detections.
     WHITEN_FLOOR = 0.8
 
+    #: One band gets its own detection curve on top of the whole-spectrum and
+    #: sub-band ones, at this fraction of the band index.
+    #:
+    #: Why one band at all: the sub-band curves are *means* over their band
+    #: ranges, and a mean can still erase a hit. The corpus's breakbeat
+    #: demonstrated the case: a hi-hat landing ~86 ms after a snare is masked
+    #: in the flat flux because the snare's tail still fills the window, and
+    #: its only surviving signature is a large *whitened* spike in one quiet
+    #: band — a jump of 8-10x its own band's mean flux. The sub-band mean over
+    #: bands 4-31 averages that spike away, so no cut of the band plan finds
+    #: it. A per-band curve for the quiet band itself does.
+    #:
+    #: 0.1875 of 32 is band 6, ~143 Hz: the gap between the kick's 110 Hz and
+    #: 165 Hz harmonics. That is what makes it the quiet band here — the kick
+    #: never lights it, so its mean flux stays low and a hat landing on the
+    #: snare's tail shows up as a huge ratio. Swept over the neighbouring
+    #: bands: band 5 (118 Hz, hugging the kick's second harmonic) and band 7
+    #: (174 Hz) both fire false positives on the kick and pad scenarios, while
+    #: band 6 keeps precision at 1.000 across the whole corpus.
+    #:
+    #: The band is expressed as a fraction of the index rather than an index
+    #: because the band plan is exponential — a fixed fraction of the index is
+    #: a fixed fraction of the log-frequency range whatever ``set_bands`` was
+    #: asked for.
+    RESCUE_BAND = 0.1875
+
+    #: The rescue curve's own peak-fraction floor. The whole-spectrum and
+    #: sub-band curves keep :attr:`PEAK_FRAC`; this one is lower (0.15) so a
+    #: hit that clears its band's median-and-deviation bar is not thrown away
+    #: for being small next to a snare that lives elsewhere in the spectrum.
+    #: Swept 0.1-0.3 against the corpus: 0.15 and below recover all eight
+    #: breakbeat hats, 0.3 recovers six, and nothing below 0.3 admits a false
+    #: positive.
+    RESCUE_PEAK_FRAC = 0.15
+
+    #: A rescue-curve candidate must also be broadband: at least this many
+    #: bands lit together in the linear hop-to-hop difference. A real hit is a
+    #: transient — it lights several bands at once even when its flux is
+    #: masked — while the kick body, pad blips and note-stream pitch moves
+    #: that the per-band curve would otherwise fire on light two or three.
+    #: Swept 3-6: 3 admits false positives on four_on_floor, 4 and above keep
+    #: precision at 1.000.
+    RESCUE_SPREAD = 4
+
+    #: The rescue curve's region must also have been this much quieter
+    #: REGION_PAST_LO to REGION_PAST_HI seconds ago. This is the same
+    #: past-quietness test the region gates use, applied independently: a hit
+    #: landing on a decay tail fails the rise gate (its region is still full
+    #: of the previous drum), but its region *was* silent a fraction of a
+    #: second earlier. Swept 3-100 with no change — the masks sit at 1e7 to
+    #: 6e11, so the exact bar is not critical.
+    RESCUE_PAST = 3.0
+
     #: Where the spectrum is cut into sub-bands, as fractions of the band
     #: index. See :meth:`feed`: each sub-band gets its own detection function,
     #: its own threshold and its own peak picking, and a hit found in any one
@@ -545,6 +598,10 @@ class OnsetDetector:
         #: is settable and only the spectrum knows it.
         self._edges: np.ndarray | None = None
         self._widths: np.ndarray | None = None
+        #: Index of the rescue band, from RESCUE_BAND. Built alongside the
+        #: sub-band edges so a ``set_bands`` resize picks the same log-frequency
+        #: slot.
+        self._rescue_idx = 0
         self._last_t = -1e9
         self._beats: list[float] = []
         self._span = self.PEAK_SPAN * 2 + 1
@@ -674,9 +731,23 @@ class OnsetDetector:
         self._band_avg += (diff - self._band_avg) * 0.02
 
         mix = self.WHITEN_MIX
-        curve = np.empty(1 + sub_flat.size)
+        curve = np.empty(2 + sub_flat.size)
         curve[0] = (1.0 - mix) * flat + mix * whitened
-        curve[1:] = (1.0 - mix) * sub_flat + mix * sub_whit
+        curve[1:1 + sub_flat.size] = (1.0 - mix) * sub_flat + mix * sub_whit
+
+        # ── the rescue curve ──
+        # The last slot is one band's own curve, whitened against its own
+        # mean, for the case the means above cannot see: a hit landing on a
+        # previous hit's tail (the breakbeat hat 86 ms after the snare) whose
+        # flat flux is masked but whose *whitened* flux is a large jump in a
+        # band that stays quiet between drums. A sub-band mean over a range
+        # that includes it averages the jump away; a per-band curve for the
+        # quiet band itself does not. It only fires with the extra
+        # broadband-and-past-quietness tests of :meth:`_rescue_ok`, so a band
+        # that is simply noisy cannot raise candidates through it.
+        band_whit = diff / np.maximum(self._band_avg, 1e-6)
+        curve[1 + sub_flat.size] = (1.0 - mix) * diff[self._rescue_idx] \
+            + mix * band_whit[self._rescue_idx]
         raw = float(curve[0])
 
         # Peak decays so ``strength`` means "hard, for this passage" rather
@@ -734,8 +805,14 @@ class OnsetDetector:
                 part = np.partition(hist, (k_h - 1, k_h), axis=0)
                 med = 0.5 * (part[k_h - 1] + part[k_h])
             mad = np.mean(np.abs(hist - med), axis=0)
+            # The peak-fraction floor is per curve: the rescue band gets its
+            # own (RESCUE_PEAK_FRAC) so a hit that clears its band's median
+            # bar is not rejected for being small next to a snare that lives
+            # elsewhere in the spectrum.
+            peak_frac = np.full(curve.size, self.PEAK_FRAC)
+            peak_frac[-1] = self.RESCUE_PEAK_FRAC
             thresh = np.maximum(med + self.K_MAD * mad,
-                                self.PEAK_FRAC * self._peak)
+                                peak_frac * self._peak)
 
             t_mid, b = self._win[self.PEAK_SPAN]
             # A peak has to dominate a whole neighbourhood, not merely beat its
@@ -755,10 +832,17 @@ class OnsetDetector:
             left = (win[: self.PEAK_SPAN] < b).all(axis=0)
             right = (win[self.PEAK_SPAN + 1:] <= b).all(axis=0)
             fired = left & right & (b > thresh)
+            # The rescue curve does not go through the region gate; it has
+            # its own tests (see :meth:`_rescue_ok`), which exist precisely
+            # because a hit on a decay tail fails the region gate's rise test
+            # no matter how real it is.
             if (
                 fired.any()
                 and t_mid - self._last_t >= self.REFRACTORY_S
-                and self._region_ok(spectrum, t_mid)
+                and (
+                    (fired[:-1].any() and self._region_ok(spectrum, t_mid))
+                    or (fired[-1] and self._rescue_ok(spectrum, t_mid))
+                )
             ):
                 self._last_t = t_mid
                 self.seq += 1
@@ -790,6 +874,69 @@ class OnsetDetector:
         edges = [0] + [c for c in cuts if 0 < c < n] + [n]
         self._edges = np.array(edges, dtype=np.intp)
         self._widths = np.diff(self._edges)
+        self._rescue_idx = int(round(self.RESCUE_BAND * n))
+        self._rescue_idx = max(0, min(n - 1, self._rescue_idx))
+
+    # ── rescue gate ──
+    def _rescue_ok(self, spectrum: np.ndarray, t_mid: float) -> bool:
+        """True when the rescue curve's candidate is a real onset.
+
+        The rescue curve exists for hits the region gates cannot accept: an
+        attack landing on a previous attack's tail, whose region is still
+        full of the earlier drum (measured rise ~1.2-1.5 against the 2.0 the
+        strict gate wants, and 0.1-15% of the loudest recent frame against
+        the 45% the low-rise arm wants). It would also admit anything else
+        its band happens to hear, so it is held to its own two tests instead:
+
+        Broadband. At least RESCUE_SPREAD bands must be lit together in the
+        hop-to-hop difference. A real hit is a transient — it lights several
+        bands even when masked — while the kick body, pad blips and
+        note-stream pitch moves that would otherwise fire the band light two
+        or three. Measured: the breakbeat hats light 6-9 bands, the false
+        candidates 1-3.
+
+        Past quietness. The loudest rising band's region must have been
+        RESCUE_PAST times quieter REGION_PAST_LO to REGION_PAST_HI seconds
+        ago. A hit on a decay tail still found its region silent a fraction
+        of a second earlier (measured 1e7-6e11 on the corpus); a pad or a
+        melody re-lights it (measured 1-3).
+
+        Both tests default open at the start of a track, matching the region
+        gates: there is no history to judge against, and saying nothing on
+        the first beat is worse than risking a false positive on it.
+        """
+        step = 1.0 / 187.5
+        hi_t = t_mid - step
+        lo_t = t_mid - self.REGION_RISE_S - step
+        old = None
+        for t, sp in self._spec_hist:
+            if lo_t <= t <= hi_t:
+                old = sp
+        if old is None or old.shape != spectrum.shape:
+            return True
+
+        diff = spectrum - old
+        b0 = int(np.argmax(diff))
+        diff_max = float(diff.max())
+        spread = int((diff > 0.5 * max(diff_max, 1e-9)).sum())
+        if spread < self.RESCUE_SPREAD:
+            return False
+
+        threshold, high_half, low_half = self.REGION_PAST_HALF
+        half = high_half if b0 >= threshold else low_half
+        lo = max(0, b0 - half)
+        hi = min(spectrum.size, b0 + half + 1)
+        lo_t = t_mid - self.REGION_PAST_HI - step
+        hi_t = t_mid - self.REGION_PAST_LO
+        mn = None
+        for t, sp in self._spec_hist:
+            if lo_t <= t <= hi_t:
+                v = float(sp[lo:hi].sum())
+                if mn is None or v < mn:
+                    mn = v
+        if mn is None:
+            return True
+        return float(spectrum[lo:hi].sum()) > self.RESCUE_PAST * max(mn, 1e-12)
 
     # ── region gates ──
     def _region_ok(self, spectrum: np.ndarray, t_mid: float) -> bool:
