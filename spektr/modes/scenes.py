@@ -713,6 +713,7 @@ def boot(ctx: Ctx):
     cidx = ctx.ramp(np.clip(bright, 0.0, 1.0))
     return codes, cidx
 
-@mode("Tunnel In", group="scenes", blurb="rings thrown out of the centre on the beat, rushing past you")
+@mode("Tunnel In", group="scenes", after="Tunnel",
+      blurb="rings thrown out of the centre on the beat, rushing past you")
 def tunnel_in(ctx: Ctx):
     return _tunnel(ctx, inward=True)

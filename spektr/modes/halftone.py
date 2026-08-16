@@ -88,14 +88,14 @@ _LOUD_DENSITY = 0.30
 _FLASH_DENSITY = 0.14
 
 
-@mode("Dither Storm", group="fields",
+@mode("Dither Storm", group="fields", after="Dither",
       blurb="Dither's one-bit crosshatch, but the field moves — each band drives its own wave, and beats throw rings through it")
 def dither_storm(ctx: Ctx):
     """Dither Storm with its density held. See :func:`_dither_storm`."""
     return _dither_storm(ctx, extreme=False)
 
 
-@mode("Dither Storm Extreme", group="fields",
+@mode("Dither Storm Extreme", group="fields", after="Dither Storm",
       blurb="Dither Storm with nothing holding it back — hits pile up and a dense passage blows the field to white")
 def dither_storm_extreme(ctx: Ctx):
     """Dither Storm with every governor removed. See :func:`_dither_storm`.

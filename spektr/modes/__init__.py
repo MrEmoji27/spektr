@@ -280,12 +280,26 @@ class ModeNameTaken(Exception):
     """Raised when a plugin tries to shadow an existing mode."""
 
 
-def mode(name: str, group: str = "spectrum", blurb: str = ""):
+def mode(name: str, group: str = "spectrum", blurb: str = "",
+         after: str | None = None):
     """Register a render mode.
 
     ``name`` must be unique — a plugin cannot silently replace a built-in or
     another plugin's mode, because the picker and the saved settings key off
     it. Collisions raise, and the loader turns that into a readable message.
+
+    ``after`` places the mode directly behind an already-registered one in the
+    picker, instead of at the end. The cycle order is otherwise the order the
+    mode modules are imported and the order the functions appear inside them,
+    which puts a variant wherever its *implementation* happens to live rather
+    than next to the mode it is a variant of: ``Dither Storm`` shares a file
+    with nothing and landed twenty places from ``Dither``, and ``Tunnel In``
+    sat four modes past ``Tunnel`` because ``scenes.py`` grew in between.
+    Moving the functions would drag their private helpers across modules to fix
+    a menu ordering, which is the wrong thing to refactor for.
+
+    An unknown ``after`` appends as usual — a plugin naming a built-in that a
+    later version renames should still load.
     """
 
     def wrap(fn):
@@ -294,10 +308,11 @@ def mode(name: str, group: str = "spectrum", blurb: str = ""):
             raise ModeNameTaken(f"mode {name!r} is already registered by {owner}")
         m = Mode(name=name, fn=fn, group=group, blurb=blurb, plugin=_LOADING)
         # keep "None" last in the cycle, however late a plugin arrives
-        if MODES and MODES[-1].name == "None":
-            MODES.insert(len(MODES) - 1, m)
-        else:
-            MODES.append(m)
+        end = len(MODES) - 1 if MODES and MODES[-1].name == "None" else len(MODES)
+        at = end
+        if after is not None and after in _BY_NAME:
+            at = min(MODES.index(_BY_NAME[after]) + 1, end)
+        MODES.insert(at, m)
         _BY_NAME[name] = m
         return fn
 

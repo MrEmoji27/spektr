@@ -62,6 +62,19 @@ Return two `(h, w)` integer arrays:
 Optionally a third array of background ramp indices, if you want to colour whole
 cells — see [Plasma](#two-colours-per-cell) below.
 
+The decorator takes three optional arguments: `group` (which family the mode
+belongs to), `blurb` (one line, shown while the picker previews it), and
+`after`, which places your mode directly behind a named one in the picker
+instead of at the end:
+
+```python
+@mode("Heartbeat Extreme", after="Heartbeat", blurb="the same, with no brakes")
+```
+
+A variant belongs next to what it varies. Naming a mode that does not exist is
+not an error — it just appends, so a plugin keeps loading if a later spektr
+renames the built-in it pointed at.
+
 You never see a colour value. The user picked a theme; you say how *hot* each
 cell is and spektr resolves it. That's why every plugin works with all thirty
 themes for free.
