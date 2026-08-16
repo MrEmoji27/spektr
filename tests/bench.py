@@ -39,8 +39,19 @@ GATE_SIZE = (400, 100)
 #: See :func:`ratchet` for why the gate is a ratio and why it is per-mode.
 TOLERANCE = 1.30
 
+#: Modes whose recorded cost is below this fraction of the median mode are
+#: exempt from the ratchet. Such a mode costs under half the median mode — a
+#: few milliseconds at :data:`GATE_SIZE` — which puts it on the timer's noise
+#: floor: three consecutive runs of this file measured Matrix at 0.28x to 0.54x
+#: median (+94%), Fireworks +29% and Orbit +20% for byte-identical code. The
+#: ratio for a mode that cheap is noise, not signal, so gating it produces
+#: false failures on a clean tree. It is still backstopped by the absolute
+#: ``BUDGET_MS`` check, which is what actually protects a cheap mode that one
+#: day becomes an expensive one.
+MIN_RATIO_TO_GATE = 0.5
+
 #: Ceiling for a mode with no recorded cost, in units of the median mode.
-#: Today's heaviest is Chladni Flow at 2.7x, so a new mode past 3.5x is doing
+#: Today's heaviest is Auroras at 3.0x, so a new mode past 3.5x is doing
 #: something no existing mode needs to and should say why in review before it
 #: gets a baseline of its own.
 NEW_MODE_CEILING = 3.5
@@ -55,62 +66,76 @@ NEW_MODE_CEILING = 3.5
 #: was measured on. Every number needed to catch that was already being
 #: printed. Nothing read them.
 #:
+#: The statistic and the baseline were changed together on 2026-08-16. The
+#: gate used to be fed ``typical`` (the median batch) and the table below was
+#: recorded in those units — and it was red on a clean tree for a reason that
+#: was not a regression. Three consecutive runs of the same code failed 9, 10
+#: and 12 modes over with different offenders each time, and re-recording from
+#: any single run still failed a sibling run (Bubbles +80%, +117%; Fireworks
+#: +31%), because ``typical`` drifts with machine phase. This table is now the
+#: ``capacity`` statistic — the min batch, the fastest phase that recurs —
+#: which is the number the docstring for :func:`bench` says to compare across
+#: runs, and more batches are used to estimate it. On the three clean 9-batch
+#: runs the only mode the old design flagged that was not noise was Matrix, a
+#: 1.4 ms mode sitting on the timer's resolution floor.
+#:
 #: Regenerate with ``python tests/bench.py --update-baseline`` after a change
 #: that is *meant* to move a mode's cost, and say so in the commit. Do not
 #: regenerate to make a red gate green; that is the one use this is not for.
 BASELINE = {
-    'Chladni Flow': 2.67,
-    'Auroras': 2.33,
-    'Arcs': 2.27,
-    'Vinyl': 2.23,
-    'Chladni Extreme': 2.10,
-    'Scatter': 1.89,
-    'Chladni': 1.89,
-    'Pulse': 1.82,
-    'Ember': 1.71,
-    'Flame': 1.57,
-    'Plasma': 1.47,
-    'Tunnel': 1.47,
-    'Tunnel In': 1.46,
-    'Dither Storm': 1.45,
-    'Dither Storm Extreme': 1.42,
-    'Radial': 1.37,
-    'Maelstrom': 1.31,
-    'Rain': 1.22,
-    'Sonar': 1.15,
-    'Locket': 1.14,
-    'ECG': 1.12,
-    'Retro': 1.12,
-    'Murmuration': 1.06,
-    'Readout': 1.03,
-    'Strings': 1.03,
-    'Valentine': 1.01,
-    'Kaleidoscope': 0.99,
-    'Helix': 0.98,
-    'Dune': 0.83,
-    'Wave': 0.75,
-    'Dither': 0.72,
-    'Spectro': 0.70,
-    'VU': 0.70,
-    'Warp': 0.68,
-    'Scope': 0.64,
-    'VFD': 0.63,
-    'Matrix': 0.57,
-    'Boot': 0.54,
-    'Keys': 0.54,
-    'Orbit': 0.52,
-    'Fireworks': 0.50,
-    'Bubbles': 0.49,
-    'Gonio': 0.48,
-    'Needle': 0.45,
-    'Stereo': 0.42,
-    'Flipbook': 0.41,
-    'Bars': 0.18,
-    'Columns': 0.18,
-    'Mirror': 0.16,
-    'Ladder': 0.16,
-    'Bricks': 0.16,
-    'None': 0.10,
+    'Auroras': 3.01,
+    'Vinyl': 2.87,
+    'Tunnel In': 2.78,
+    'Tunnel': 2.76,
+    'Pulse': 2.71,
+    'Ember': 2.61,
+    'Arcs': 2.48,
+    'Scatter': 2.16,
+    'Radial': 1.99,
+    'Flame': 1.89,
+    'Sonar': 1.83,
+    'Chladni Extreme': 1.76,
+    'Dune': 1.60,
+    'Chladni Flow': 1.59,
+    'Kaleidoscope Fine': 1.54,
+    'Locket': 1.52,
+    'Chladni': 1.48,
+    'Valentine': 1.38,
+    'Dither Storm': 1.28,
+    'Kaleidoscope': 1.28,
+    'Rain': 1.12,
+    'Dither Storm Extreme': 1.11,
+    'Maelstrom': 1.05,
+    'Retro': 1.04,
+    'Helix': 1.02,
+    'Strings': 1.01,
+    'Murmuration': 1.00,
+    'ECG': 0.96,
+    'Plasma': 0.94,
+    'Dither': 0.92,
+    'Warp': 0.83,
+    'Wave': 0.78,
+    'Readout': 0.78,
+    'VFD': 0.71,
+    'Scope': 0.68,
+    'Bubbles': 0.61,
+    'VU': 0.54,
+    'Fireworks': 0.49,
+    'Orbit': 0.46,
+    'Gonio': 0.46,
+    'Spectro': 0.36,
+    'Flipbook': 0.35,
+    'Stereo': 0.33,
+    'Needle': 0.30,
+    'Keys': 0.30,
+    'Matrix': 0.28,
+    'Bars': 0.17,
+    'Mirror': 0.15,
+    'Columns': 0.14,
+    'Ladder': 0.14,
+    'Bricks': 0.14,
+    'Boot': 0.13,
+    'None': 0.08,
 }
 
 
@@ -154,7 +179,7 @@ def check(palette) -> list[str]:
 
 
 def bench(palette, sizes=((120, 16), (200, 50), (240, 60), (400, 100)),
-          n=20, batches=5, warm=25) -> tuple[list[str], dict[str, float]]:
+          n=20, batches=9, warm=25) -> tuple[list[str], dict[str, float]]:
     """Time every mode at every size, reporting best and typical per mode.
 
     A single wall-clock loop around N frames is what this used to do, and it
@@ -239,9 +264,9 @@ def bench(palette, sizes=((120, 16), (200, 50), (240, 60), (400, 100)),
             # It is the stable one: a real regression moves it, machine noise
             # does not, so it is what to compare across runs.
             #
-            # ``typical`` is the median batch, and it is what the *gate* uses.
-            # Whether a mode drops frames for someone is a question about its
-            # ordinary case, not its best one, and gating on the best case
+            # ``typical`` is the median batch, and it is what the *budget* gate
+            # uses. Whether a mode drops frames for someone is a question about
+            # its ordinary case, not its best one, and gating on the best case
             # quietly passes anything whose fast phase happens to fit. Build
             # and strips are reported from the capacity batch so the two
             # columns still describe one window.
@@ -254,7 +279,11 @@ def bench(palette, sizes=((120, 16), (200, 50), (240, 60), (400, 100)),
             else:
                 flag = ""
             if (w, h) == GATE_SIZE:
-                cost[m.name] = typical
+                # The ratchet compares across runs, so it gets the statistic
+                # that is stable across runs — capacity, not typical. Feeding
+                # it ``typical`` is how a clean tree failed 9-12 modes on three
+                # consecutive runs of the same code (see :data:`BASELINE`).
+                cost[m.name] = capacity
             print(
                 f"{m.name:<10} {build:7.2f}ms {strips:7.2f}ms "
                 f"{capacity:7.2f}ms {typical:8.2f}ms "
@@ -287,6 +316,10 @@ def ratchet(cost: dict[str, float]) -> tuple[list[str], dict[str, float]]:
     removes machine speed but not scheduler noise, and a gate that cries wolf
     gets deleted. It still catches the case that started this — Dither Storm
     doubling — with room to spare.
+
+    Modes whose recorded cost is below :data:`MIN_RATIO_TO_GATE` are skipped:
+    they cost a few milliseconds at GATE_SIZE, their measured ratio is
+    dominated by timer noise, and the budget check still guards them.
     """
     import statistics
 
@@ -317,7 +350,7 @@ def ratchet(cost: dict[str, float]) -> tuple[list[str], dict[str, float]]:
                     f"{name}: {r:.2f}x median, over the {NEW_MODE_CEILING:.0f}x ceiling "
                     f"for a mode with no recorded cost"
                 )
-        elif r > base * TOLERANCE:
+        elif base >= MIN_RATIO_TO_GATE and r > base * TOLERANCE:
             problems.append(
                 f"{name}: {r:.2f}x median against a recorded {base:.2f}x "
                 f"(+{(r / base - 1) * 100:.0f}%, tolerance +{(TOLERANCE - 1) * 100:.0f}%)"
