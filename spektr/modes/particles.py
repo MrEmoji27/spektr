@@ -48,8 +48,15 @@ def scatter(ctx: Ctx):
     density = level * level * fade
     dots = noise((dr, dc), ctx.frame) < density
     codes = pack_braille(dots)
-    cidx = ctx.ramp(cell_max(density * dots))
-    return codes, cidx
+    # Coloured from the density field itself, not from ``density * dots``.
+    # Zeroing the unlit dots made the dither decide the colour as well as the
+    # coverage, so two neighbouring cells with a different number of lit dots
+    # got a different colour and the strip builder paid for a run boundary
+    # between them -- on a sparkle field, that is most pairs of cells. Density
+    # is smooth across the width, so colouring from it directly costs a third
+    # of the strips and looks the same: a blank cell has no visible foreground
+    # anyway, and a lit one takes the colour of the sparkle it contains.
+    return codes, ctx.ramp(cell_max(density))
 
 
 @mode("Flame", group="particles", blurb="fire, licking upward from each band")
