@@ -517,24 +517,44 @@ def radial(ctx: Ctx):
 
     dist, turn, max_r = _polar(ctx)
     n = min(24, max(8, ctx.n_display))
-    nrg = _angular_bands(ctx, turn, n, ctx.t * 0.04)
+    lut, idx = _angular_lut(ctx, turn, n, ctx.t * 0.04)
 
     inner = max_r * 0.18
+    # Everything here that does not move lives in scratch: the gutters between
+    # the wedges are a function of the angle and the band count, the inner ring
+    # and the "outside the hub" test are functions of the radius, and the
+    # radius offset the shading divides is the same array every frame. Five
+    # full-grid passes at 400x100, rebuilt sixty times a second for numbers
+    # that only change when the terminal is resized or the band count moves.
+    def build():
+        wedge = frac(turn * n)
+        return {
+            "n": n,
+            "outside": (dist >= inner) & ~((wedge < 0.06) | (wedge > 0.94)),
+            "ring": np.abs(dist - inner) < 0.9,
+            "from_inner": dist - inner,
+        }
+
+    geo = ctx.scratch("radial_geo", build)
+    if geo["n"] != n:
+        geo = build()
+        ctx.state[("radial_geo", ctx.w, ctx.h)] = geo
+
     # The rays breathe on the beat. ``ctx.pulse`` is the gated form of
     # beat_phase — 0.0 until a tempo is established, so silence and the first
     # seconds of a track get no swell rather than a permanent one. Small,
     # because the rays are already the loudest thing here.
-    outer = inner + (max_r - inner) * nrg * np.float32(1.0 + 0.12 * ctx.pulse)
+    #
+    # The ray length is a function of the band level, so it is computed on the
+    # 512-entry table and gathered — see angular_lut. Same for the reciprocal
+    # the shading needs, which turns a full-grid division into a gather.
+    span_lut = (max_r - inner) * lut * np.float32(1.0 + 0.12 * ctx.pulse)
+    outer = inner + span_lut[idx]
 
-    # thin radial gutters so the wedges read as separate bars
-    wedge = frac(turn * n)
-    gutter = (wedge < 0.06) | (wedge > 0.94)
+    lit = (dist <= outer) & geo["outside"]
+    lit |= geo["ring"]
 
-    lit = (dist >= inner) & (dist <= outer) & ~gutter
-    ring = np.abs(dist - inner) < 0.9
-    lit |= ring
-
-    heat = np.where(lit, np.clip((dist - inner) / np.maximum(outer - inner, 1e-6), 0, 1), 0.0)
+    heat = np.where(lit, np.clip(geo["from_inner"] / np.maximum(span_lut, 1e-6)[idx], 0, 1), 0.0)
     codes = pack_braille(lit)
     cidx = ctx.ramp(cell_max(heat))
     return codes, cidx
@@ -1122,7 +1142,10 @@ def dune(ctx: Ctx):
     # audio with the pile height barely moving; a fixed seed means only
     # ``tops`` crossing a grain boundary changes what's lit.
     depth = (rows - tops[None, :]).astype(np.float32)
-    grain = noise((dr, dc), 0) < np.clip(0.35 + depth * 0.05, 0.35, 0.97)
+    # The seed is constant, so the hash is too — it was being recomputed over
+    # 320,000 cells every frame to produce the same field. Scratch.
+    sand = ctx.scratch("dune_grain", lambda: noise((dr, dc), 0))
+    grain = sand < np.clip(0.35 + depth * 0.05, 0.35, 0.97)
     dots = body & grain
 
     heat = np.clip((0.35 + 0.65 * (1.0 - depth / max(1, dr))) * dots, 0.0, 1.0)
