@@ -268,6 +268,65 @@ def pack_octant_bits(lit: np.ndarray) -> np.ndarray:
     return OCTANT_LUT_WIDE[mask]
 
 
+#: Ordered threshold offsets over the 4x2 cell, in (0, 1).
+#:
+#: A Bayer spread down the rows — neighbouring rows get thresholds far apart
+#: in the sequence, which breaks an edge into a stipple instead of stepping it
+#: a row at a time. Fixed relative to the cell rather than to the grid, so a
+#: shape crossing the screen does not drag a crawling pattern behind it.
+#:
+#: **The two columns are deliberately identical.** Mirroring a cell swaps its
+#: subcell columns, so a matrix whose columns differ makes a symmetric field
+#: come out asymmetric — measured, on the first version of this table, as
+#: Kaleidoscope losing the bilateral symmetry that is the whole point of a
+#: mirror tube. Equal columns are the only form that survives the mirror, and
+#: the loss is nothing: a cell is four rows tall and two columns wide, so the
+#: staircase worth breaking up is the vertical one.
+OCTANT_DITHER = np.array(
+    [[0.125, 0.125], [0.625, 0.625], [0.375, 0.375], [0.875, 0.875]],
+    dtype=np.float32,
+)
+
+
+def pack_octant_smooth(
+    field: np.ndarray, lo: np.ndarray | None = None, hi: np.ndarray | None = None
+) -> np.ndarray:
+    """``(4h, 2w)`` field -> ``(h, w)`` codepoints, with the edge antialiased.
+
+    :func:`pack_octant` decides each subcell against the cell's midpoint, so a
+    boundary crossing a cell lands on a subcell edge — the staircase that
+    reads as "pixelated" however fine the grid is, and one that no amount of
+    resolution removes because it is a quantisation of *position*, not of
+    detail.
+
+    Here each subcell is judged against its own ordered threshold instead, so
+    how many subcells light follows how far through the cell the boundary
+    actually sits. The step becomes a stipple whose density tracks coverage,
+    and the eye integrates that back into a boundary falling *between*
+    subcells.
+
+    This only does something when the field has a gradient across the cell. A
+    field that is flat on each side of its edges — one drawn from a table of
+    flat values, say — hands every cell exactly two values, and for two values
+    every threshold in (0, 1) picks the same subcells. Interpolate the source
+    first or this is an expensive no-op; Kaleidoscope Ultra's docstring has
+    the measured version of that mistake.
+    """
+    sub, h, w = _octant_subcells(field)
+    if lo is None or hi is None:
+        lo, hi = cell_hilo(field)
+    span = hi - lo
+
+    mask = np.zeros((h, w), dtype=np.int32)
+    k = 0
+    for r in range(4):
+        for c in range(2):
+            on = sub[k] >= lo + span * OCTANT_DITHER[r, c]
+            np.add(mask, np.where(on, OCTANT_BITS[r, c], 0), out=mask)
+            k += 1
+    return OCTANT_LUT_WIDE[mask]
+
+
 def pack_octant(field: np.ndarray, lo: np.ndarray, hi: np.ndarray) -> np.ndarray:
     """``(4h, 2w)`` float field -> ``(h, w)`` octant codepoints.
 
@@ -615,6 +674,7 @@ __all__ = [
     "BRAILLE_BASE",
     "OCTANT_BASE",
     "OCTANT_BITS",
+    "OCTANT_DITHER",
     "OCTANT_LUT",
     "OCTANT_LUT_WIDE",
     "RAMP_STEPS",
@@ -634,6 +694,7 @@ __all__ = [
     "pack_braille",
     "pack_octant",
     "pack_octant_bits",
+    "pack_octant_smooth",
     "row_gradient",
 ]
 

@@ -283,6 +283,66 @@ def test_kaleidoscope_fine_draws_octants():
     assert len(np.unique(codes)) > 8, "the glyph is barely varying; is the mask stuck?"
 
 
+def test_the_dither_matrix_survives_a_mirror():
+    """Its two columns must be identical, or symmetric modes come out crooked.
+
+    Mirroring a cell swaps its subcell columns. The first version of this
+    table was a 2-D Bayer spread with different values left and right, and
+    Kaleidoscope Ultra lost the bilateral symmetry that is the entire point of
+    a mirror tube — caught by the symmetry test below, not by eye.
+    """
+    from spektr.render import OCTANT_DITHER
+
+    assert np.array_equal(OCTANT_DITHER[:, 0], OCTANT_DITHER[:, 1])
+    assert ((OCTANT_DITHER > 0.0) & (OCTANT_DITHER < 1.0)).all()
+    assert len(set(OCTANT_DITHER[:, 0].tolist())) == 4, "rows must not share a threshold"
+
+
+def test_smoothing_is_a_no_op_on_a_two_valued_cell():
+    """The trap worth pinning: a flat-sided edge cannot be antialiased.
+
+    A cell holding exactly two values — one per side of a boundary between
+    two flat regions — lights the same subcells for *every* threshold in
+    (0, 1), so the ordered version cannot differ from the midpoint one. A mode
+    with flat fragments has to interpolate its source before this does
+    anything, and finding that out by measurement cost real time.
+    """
+    from spektr.render import pack_octant_smooth
+
+    field = np.array([[0.2, 0.9], [0.2, 0.9], [0.2, 0.9], [0.2, 0.9]], dtype=np.float32)
+    field = np.tile(field, (3, 3))
+    lo, hi = cell_hilo(field)
+    assert np.array_equal(pack_octant_smooth(field), pack_octant(field, lo, hi))
+
+
+def test_smoothing_tracks_coverage_on_a_gradient():
+    """Across a ramp, how many subcells light follows how far the edge is in."""
+    from spektr.render import OCTANT_LUT, pack_octant_smooth
+
+    inverse = {int(c): i for i, c in enumerate(OCTANT_LUT)}
+    centres = np.array([0.125, 0.375, 0.625, 0.875], dtype=np.float32)[:, None]
+
+    counts = []
+    # Kept inside the cell: a boundary swept past either end leaves the cell
+    # uniform, and a uniform cell has no range to threshold against, so it
+    # comes out solid — see test_flat_cell_is_solid. A mode that draws against
+    # empty space must use pack_octant_bits for exactly that reason.
+    for edge in np.linspace(0.05, 0.95, 10, dtype=np.float32):
+        # a soft boundary crossing the cell at `edge`, the shape interpolating
+        # a source produces — dark below it, bright above, blending across
+        rows = np.clip((centres - edge) / np.float32(0.4) + 0.5, 0.0, 1.0)
+        field = np.tile(np.repeat(rows, 2, axis=1), (2, 2))
+        code = int(pack_octant_smooth(field)[0, 0])
+        counts.append(bin(inverse[code]).count("1"))
+
+    assert counts == sorted(counts, reverse=True), (
+        f"coverage is not monotonic as the boundary sweeps through: {counts}"
+    )
+    assert max(counts) - min(counts) >= 3, (
+        f"the mask barely moved as the boundary swept the whole cell: {counts}"
+    )
+
+
 def _mode(name):
     import spektr.modes as M
 
@@ -338,6 +398,36 @@ def test_valentine_itself_still_draws_braille():
         codes, _ = _mode("Valentine").fn(_ctx(120, 30, f, st, pal))
     braille = (codes >= BRAILLE_BASE) & (codes <= BRAILLE_BASE + 0xFF)
     assert bool((braille | (codes == SPACE)).all())
+
+
+def test_kaleidoscope_ultra_is_smoother_and_still_symmetric():
+    """Ultra must place more boundaries inside cells, and stay a mirror tube."""
+    from spektr.palette import BUILTIN, Palette
+
+    pal = Palette(BUILTIN["gruvbox"])
+    fine, ultra = _mode("Kaleidoscope Fine"), _mode("Kaleidoscope Ultra")
+    sa: dict = {}
+    sb: dict = {}
+    for f in range(10):
+        codes_f, cidx_f, bidx_f = fine.fn(_ctx(160, 40, f, sa, pal))
+        codes_u, cidx_u, bidx_u = ultra.fn(_ctx(160, 40, f, sb, pal))
+
+    def partial(codes):
+        return float(((codes != SPACE) & (codes != 0x2588)).mean())
+
+    assert partial(codes_u) > partial(codes_f), (
+        "Ultra draws no more partial cells than Fine — the smoothing is a no-op"
+    )
+
+    inverse = {int(c): i for i, c in enumerate(OCTANT_LUT)}
+    mask = np.array([[inverse[int(c)] for c in row] for row in codes_u], dtype=np.int32)
+    swapped = np.zeros_like(mask)
+    for r in range(4):
+        left, right = 1 << (2 * r), 1 << (2 * r + 1)
+        swapped |= np.where(mask & left, right, 0) | np.where(mask & right, left, 0)
+    assert np.array_equal(swapped[:, ::-1], mask), "Ultra is not bilaterally symmetric"
+    assert np.array_equal(cidx_u, cidx_u[:, ::-1])
+    assert np.array_equal(bidx_u, bidx_u[:, ::-1])
 
 
 def test_kaleidoscope_fine_stays_mirror_symmetric():

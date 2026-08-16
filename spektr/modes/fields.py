@@ -962,16 +962,30 @@ _KAL_FRAG_TONE = _KAL_RNG.uniform(0.30, 1.0, _KAL_MAX_CELLS).astype(np.float32)
 _KAL_FRAG_PHASE = _KAL_RNG.uniform(0.0, 2.0 * math.pi, _KAL_MAX_CELLS).astype(np.float32)
 
 
-def _kaleido(ctx: Ctx, octant: bool):
+def _kaleido(ctx: Ctx, cells: str):
     """A mirrored tube looking at a chamber of broken glass.
 
-    Two modes share this body. ``octant=False`` is the original: every cell is
-    a two-colour ``▀`` pair, one colour per half-row. ``octant=True`` keeps the
-    identical geometry, glass and colour grading and changes only the cell
-    reduction, drawing each cell as one of 256 Unicode 16 octant glyphs — 2x4
-    subcells instead of 1x2, at the same two colours and very nearly the same
-    strip cost, because the extra detail rides in the glyph rather than in the
-    colour runs the strip builder charges for. See :func:`render.pack_octant`.
+    Three modes share this body, differing only in how a text cell is filled.
+    The geometry, the glass, the spin and the colour grading are identical in
+    all three.
+
+    ``"half"`` is the original: every cell is a two-colour ``▀`` pair, one
+    colour per half-row — 1x2 subcells.
+
+    ``"octant"`` draws each cell as one of 256 Unicode 16 octant glyphs — 2x4
+    subcells at the same two colours and very nearly the same strip cost,
+    because the extra detail rides in the glyph rather than in the colour runs
+    the strip builder charges for.
+
+    ``"ultra"`` is the same 2x4 grid, antialiased. Resolution is not what is
+    left to win — 2x4 is the ceiling text offers, and the next step up is a
+    raster protocol that costs 115 ms a frame to encode. What is left is the
+    *threshold*: a subcell is on or off, so a fragment seam lands as a hard
+    step whatever the resolution. :func:`render.octant_smooth` scatters that
+    step into a stipple with an ordered threshold and colours each side of it
+    by the mean of the subcells actually on that side, rather than by the
+    cell's two extremes. The seams stop being staircases and the glass stops
+    reading as pixels.
 
     Three parts, and they map one-to-one onto the physical object: a chamber
     of coloured fragments (:func:`_kal_glass`), a ring of mirrors around it,
@@ -1046,7 +1060,7 @@ def _kaleido(ctx: Ctx, octant: bool):
     if dr < 8 or dc < 8:
         return empty(ctx.w, ctx.h)
 
-    from ..render import cell_hilo, frac, pack_octant
+    from ..render import cell_hilo, frac, pack_octant, pack_octant_smooth
 
     # Geometry on the |x|-folded grid: dot (x, y) and its L/R mirror
     # (dc - 1 - x, y) compute identical turn and radius, so any function of
@@ -1191,15 +1205,52 @@ def _kaleido(ctx: Ctx, octant: bool):
     # halves the frac, the index arithmetic and the gather without averaging,
     # and the rendered frame stays symmetric by construction.
     src = frac(folded + np.float32(spin / (2 * math.pi)))
-    iu = (src * np.float32(_KAL_NU)).astype(np.int32) & (_KAL_NU - 1)
-    b_half = table.ravel()[ir * _KAL_NU + iu]
+    fu = src * np.float32(_KAL_NU)
+    iu = fu.astype(np.int32) & (_KAL_NU - 1)
+    flat = table.ravel()
+    if cells == "ultra":
+        # Read the source *between* table entries rather than snapping to one.
+        #
+        # This is what antialiasing a mirror tube actually needs, and it is not
+        # what the dither in octant_smooth can do on its own: the glass is flat
+        # within a fragment, so a cell straddling a seam holds exactly two
+        # values, and for a two-valued cell every threshold in (0, 1) picks the
+        # same subcells. The staircase is geometric — the boundary can only
+        # land on a subcell edge — so no thresholding rule moves it.
+        #
+        # Interpolating along the angular axis puts a real gradient across the
+        # seam, one table cell wide, and the ordered threshold downstream turns
+        # that gradient into a coverage-proportional stipple. The boundary then
+        # reads as falling *between* subcells. Angular only: seams in a mirror
+        # tube run radially, so that is the axis they cross.
+        t_u = fu - np.floor(fu)
+        base = ir * _KAL_NU
+        b_half = flat[base + iu]
+        edge = b_half * (np.float32(1.0) - t_u) + flat[
+            base + ((iu + 1) & (_KAL_NU - 1))
+        ] * t_u
+        soft = ctx.scratch("kaleido_soft", lambda: np.empty((dr, dc), dtype=np.float32))
+        soft[:, :hw] = edge
+        soft[:, hw:] = edge[:, ::-1]
+    else:
+        b_half = flat[ir * _KAL_NU + iu]
+        soft = None
     bright[:, :hw] = b_half
     bright[:, hw:] = b_half[:, ::-1]
 
     # Two colour samples per text cell. Both reductions run on the same
     # |x|-symmetric dot grid, so both are symmetric bit for bit — every sample
     # equals its mirror.
-    if octant:
+    oct_codes = None
+    if cells == "ultra":
+        # Shape from the interpolated field, colour from the flat one. The
+        # gradient exists to place the boundary between subcells; letting it
+        # near the palette as well is what doubled the colour runs — 6,284 to
+        # 12,102 at 400x100, and the frame with them.
+        lo_cell, hi_cell = cell_hilo(bright)
+        oct_codes = pack_octant_smooth(soft)
+        top, bot = hi_cell, lo_cell
+    elif cells == "octant":
         # The cell's range rather than two half-row maxima: the foreground
         # takes the brightest subcell and the background the darkest, and the
         # glyph says which of the eight subcells are on which side of the
@@ -1278,7 +1329,9 @@ def _kaleido(ctx: Ctx, octant: bool):
     # there — stretch, quantise, level — is monotonic, so grading first would
     # produce the same eight bits after more arithmetic and one more chance to
     # lose them to a flat quantisation bucket.
-    if octant:
+    if oct_codes is not None:
+        codes = oct_codes
+    elif cells == "octant":
         codes = pack_octant(bright, lo_cell, hi_cell)
     else:
         codes = np.full((ctx.h, ctx.w), _UPPER_HALF, dtype=np.int32)
@@ -1288,7 +1341,7 @@ def _kaleido(ctx: Ctx, octant: bool):
 @mode("Kaleidoscope", group="fields",
       blurb="a mirrored tube of stained glass — the wedge count follows the spectrum, beats shake the chamber")
 def kaleidoscope(ctx: Ctx):
-    return _kaleido(ctx, octant=False)
+    return _kaleido(ctx, "half")
 
 
 @mode("Kaleidoscope Fine", after="Kaleidoscope", group="fields",
@@ -1302,7 +1355,24 @@ def kaleidoscope_fine(ctx: Ctx):
     when the original mode stops working. Everything else is identical, so the
     two can be compared directly by switching between them.
     """
-    return _kaleido(ctx, octant=True)
+    return _kaleido(ctx, "octant")
+
+
+@mode("Kaleidoscope Ultra", after="Kaleidoscope Fine", group="fields",
+      blurb="the tube with its seams antialiased — the smoothest a terminal gets")
+def kaleidoscope_ultra(ctx: Ctx):
+    """Kaleidoscope with the staircase taken out of its seams.
+
+    The same 2x4 subcells as Fine — that is the ceiling text offers, and the
+    only thing past it is a raster protocol that costs 115 ms a frame to
+    encode at this size. What Ultra removes is not a resolution limit but a
+    quantisation one: a hard on/off threshold puts every fragment boundary on
+    a subcell edge, and a boundary snapped to a grid is what the eye reads as
+    pixels. An ordered threshold scatters it and a coverage-weighted colour
+    softens it, so the seam falls *between* subcells as far as the eye is
+    concerned.
+    """
+    return _kaleido(ctx, "ultra")
 
 
 @mode("Dither", group="fields", blurb="the spectrum printed as a newspaper halftone, in one-bit crosshatch")
@@ -2079,3 +2149,4 @@ def locket(ctx: Ctx):
     np.multiply(cm, np.float32(1.0 / 10.0), out=cm)
     idx = ctx.ramp(cm)
     return codes, idx
+
