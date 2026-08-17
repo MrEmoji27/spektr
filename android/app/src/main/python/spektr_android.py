@@ -37,6 +37,7 @@ import numpy as np
 from spektr.analysis import Analyser, N_BANDS
 from spektr.capture import RingBuffer
 from spektr.modes import MODES, Ctx
+from spektr.motion import Peaks, Spring, Trace
 from spektr.palette import BUILTIN, Palette
 
 #: Wire format version. Kotlin refuses a buffer it does not recognise rather
@@ -72,6 +73,26 @@ class Engine:
         self._mode_name: str | None = None
         self._modes = {m.name: m for m in MODES}
         self._palette = Palette(BUILTIN["gruvbox"])
+
+        # The motion layer, which is not in the analyser and not in the modes.
+        #
+        # ``Analyser`` publishes a raw ``Frame``: bands as measured, and no
+        # peaks, energy or smoothed trace at all. Everything that makes the
+        # picture move like the desktop app lives between the two, in the
+        # widget — and a port that skips it does not fail, it just renders a
+        # jittery version of the same modes and looks subtly wrong forever.
+        # Same objects and same constants as ``AudioVisualizer.__init__``.
+        self._bars = bars
+        self._spring = Spring(bars)
+        self._peaks = Peaks(bars)
+        self._stereo_l = Spring(bars)
+        self._stereo_r = Spring(bars)
+        self._trace = Trace(tau=0.028)
+        #: Last analyser sequence the trace was stepped for. The wave is only
+        #: advanced on a genuinely new block, exactly as the widget does it.
+        self._last_seq = -1
+        #: Onset counter as of the previous rendered frame, for ``ctx.onsets``.
+        self._last_onset_seq = 0
 
     # ── audio in ──
     def push(self, pcm: bytes, channels: int = 2) -> None:
@@ -124,24 +145,55 @@ class Engine:
             self._mode_name = name
 
         now = time.monotonic()
-        f = self._analyser.snapshot()
+        dt = min(0.2, max(1e-4, now - self._last_t))
+        self._last_t = now
+        self._frame += 1
+
+        # ``Analyser.frame`` is a property holding the newest published Frame —
+        # there is no ``snapshot()``, and the Frame carries neither ``peaks``
+        # nor ``energy`` nor ``bars``. This block is the widget's ``_tick``,
+        # which is where those actually come from.
+        f = self._analyser.frame
+        if len(f.bands) != len(self._spring.x):
+            # The band count is settable at runtime, so the springs follow the
+            # analyser rather than a constant fixed at construction.
+            n = len(f.bands)
+            self._bars = n
+            self._spring = Spring(n)
+            self._peaks = Peaks(n)
+            self._stereo_l = Spring(n)
+            self._stereo_r = Spring(n)
+
+        self._spring.step(f.bands, dt)
+        self._peaks.step(self._spring.x, dt)
+        self._stereo_l.step(f.bands_l, dt)
+        self._stereo_r.step(f.bands_r, dt)
+        if f.seq != self._last_seq:
+            self._trace.step(f.wave, dt)
+            self._last_seq = f.seq
+
+        # Differenced once here, not in every mode that wants beats. Clamped at
+        # zero because a restarted analyser counts from nothing again, and a
+        # negative delta is not a burst of beats played backwards.
+        onsets = max(0, f.onset_seq - self._last_onset_seq)
+        self._last_onset_seq = f.onset_seq
+
         ctx = Ctx(
             w=w, h=h,
-            bands=f.bands, peaks=f.peaks,
-            bands_l=f.bands_l, bands_r=f.bands_r,
-            wave=f.wave, stereo=f.stereo,
+            bands=self._spring.x, peaks=self._peaks.value,
+            bands_l=self._stereo_l.x, bands_r=self._stereo_r.x,
+            wave=self._trace.value if self._trace.value is not None else f.wave,
+            stereo=f.stereo,
             frame=self._frame,
             t=now - self._t0,
-            dt=max(now - self._last_t, 1e-4),
-            energy=f.energy, silent=f.silent,
+            dt=dt,
+            energy=float(self._spring.x.mean()), silent=f.silent,
             palette=self._palette, state=self._state,
-            bars=f.bars,
-            onset_seq=f.onset_seq, onsets=f.onsets,
+            bars=self._bars,
+            onset_seq=f.onset_seq, onsets=onsets,
             onset_strength=f.onset_strength,
             flux=f.flux, tempo_bpm=f.tempo_bpm, beat_phase=f.beat_phase,
         )
-        self._last_t = now
-        self._frame += 1
 
         out = mode.fn(ctx)
         codes, cidx = out[0], out[1]
