@@ -87,6 +87,13 @@ object EngineManager {
         }
     }
 
+    /** RECORD_AUDIO refused: say so on screen rather than drawing silence. */
+    fun reportNoAudioPermission() {
+        error = "Microphone permission refused.\n" +
+            "AudioPlaybackCapture needs RECORD_AUDIO as well as the screen-capture " +
+            "consent — without it there is nothing to draw."
+    }
+
     fun setGrid(w: Int, h: Int) {
         gridW = w
         gridH = h

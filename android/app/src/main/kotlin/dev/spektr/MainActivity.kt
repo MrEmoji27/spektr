@@ -47,7 +47,36 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private val audioPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        // Not optional, unlike the notification one: denied, AudioRecord
+        // cannot be built at all, so opening the consent dialog would ask for
+        // a screen we are never going to read.
+        if (granted) askNotificationsThenConsent() else EngineManager.reportNoAudioPermission()
+    }
+
+    /**
+     * RECORD_AUDIO first, then notifications, then the projection consent.
+     *
+     * The audio permission is easy to leave out — the projection token is what
+     * everyone associates with capture, and it genuinely is all you need to
+     * capture the *screen*. Audio is different: an AudioRecord built from an
+     * AudioPlaybackCaptureConfiguration is still an audio record, and the
+     * platform refuses it without RECORD_AUDIO. Leave it out and the app
+     * starts, draws, and shows a picture of silence with nothing to say why.
+     */
     private fun onStartCaptureClicked() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            return
+        }
+        askNotificationsThenConsent()
+    }
+
+    private fun askNotificationsThenConsent() {
         if (Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
             != PackageManager.PERMISSION_GRANTED

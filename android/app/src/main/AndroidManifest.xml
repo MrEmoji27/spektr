@@ -7,6 +7,14 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- AudioPlaybackCapture needs this as well as the projection token, and
+         the distinction is easy to miss: the token alone is enough to capture
+         the *screen*, but an AudioRecord built from an
+         AudioPlaybackCaptureConfiguration is still an audio record and the
+         platform refuses it without RECORD_AUDIO. Dangerous permission, so it
+         is requested at runtime too — see MainActivity.onStartCaptureClicked. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
     <application
         android:name=".SpektrApp"
         android:allowBackup="false"
