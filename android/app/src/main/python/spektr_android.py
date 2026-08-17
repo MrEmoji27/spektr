@@ -72,7 +72,8 @@ class Engine:
         self._state: dict = {}
         self._mode_name: str | None = None
         self._modes = {m.name: m for m in MODES}
-        self._palette = Palette(BUILTIN["gruvbox"])
+        self._theme = BUILTIN["gruvbox"]
+        self._palette = Palette(self._theme)
 
         # The motion layer, which is not in the analyser and not in the modes.
         #
@@ -115,8 +116,32 @@ class Engine:
         spec = BUILTIN.get(name)
         if spec is None:
             return False
+        self._theme = spec
         self._palette = Palette(spec)
         return True
+
+    # ── colours, as flat lists ──
+    #
+    # Kotlin used to reach across and read ``BUILTIN[name]`` and
+    # ``Palette.hexes`` itself. It cannot: Chaquopy's ``PyObject.get`` is
+    # *attribute* access, so ``BUILTIN.get("gruvbox")`` asked a dict for an
+    # attribute named gruvbox, got null, and the ``!!`` after it threw a
+    # NullPointerException before the first frame — which is exactly what the
+    # tablet showed. Subscripting a dict from Kotlin needs an explicit
+    # ``__getitem__`` call, and code that has to know that to be correct is
+    # code that belongs on this side of the boundary.
+    #
+    # Both return plain lists of ``#rrggbb`` strings. Not dicts: reading a dict
+    # from Kotlin lands on the same attribute-versus-item trap. A list crosses
+    # as a list and is unambiguous.
+
+    def ramp_hexes(self) -> list[str]:
+        """The ramp, in index order — what a cell's colour index selects."""
+        return list(self._palette.hexes)
+
+    def chrome_hexes(self) -> list[str]:
+        """``[background, foreground]`` for the app's own chrome."""
+        return [self._theme.bg, self._theme.fg]
 
     def mode_names(self) -> list[str]:
         return [m.name for m in MODES]

@@ -27,11 +27,22 @@ spektr_android = pytest.importorskip("spektr_android")
 RATE = 48000
 
 
-def _pcm(seconds: float = 4096 / RATE) -> bytes:
-    """Interleaved 16-bit stereo, the shape AudioRecord hands over."""
+def _tone(seconds: float = 4096 / RATE) -> np.ndarray:
     t = np.arange(int(RATE * seconds), dtype=np.float32) / RATE
-    sig = 0.4 * np.sin(2 * np.pi * 220 * t) + 0.3 * np.sin(2 * np.pi * 3000 * t)
-    return (np.stack([sig, sig], axis=1).ravel() * 32767).astype("<i2").tobytes()
+    return (0.4 * np.sin(2 * np.pi * 220 * t) + 0.3 * np.sin(2 * np.pi * 3000 * t)).astype(np.float32)
+
+
+def _pcm(seconds: float = 4096 / RATE) -> bytes:
+    """Interleaved float32 stereo — what ENCODING_PCM_FLOAT hands over.
+
+    This said 16-bit and packed ``<i2`` for its first version, which is not
+    what ``push`` reads. Nothing failed: ``frombuffer`` reinterpreted the same
+    bytes as float32 and the modes drew whatever that happened to be. A format
+    mismatch that renders is worse than one that raises, so
+    ``test_pushed_audio_lands_in_the_ring_unchanged`` now pins the dtype.
+    """
+    sig = _tone(seconds)
+    return np.stack([sig, sig], axis=1).ravel().astype("<f4").tobytes()
 
 
 @pytest.fixture
@@ -196,3 +207,81 @@ def test_the_vendored_engine_matches_the_one_the_desktop_runs():
     assert not missing, f"not shipped in the APK: {missing}  (run sync-python.ps1)"
     assert not extra, f"in the APK but not in spektr/: {extra}  (run sync-python.ps1)"
     assert not differs, f"vendored copy is stale: {differs}  (run sync-python.ps1)"
+
+
+def test_pushed_audio_lands_in_the_ring_unchanged(engine):
+    """Pins the sample format, which nothing else did.
+
+    ``push`` reads float32 because that is what ``ENCODING_PCM_FLOAT`` gives.
+    Hand it 16-bit and nothing raises — ``frombuffer`` reinterprets the same
+    bytes and the modes cheerfully draw noise. A wrong format that renders is
+    worse than one that crashes, so the bytes are checked rather than the fact
+    that a frame came out.
+    """
+    sig = _tone()
+    engine.push(np.stack([sig, sig], axis=1).ravel().astype("<f4").tobytes())
+
+    got = engine._ring.latest(sig.size)
+    assert got is not None, "nothing reached the ring"
+    assert got.shape == (sig.size, 2), f"ring holds {got.shape}, expected stereo pairs"
+    assert np.allclose(got[:, 0], sig, atol=1e-6), "samples came back changed — wrong dtype?"
+
+
+def test_mono_is_widened_to_two_columns(engine):
+    sig = _tone()
+    engine.push(sig.astype("<f4").tobytes(), channels=1)
+    got = engine._ring.latest(sig.size)
+    assert got is not None and got.shape == (sig.size, 2)
+    assert np.allclose(got[:, 0], got[:, 1]), "mono should land identically in both columns"
+
+
+def test_the_colours_kotlin_asks_for_come_back_as_flat_lists(engine):
+    """The contract that replaced Kotlin reaching into Python's objects.
+
+    ``PyEngine.create`` used to read ``BUILTIN[name]`` and ``Palette.hexes``
+    across the boundary. Chaquopy's ``PyObject.get`` is *attribute* access, so
+    asking a dict for ``.get("gruvbox")`` returned null and the ``!!`` after it
+    threw a NullPointerException before the first frame — which is exactly what
+    the tablet showed. These are plain lists reached by method call, which is
+    unambiguous from Kotlin.
+    """
+    from spektr.palette import RAMP_STEPS
+
+    ramp = engine.ramp_hexes()
+    assert isinstance(ramp, list) and len(ramp) == RAMP_STEPS
+    assert all(isinstance(h, str) for h in ramp), "Kotlin calls toString on each"
+
+    chrome = engine.chrome_hexes()
+    assert isinstance(chrome, list) and len(chrome) == 2
+
+    for hexes, what in ((ramp, "ramp"), (chrome, "chrome")):
+        for h in hexes:
+            assert h.startswith("#") and len(h) == 7, f"{what}: {h!r} is not #rrggbb"
+            int(h[1:], 16)          # Kotlin parses these as three hex pairs
+
+
+def test_set_theme_reports_success_and_actually_changes_the_ramp(engine):
+    """Kotlin now throws when this returns False, so the bool has to be right."""
+    before = engine.ramp_hexes()
+    assert engine.set_theme("nord") is True
+    after = engine.ramp_hexes()
+    assert after != before, "set_theme said yes and changed nothing"
+    assert engine.chrome_hexes() != [], "chrome went missing with the theme"
+    assert engine.set_theme("no such theme") is False
+    assert engine.ramp_hexes() == after, "a rejected theme still moved the ramp"
+
+
+def test_every_builtin_theme_survives_the_kotlin_path(engine):
+    """One bad theme would be a crash on a picker that does not exist yet."""
+    bad = []
+    for name in engine.theme_names():
+        assert engine.set_theme(name) is True, name
+        try:
+            ramp, chrome = engine.ramp_hexes(), engine.chrome_hexes()
+            assert len(ramp) == 64 and len(chrome) == 2
+            for h in ramp + chrome:
+                assert h.startswith("#") and len(h) == 7
+                int(h[1:], 16)
+        except Exception as exc:                     # noqa: BLE001 — reporting
+            bad.append(f"{name}: {type(exc).__name__}: {exc}")
+    assert not bad, "themes Kotlin could not colour:\n" + "\n".join(bad)

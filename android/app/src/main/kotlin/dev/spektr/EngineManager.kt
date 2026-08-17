@@ -63,7 +63,25 @@ object EngineManager {
                 PyEngine.create(context)
             } catch (t: Throwable) {
                 Log.e("spektr", "engine failed to start", t)
-                error = t.message ?: t.toString()
+                // The class name and the first frame inside our own code, not
+                // bare `t.message` — which is null for a NullPointerException,
+                // so the screen read "java.lang.NullPointerException" and said
+                // nothing whatever about where. With no device on adb, this
+                // string is the entire diagnosis, so it has to carry its own
+                // location.
+                val here = t.stackTrace.firstOrNull { it.className.startsWith("dev.spektr") }
+                error = buildString {
+                    append(t::class.java.name)
+                    t.message?.let { append(": ").append(it) }
+                    here?.let {
+                        append("\n  at ").append(it.methodName)
+                        append(" (").append(it.fileName).append(":").append(it.lineNumber).append(")")
+                    }
+                    t.cause?.let {
+                        append("\n  caused by ").append(it::class.java.simpleName)
+                        it.message?.let { m -> append(": ").append(m) }
+                    }
+                }
                 null
             }
         }

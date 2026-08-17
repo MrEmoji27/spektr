@@ -42,18 +42,34 @@ class PyEngine private constructor(
 
         fun create(context: Context): PyEngine {
             val py = Python.getInstance()
-            val engine = py.getModule("spektr_android")!!.callAttr("Engine")
+            val engine = py.getModule("spektr_android").callAttr("Engine")
 
             val themeName = EngineManager.THEME
-            val paletteMod = py.getModule("spektr.palette")!!
-            val theme = paletteMod.get("BUILTIN")!!.get(themeName)!!
-            val palette = paletteMod.callAttr("Palette", theme)
-            @Suppress("UNCHECKED_CAST")
-            val hexes = palette.get("hexes")!!.toJava(List::class.java) as List<String>
-            val ramp = IntArray(hexes.size) { hexToArgb(hexes[it]) }
-            val bg = hexToArgb(theme.get("bg")!!.toString())
-            val fg = hexToArgb(theme.get("fg")!!.toString())
-            Log.i(TAG, "engine up: $themeName, ${hexes.size} ramp steps, bg $bg")
+            if (!engine.callAttr("set_theme", themeName).toBoolean()) {
+                throw IllegalStateException("no theme named '$themeName'")
+            }
+
+            // Colours arrive as flat lists of "#rrggbb" from method calls.
+            //
+            // The previous version reached into Python's own objects from here
+            // — `BUILTIN.get(name)`, `palette.get("hexes")` — and that is what
+            // put the NullPointerException on the tablet. Chaquopy's
+            // `PyObject.get` is *attribute* access, so asking a dict for
+            // `.get("gruvbox")` returns null, and the `!!` after it threw
+            // before a single frame was drawn.
+            //
+            // `callAttr` is unambiguous — always a method call — so this whole
+            // class of mistake is gone rather than fixed once.
+            val rampHex = engine.callAttr("ramp_hexes").asList()
+            require(rampHex.isNotEmpty()) { "the palette handed back an empty ramp" }
+            val ramp = IntArray(rampHex.size) { hexToArgb(rampHex[it].toString()) }
+
+            val chrome = engine.callAttr("chrome_hexes").asList()
+            require(chrome.size == 2) { "chrome_hexes gave ${chrome.size} colours, expected 2" }
+            val bg = hexToArgb(chrome[0].toString())
+            val fg = hexToArgb(chrome[1].toString())
+
+            Log.i(TAG, "engine up: $themeName, ${ramp.size} ramp steps, bg $bg")
             return PyEngine(engine, EngineManager.MODE, themeName, ramp, bg, fg)
         }
 
