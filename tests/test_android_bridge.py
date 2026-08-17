@@ -177,8 +177,13 @@ def test_the_vendored_engine_matches_the_one_the_desktop_runs():
     assert shipped.is_dir(), "the vendored engine is missing from the APK tree"
 
     def files(base):
+        # Compared as lines, not as bytes. The two copies were committed from a
+        # Windows checkout at different times and git stored different line
+        # endings for them, so a byte comparison passes on Windows — where
+        # checkout normalises both — and fails on a Linux runner, which is
+        # exactly how this first went red. What has to match is the code.
         return {
-            p.relative_to(base).as_posix(): p.read_bytes()
+            p.relative_to(base).as_posix(): p.read_text(encoding="utf-8").splitlines()
             for p in sorted(base.rglob("*.py"))
             if "__pycache__" not in p.parts
         }

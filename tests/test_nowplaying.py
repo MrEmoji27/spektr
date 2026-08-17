@@ -222,14 +222,47 @@ def _fake_dbus_next(players: list[tuple[str, str | None, str | None, str]]):
     return {"dbus_next": dbus_next_mod, "dbus_next.aio": aio_mod}
 
 
+class _BlockImport:
+    """A meta-path finder that makes one package genuinely unimportable.
+
+    Dropping a module from ``sys.modules`` does not make it missing — the next
+    ``import`` simply loads it again from site-packages. This does.
+    """
+
+    def __init__(self, package: str) -> None:
+        self.package = package
+
+    def find_spec(self, name, path=None, target=None):
+        if name == self.package or name.startswith(self.package + "."):
+            raise ImportError(f"{name} is blocked for this test")
+        return None
+
+
 def check_linux_no_package() -> list[str]:
-    saved = _install({})
-    for name in ("dbus_next", "dbus_next.aio"):
-        sys.modules.pop(name, None)
+    """``_linux`` returns None when dbus_next is not installed.
+
+    This used to simulate "not installed" by popping the module out of
+    ``sys.modules``, which does nothing at all: the import inside ``_linux``
+    reloads it from site-packages. So the check only meant something on a
+    machine where dbus_next happened to be absent — and on one where it is
+    present it did the opposite of its name, importing the real package,
+    reaching for a session bus, and raising ``InvalidAddressError``.
+
+    Not hypothetical. ``dbus-next`` is a declared dependency on Linux (see
+    pyproject), so it is installed on every Linux CI runner, and this only
+    stayed green while the runner image happened to export ``DISPLAY``. When
+    that changed the job went red — and the fallback it was supposed to be
+    guarding had never actually been exercised.
+    """
+    blocker = _BlockImport("dbus_next")
+    stale = [n for n in list(sys.modules) if n == "dbus_next" or n.startswith("dbus_next.")]
+    saved = {n: sys.modules.pop(n) for n in stale}
+    sys.meta_path.insert(0, blocker)
     try:
         track = asyncio.run(nowplaying._linux())
     finally:
-        _restore(saved)
+        sys.meta_path.remove(blocker)
+        sys.modules.update(saved)
     return [] if track is None else [f"expected None without dbus_next installed, got {track}"]
 
 
