@@ -994,8 +994,8 @@ usage: spektr [options]
   --no-plugins       skip loading plugins this run
   --list-modes       print visualiser names and exit
   --list-themes      print theme names and exit
-  --glyph-test       can this terminal draw the Fine/Ultra modes? and exit
-  --cells quadrant   draw the Fine/Ultra modes with block-element quadrants
+  --glyph-test       can this terminal draw the (o) subcell modes? and exit
+  --cells quadrant   draw the subcell modes as (q) — block elements only
                      instead of Unicode 16 octants — half the resolution,
                      works in every font. Saved, so set it once.
   --version          print version and exit

@@ -144,7 +144,9 @@ so what the music changes is what the object is doing, not just how bright
 the picture is.
 
 A fifty-second entry, **None**, is registered as the off switch — it draws nothing.
-That is why the test output counts 52 modes against the fifty-one listed here.
+That is why the test output counts 52 against the fifty-one listed here — and 64
+in total, because the twelve subcell variants below are registered whether or not
+the setting that offers them is on.
 
 ### Subcell variants: `(o)` and `(q)`
 
@@ -156,12 +158,12 @@ its boundary, which is the difference between a curve and a staircase.
 They are **off by default**. Open Settings (`c`) and turn on **subcell modes** to
 put them in the `v` picker:
 
-| | |
+| variant | what the extra resolution buys |
 |---|---|
-| Scope, ECG, Sonar, Radial | the trace becomes a continuous stroke instead of separated dots |
-| Plasma, Chladni, Chladni Flow, Chladni Extreme | nodal lines and gradients resolve between cells |
-| Kaleidoscope, Kaleidoscope Ultra | mirror seams stop landing on cell edges |
-| Valentine, Maelstrom | the rim of the shape gets four times the vertical resolution |
+| **Scope (o)**, **ECG (o)**, **Sonar (o)**, **Radial (o)** | the trace becomes a continuous stroke instead of separated dots |
+| **Plasma (o)**, **Chladni (o)**, **Chladni Flow (o)**, **Chladni Extreme (o)** | nodal lines and gradients resolve between cells rather than on them |
+| **Kaleidoscope (o)**, **Kaleidoscope Ultra (o)** | mirror seams stop landing on cell edges |
+| **Valentine (o)**, **Maelstrom (o)** | the rim of the shape gets four times the vertical resolution |
 
 The suffix says **which glyphs the mode is drawing with**, and that is a
 setting rather than a property of the mode — the **subcell shape** row in
@@ -341,9 +343,14 @@ spektr --theme gruvbox  start with a given theme
 spektr --fps 30         cap the frame rate (15-240)
 spektr --fps unlimited  run at the detected display rate (experimental)
 spektr --mic            allow the microphone as an automatic source
-spektr --list-modes     print visualiser names
+spektr --list-modes     print visualiser names (including the opt-in ones)
 spektr --list-themes    print theme names
+spektr --glyph-test     can this terminal draw the (o) subcell modes?
+spektr --cells quadrant draw the subcell modes as (q) — block elements only
+spektr --monitor        run the capture path headlessly, when --diagnose looks fine
+                        but the picture will not move
 spektr --no-plugins     skip loading plugins this run
+spektr --version        print version
 
 spektr plugins list     what's installed, and whether it's trusted
 spektr plugins trust    review and approve a plugin

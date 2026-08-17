@@ -263,3 +263,53 @@ def test_the_two_live_app_rows_fail_only_for_the_expected_reason(monkeypatch, ke
         assert type(exc).__name__ in {"RuntimeError", "ScreenStackError"}, (
             f"{key} now fails with {type(exc).__name__}: {exc}"
         )
+
+
+# ── the README has to agree with the app ─────────────────────────────────────
+
+README = Path(__file__).resolve().parent.parent / "README.md"
+
+
+def test_the_readme_names_every_opt_in_mode():
+    """Twelve variants documented, and named, so searching for one finds it."""
+    import spektr.modes as M
+
+    text = README.read_text(encoding="utf-8")
+    missing = [m.name for m in M.MODES if m.hidden and m.name not in text]
+    assert not missing, f"opt-in modes the README never names: {missing}"
+
+
+def test_the_readme_lists_every_mode_the_picker_offers():
+    """The table is the only place the default set is written down."""
+    import spektr.modes as M
+
+    text = README.read_text(encoding="utf-8")
+    missing = [
+        m.name for m in M.listed()
+        if m.name != "None" and f"**{m.name}**" not in text
+    ]
+    assert not missing, f"modes offered but undocumented: {missing}"
+
+
+def test_the_readme_documents_every_command_line_flag():
+    """The usage text is printed by --help; the README is read first."""
+    from spektr.app import _USAGE
+
+    text = README.read_text(encoding="utf-8")
+    flags = {
+        line.strip().split()[0]
+        for line in _USAGE.splitlines()
+        if line.strip().startswith("--")
+    }
+    missing = sorted(f for f in flags if f not in text)
+    assert not missing, f"flags in --help but not in the README: {missing}"
+
+
+def test_no_stale_fine_naming_survives_anywhere_user_visible():
+    """The rename is only done if nothing still calls them "Fine"."""
+    from spektr.app import _USAGE
+    import spektr.modes as M
+
+    assert "Fine" not in README.read_text(encoding="utf-8")
+    assert "Fine" not in _USAGE
+    assert not [m for m in M.MODES if m.name.endswith(" Fine")]
