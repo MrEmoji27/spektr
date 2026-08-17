@@ -323,6 +323,227 @@ def rain(ctx: Ctx):
     return codes, cidx
 
 
+#: More flakes than Rain has drops, because snow reads as snow by being
+#: *many*: a dozen streaks is rain, a dozen dots is dirt on the lens.
+_SNOW_CAP = 520
+
+#: Three depths, drawn as three sizes. The near plane is a five-dot crystal,
+#: the middle a three-dot one, the far plane a single dot — and each falls and
+#: sways more slowly than the one in front of it. That parallax is the whole
+#: reason a field of dots reads as weather with depth rather than as static.
+#: The middle plane is a diagonal pair rather than a horizontal one on
+#: purpose. A three-dot bar reads as a dash, and a dash is rain's vocabulary —
+#: a field of them looks like drizzle blown sideways. A diagonal has no strong
+#: axis, so it reads as a speck of ice catching the light.
+_SNOW_ARMS = (
+    ((0, 0),),                                            # far: one dot
+    ((0, 0), (-1, 1)),                                    # mid: a diagonal pair
+    ((0, 0), (0, -1), (0, 1), (-1, 0), (1, 0)),           # near: a crystal
+)
+
+
+def _snow_state() -> dict:
+    rng = np.random.default_rng(29)
+    return {
+        # y < 0 is the free-slot sentinel, same convention as Rain, Bubbles,
+        # Fireworks and Ember.
+        "y": np.full(_SNOW_CAP, -1.0),
+        "x": np.zeros(_SNOW_CAP),
+        "spd": np.zeros(_SNOW_CAP),
+        "amp": np.zeros(_SNOW_CAP),
+        "freq": np.zeros(_SNOW_CAP),
+        "phase": np.zeros(_SNOW_CAP),
+        "plane": np.zeros(_SNOW_CAP, dtype=np.int32),
+        #: Per-flake brightness. Three depth planes give three brightnesses,
+        #: which is three ramp steps out of sixty-four — the theme's gradient
+        #: may as well not exist. A continuous spread per flake, plus a slow
+        #: twinkle, is what makes a snowfield show the palette rather than
+        #: three flat tones of it.
+        "shine": np.zeros(_SNOW_CAP),
+        "acc": 0.0,
+        "wind": 0.0,
+        "settle": None,          # per-column depth of lying snow, sized on first use
+        "rng": rng,
+    }
+
+
+@mode("Snow", group="lofi", after="Rain",
+      blurb="snowfall in three planes, thickening and gusting with the track")
+def snow(ctx: Ctx):
+    """Rain's sibling, and deliberately its opposite in how it moves.
+
+    A raindrop is a streak: it falls fast enough that its own motion is the
+    shape, which is why Rain draws each drop as a short trail and lets the
+    bottom edge splash. A snowflake has almost no terminal velocity and a
+    great deal of air resistance, so it does the opposite — it hangs, sways,
+    and arrives. Drawing snow as short vertical streaks would just be quiet
+    rain, so the geometry here is a crystal that drifts sideways on its own
+    sine and is pushed around by a shared wind.
+
+    Three depth planes rather than one field of identical dots. The near
+    plane is a five-dot crystal falling fastest and swaying widest, the far
+    plane a single dim dot barely moving. Without that parallax a screen of
+    white dots reads as noise; with it, it reads as depth — and it costs one
+    extra array and a lookup, because all three planes are drawn from the
+    same arrays with a different stamp.
+
+    No bokeh behind the glass. Rain's blurred circles are lights seen through
+    a wet window, which is a thing that happens indoors looking out; snow is
+    the weather itself, and putting glass in front of it makes it someone
+    else's snow.
+
+    What the music does: the mid band sets how thickly it falls, energy sets
+    how fast, and ``ctx.drive`` gusts the wind sideways — percussive material
+    blows the fall about rather than merely thickening it. Snow also lies:
+    flakes that reach the bottom add to a per-column depth that melts back
+    slowly, so a loud passage leaves drifts along the floor for a while after
+    it has passed.
+    """
+    dr, dc = ctx.dot_rows, ctx.dot_cols
+    if dr < 16 or dc < 20:
+        return empty(ctx.w, ctx.h)
+
+    st = ctx.scratch("snow", _snow_state)
+    rng = st["rng"]
+    if st["settle"] is None or st["settle"].size != dc:
+        st["settle"] = np.zeros(dc, dtype=np.float64)
+
+    mid = ctx.range(0.15, 0.7)
+    # Slower than Rain's 0.55 + energy*2 — snow that falls at rain speed is
+    # rain drawn with the wrong glyph — but not *much* slower. The first
+    # version took between eleven and thirty-seven seconds to cross the
+    # screen, so the bottom half was permanently empty and the picture read
+    # as a few specks near the ceiling rather than as weather. The near plane
+    # now crosses in about three seconds and the far plane in about eight,
+    # which is the parallax doing the work instead of the clock.
+    fall = 0.7 + ctx.energy * 1.1
+
+    # One wind for the whole field, easing toward a target rather than
+    # jumping: a gust that arrives in a single frame teleports every flake
+    # sideways, which reads as a glitch and not as weather.
+    gust = math.sin(ctx.t * 0.23) * 0.35 + (ctx.drive - 0.5) * 1.6
+    st["wind"] += (gust - st["wind"]) * min(1.0, ctx.dt * 1.8)
+
+    # Flakes per second, scaled down on a small window.
+    #
+    # The rate is otherwise absolute, and a flake's lifetime is roughly
+    # constant — fall speed scales with the height it has to cross — so the
+    # same rate fills a small terminal to the same *count* as a large one and
+    # therefore to a far greater density. Measured at 40x12 it lit 48% of the
+    # cells, which is not snowfall, it is static.
+    #
+    # Only ever scaled down. Growing it on a large terminal would be the
+    # honest completion of the idea, but it costs a scatter per flake per
+    # frame and the tablet is already the slowest thing that runs this.
+    area = min(1.0, max(0.3, (dr * dc) / (120.0 * 240.0)))
+    st["acc"] += (22.0 + mid * 90.0) * area * ctx.dt
+    want = int(st["acc"])
+    if want:
+        st["acc"] -= want
+        free = np.flatnonzero(st["y"] < 0.0)[:want]
+        if free.size:
+            k = free.size
+            plane = rng.integers(0, 3, k)
+            st["plane"][free] = plane
+            # Depth sets everything: nearer is faster, wider-swaying, bigger.
+            near = plane.astype(np.float64) / 2.0
+            st["y"][free] = rng.uniform(0.0, dr * 0.04, k)
+            st["x"][free] = rng.uniform(0.0, dc - 1.0, k)
+            st["spd"][free] = (0.15 + near * 0.22) * dr * rng.uniform(0.8, 1.25, k)
+            # ``amp`` is a sideways *speed*, in dot columns per second, not a
+            # displacement — see where it is integrated.
+            st["amp"][free] = (0.02 + near * 0.03) * dc * rng.uniform(0.6, 1.4, k)
+            st["freq"][free] = rng.uniform(0.5, 1.4, k)
+            st["phase"][free] = rng.uniform(0.0, 2 * math.pi, k)
+            st["shine"][free] = rng.uniform(0.45, 1.0, k)
+
+    alive = st["y"] >= 0.0
+    if alive.any():
+        st["y"][alive] += st["spd"][alive] * fall * ctx.dt
+        # The sway is a velocity, not a position: setting x from a sine of t
+        # would snap every flake back to its spawn column whenever the wind
+        # moved it, because the two would be fighting over the same value.
+        # ``amp`` is already that velocity's amplitude in columns per second,
+        # so the cosine is the only thing multiplying it — an earlier version
+        # multiplied by ``freq`` as well, which is the derivative arriving
+        # twice and made the fastest-swaying flakes skate sideways.
+        sway = np.cos(ctx.t * st["freq"][alive] + st["phase"][alive])
+        near = st["plane"][alive].astype(np.float64) / 2.0
+        st["x"][alive] += (
+            sway * st["amp"][alive] + st["wind"] * (0.3 + near) * dc * 0.02
+        ) * ctx.dt
+        # Wrap rather than kill: a flake blown off the right edge is still
+        # falling, and respawning it at the top would thin the field exactly
+        # when the wind is most interesting.
+        st["x"][alive] %= dc
+
+    landed = alive & (st["y"] > dr - 1)
+    if landed.any():
+        cols = np.clip(np.rint(st["x"][landed]).astype(np.int32), 0, dc - 1)
+        # Weight by depth so near flakes build the drift faster than far ones.
+        np.add.at(st["settle"], cols, 0.35 + st["plane"][landed] * 0.25)
+        st["y"][landed] = -1.0
+
+    # Melt, and slump sideways so drifts round off instead of standing as
+    # single-column towers.
+    st["settle"] *= max(0.0, 1.0 - ctx.dt * 0.22)
+    if dc > 2:
+        st["settle"][1:-1] += (
+            st["settle"][:-2] + st["settle"][2:] - 2.0 * st["settle"][1:-1]
+        ) * 0.12
+
+    field = np.zeros((dr, dc), dtype=np.float64)
+
+    live = np.flatnonzero(st["y"] >= 0.0)
+    if live.size:
+        py = np.rint(st["y"][live]).astype(np.int32)
+        px = np.rint(st["x"][live]).astype(np.int32)
+        plane = st["plane"][live]
+        # A flake catches the light as it turns. Slow, and never all the way
+        # off, so it reads as tumbling rather than as flickering.
+        twinkle = 0.82 + 0.18 * np.sin(ctx.t * st["freq"][live] * 1.7 + st["phase"][live])
+        # The planes are spread nearly the whole ramp rather than sitting in
+        # the middle third of it. A snowfield is one of the few pictures where
+        # almost every cell is at its own depth, so the depth *is* the
+        # gradient — bunching the three planes close together threw that away
+        # and left the theme showing as a single colour with texture.
+        centre = np.clip(
+            (0.22 + plane * 0.34) * st["shine"][live] * twinkle * (0.70 + ctx.energy * 0.9),
+            0.06, 1.0,
+        )
+        for p in range(3):
+            sel = plane == p
+            if not sel.any():
+                continue
+            vals = centre[sel]
+            for oy, ox in _SNOW_ARMS[p]:
+                yy = py[sel] + oy
+                xx = (px[sel] + ox) % dc
+                ok = (yy >= 0) & (yy < dr)
+                if ok.any():
+                    # Arms dimmer than the centre, so a crystal reads as a
+                    # crystal rather than as a solid block of five dots.
+                    arm = 1.0 if (oy == 0 and ox == 0) else 0.55
+                    np.maximum.at(field, (yy[ok], xx[ok]), vals[ok] * arm)
+
+    lying = st["settle"]
+    if lying.max() > 0.02:
+        depth = np.clip(lying, 0.0, 6.0)
+        rows = np.arange(dr, dtype=np.float64)[:, None]
+        # Lying snow is measured up from the bottom row, and shaded by how
+        # deep the drift is — a flat fill would be one more ramp step doing
+        # the work of a gradient.
+        mask = rows >= (dr - depth[None, :])
+        shade = (0.22 + 0.5 * np.clip(depth / 5.0, 0.0, 1.0))[None, :]
+        np.maximum(field, mask * shade, out=field)
+
+    np.clip(field, 0.0, 1.0, out=field)
+    dots = field > 0.05
+    codes = pack_braille(dots)
+    cidx = ctx.ramp(cell_max(field))
+    return codes, cidx
+
+
 _EMBER_CAP = 150
 
 

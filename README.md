@@ -135,9 +135,9 @@ Listed in the order the picker cycles them.
 | **Dune** | sand piles up by band, avalanching past a threshold | **Vinyl** | a record whose grooves light up as a radial spectrum |
 | **Murmuration** | a flock wheeling and scattering with the beat | **Rain** | rain on the glass, falling harder when it's loud |
 | **Retro** | sunset grid, with the spectrum as the horizon | **Ember** | a coal bed burning by band, sparks off the hot spots |
-| **Auroras** | a light ribbon whose lower rim rides the spectrum | | |
+| **Auroras** | a light ribbon whose lower rim rides the spectrum | **Snow** | snowfall in three planes, gusting and lying in drifts |
 
-Vinyl, Rain and Ember are the lofi group — a
+Vinyl, Rain, Snow and Ember are the lofi group — a
 shared *look* (warm objects, soft edges, nothing strobing) rather than a
 shared reactivity budget. Each one maps real band data into its geometry,
 so what the music changes is what the object is doing, not just how bright
