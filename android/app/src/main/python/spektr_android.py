@@ -44,6 +44,40 @@ from spektr.palette import BUILTIN, Palette
 #: than reading a stale layout as though it were current.
 WIRE_VERSION = 1
 
+#: How much of the ramp's low end OLED mode fades into true black, as a
+#: fraction of the ramp. An OLED pixel showing #000000 is *off* — that is the
+#: whole point of the panel — and a theme whose darkest step is #1d2021 lights
+#: every cell of a mostly-dark picture to show something indistinguishable
+#: from black at arm's length. Fading the bottom third rather than only index
+#: 0 is what makes the difference visible: the dim end is where nearly all the
+#: area of a dark mode lives.
+_OLED_KNEE = 0.35
+
+
+def _to_linear(c: np.ndarray) -> np.ndarray:
+    return np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+
+
+def _to_srgb(c: np.ndarray) -> np.ndarray:
+    return np.where(c <= 0.0031308, c * 12.92, 1.055 * np.clip(c, 0, None) ** (1 / 2.4) - 0.055)
+
+
+def _blacken(hexes: list[str]) -> list[str]:
+    """Fade the bottom of a ramp to true black, in linear light.
+
+    Linear rather than on the hex values: scaling sRGB bytes darkens the
+    midtones far more than it darkens the bottom, so the ramp loses its shape
+    instead of just losing its floor. The hues are untouched — this only takes
+    light away, and only where the ramp was nearly black already.
+    """
+    rgb = np.array([[int(h[i:i + 2], 16) for i in (1, 3, 5)] for h in hexes], dtype=np.float64)
+    lin = _to_linear(rgb / 255.0)
+    n = len(hexes)
+    fade = np.clip(np.arange(n) / max(1.0, n * _OLED_KNEE), 0.0, 1.0)
+    out = np.clip(np.rint(_to_srgb(lin * fade[:, None]) * 255.0), 0, 255).astype(int)
+    return [f"#{r:02x}{g:02x}{b:02x}" for r, g, b in out]
+
+
 #: ``codes`` are Unicode codepoints and run past U+FFFF (braille sits at
 #: U+2800, the block elements lower), so the grid is int32 rather than a
 #: narrower type. ``cidx``/``bidx`` are ramp indices bounded by 64 (asserted in
@@ -75,6 +109,16 @@ class Engine:
         self._theme = BUILTIN["gruvbox"]
         self._palette = Palette(self._theme)
         self._swatches: list[list[str]] | None = None
+        self._oled = False
+
+        # Debug counters; see stats().
+        self._stats_t0 = self._t0
+        self._stats_frames = 0
+        self._stats_dt = 0.0
+        self._stats_energy = 0.0
+        self._stats_onsets = 0
+        self._stats_band_peak = 0.0
+        self._stats_sample_peak = 0.0
 
         # The motion layer, which is not in the analyser and not in the modes.
         #
@@ -96,6 +140,39 @@ class Engine:
         #: Onset counter as of the previous rendered frame, for ``ctx.onsets``.
         self._last_onset_seq = 0
 
+    # ── what the engine is actually seeing ──
+    def stats(self) -> list[float]:
+        """Counters since the last call, for the debug build's log line.
+
+        A port has no window onto itself. Everything about how a mode looks —
+        whether it launches too often, whether it moves too fast — is decided
+        by numbers that live on this side of the boundary, and on a tablet the
+        only way to read them is a log line. So they are collected here rather
+        than inferred from the picture.
+
+        ``[fps, mean dt ms, mean energy, onsets/s, peak band, peak sample]``.
+        Resets on read, so each line describes its own interval.
+        """
+        now = time.monotonic()
+        span = max(1e-6, now - self._stats_t0)
+        n = max(1, self._stats_frames)
+        out = [
+            self._stats_frames / span,
+            self._stats_dt / n * 1000.0,
+            self._stats_energy / n,
+            self._stats_onsets / span,
+            self._stats_band_peak,
+            self._stats_sample_peak,
+        ]
+        self._stats_t0 = now
+        self._stats_frames = 0
+        self._stats_dt = 0.0
+        self._stats_energy = 0.0
+        self._stats_onsets = 0
+        self._stats_band_peak = 0.0
+        self._stats_sample_peak = 0.0
+        return [float(v) for v in out]
+
     # ── audio in ──
     def push(self, pcm: bytes, channels: int = 2) -> None:
         """Hand one AudioRecord buffer to the analyser.
@@ -110,6 +187,10 @@ class Engine:
             buf = np.repeat(buf[:, None], 2, axis=1)
         else:
             buf = buf.reshape(-1, 2)
+        if buf.size:
+            self._stats_sample_peak = max(
+                self._stats_sample_peak, float(np.abs(buf).max())
+            )
         self._ring.push(buf)
 
     # ── configuration ──
@@ -144,7 +225,19 @@ class Engine:
         """``[background, foreground]`` for the app's own chrome."""
         return [self._theme.bg, self._theme.fg]
 
-    def use_theme(self, name: str) -> list[str] | None:
+    def colours(self) -> list[str]:
+        """``[bg, fg, *ramp]`` as Kotlin should draw them, OLED applied.
+
+        The modes never see this. They emit ramp *indices* and Kotlin turns
+        those into colours, so the whole OLED treatment is a remap of this one
+        list — no mode changes, no engine fork, and nothing for the desktop to
+        carry.
+        """
+        if not self._oled:
+            return [self._theme.bg, self._theme.fg, *self._palette.hexes]
+        return ["#000000", self._theme.fg, *_blacken(list(self._palette.hexes))]
+
+    def use_theme(self, name: str, oled: bool = False) -> list[str] | None:
         """Switch theme and hand back every colour Kotlin needs, in one call.
 
         ``[bg, fg, *ramp]``, or ``None`` for a theme that does not exist —
@@ -153,10 +246,34 @@ class Engine:
         three can half-fail: a theme that switches and then fails to yield its
         ramp leaves Kotlin drawing the old colours over the new background,
         and nothing in the app would say so.
+
+        ``oled`` rides along for the same reason: the toggle and the theme
+        both decide the same list, and applying them in two calls means one
+        frame drawn with the new theme and the old floor.
         """
         if not self.set_theme(name):
             return None
-        return [self._theme.bg, self._theme.fg, *self._palette.hexes]
+        self._oled = bool(oled)
+        return self.colours()
+
+    def set_oled(self, on: bool) -> list[str]:
+        """Toggle true black and return the colours that follow from it."""
+        self._oled = bool(on)
+        return self.colours()
+
+    def set_sensitivity(self, value: float) -> float:
+        """Manual trim on top of the analyser's autosens — desktop's ``[``/``]``.
+
+        Autosens normalises the bands to the loudest thing it has heard
+        recently, which is what stops a quiet track drawing a flat line. It
+        cannot know how *busy* you want the picture, and modes that trigger on
+        level rather than draw it — Fireworks launches at
+        ``0.35 + energy * 7`` per second — turn that preference into a rate.
+        Same range as the desktop's, so a value means the same on both.
+        """
+        v = max(0.15, min(8.0, float(value)))
+        self._analyser.sensitivity = v
+        return v
 
     def mode_names(self) -> list[str]:
         """The modes the picker offers — everything except the hidden ones.
@@ -255,6 +372,13 @@ class Engine:
         onsets = max(0, f.onset_seq - self._last_onset_seq)
         self._last_onset_seq = f.onset_seq
 
+        energy = float(self._spring.x.mean())
+        self._stats_frames += 1
+        self._stats_dt += dt
+        self._stats_energy += energy
+        self._stats_onsets += onsets
+        self._stats_band_peak = max(self._stats_band_peak, float(self._spring.x.max()))
+
         ctx = Ctx(
             w=w, h=h,
             bands=self._spring.x, peaks=self._peaks.value,
@@ -264,7 +388,7 @@ class Engine:
             frame=self._frame,
             t=now - self._t0,
             dt=dt,
-            energy=float(self._spring.x.mean()), silent=f.silent,
+            energy=energy, silent=f.silent,
             palette=self._palette, state=self._state,
             bars=self._bars,
             onset_seq=f.onset_seq, onsets=onsets,

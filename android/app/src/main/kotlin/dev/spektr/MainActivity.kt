@@ -49,6 +49,18 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // The home screen previews the selected mode, so frames are wanted
+    // whenever this window is up — and only then, unless capture is running.
+    override fun onResume() {
+        super.onResume()
+        EngineManager.setUiVisible(true)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        EngineManager.setUiVisible(false)
+    }
+
     private val audioPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->

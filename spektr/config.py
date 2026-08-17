@@ -71,11 +71,6 @@ class Settings:
     #: One of :data:`SHUFFLE_SCOPES`. Kept even while shuffle is off, so
     #: turning it back on resumes what you last chose.
     shuffle_scope: str = SHUFFLE_DEFAULT
-    #: Flipbook's selected reel and effect. Empty string means "unresolved,
-    #: pick the first one" — see asciiart.restore(), which never touches disk
-    #: itself, only records these names for the mode to resolve on first use.
-    ascii_reel: str = ""
-    ascii_fx: str = "warp"
     #: Which cell geometry the subcell modes draw with: ``"octant"`` (2x4
     #: subcells, Unicode 16) or ``"quadrant"`` (2x2, Block Elements only).
     #:
@@ -145,8 +140,6 @@ class Settings:
             self.shuffle = bool(raw)
         if self.shuffle_scope not in SHUFFLE_SCOPES:
             self.shuffle_scope = SHUFFLE_DEFAULT
-        self.ascii_reel = self.ascii_reel if isinstance(self.ascii_reel, str) else ""
-        self.ascii_fx = self.ascii_fx if self.ascii_fx in ("warp", "dissolve", "lit") else "warp"
         return self
 
 

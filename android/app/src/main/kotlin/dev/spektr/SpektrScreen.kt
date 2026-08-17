@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -21,6 +22,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -32,6 +35,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -49,9 +53,11 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.res.ResourcesCompat
+import kotlin.math.ln
+import kotlin.math.pow
 
-/** Which picker, if any, is open. */
-private enum class Sheet { None, Mode, Theme }
+/** Which sheet, if any, is open. */
+private enum class Sheet { None, Mode, Theme, Settings }
 
 /**
  * The v2 screen: loading, idle (pick and start), or the grid with chrome.
@@ -106,6 +112,15 @@ private fun ErrorView(message: String) {
 private fun IdleView(engine: PyEngine, palette: Palette, onStart: () -> Unit) {
     var sheet by remember { mutableStateOf(Sheet.None) }
 
+    // The mode draws here too, before any consent has been given.
+    //
+    // The engine renders whether or not audio is arriving — silence is just
+    // quiet input — so the home screen can show the mode you are about to
+    // pick instead of describing it by name. Dimmed, because it is a preview
+    // behind the controls and not the thing itself.
+    Box(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize().alpha(0.35f)) { GridView(palette) }
+    }
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(20.dp)) {
             Text(
@@ -116,12 +131,24 @@ private fun IdleView(engine: PyEngine, palette: Palette, onStart: () -> Unit) {
             )
             // Choosable before capture starts, not only after: picking a mode
             // should not cost a trip through the OS consent dialog.
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Chip("‹", palette) { EngineManager.cycleMode(-1) }
                 Chip(EngineManager.mode, palette) { sheet = Sheet.Mode }
+                Chip("›", palette) { EngineManager.cycleMode(1) }
                 Chip(EngineManager.theme, palette) { sheet = Sheet.Theme }
+                Chip("⚙", palette) { sheet = Sheet.Settings }
             }
             Chip("start capture", palette, emphasis = true, onClick = onStart)
         }
+        Text(
+            "made by zemo",
+            color = Color(palette.fg).copy(alpha = 0.55f),
+            fontSize = 12.sp,
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 20.dp),
+        )
     }
     Pickers(engine, palette, sheet) { sheet = it }
 }
@@ -148,8 +175,11 @@ private fun CaptureView(engine: PyEngine, palette: Palette, onStop: () -> Unit) 
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                Chip("‹", palette) { EngineManager.cycleMode(-1) }
                 Chip(EngineManager.mode, palette) { sheet = Sheet.Mode }
+                Chip("›", palette) { EngineManager.cycleMode(1) }
                 Chip(EngineManager.theme, palette) { sheet = Sheet.Theme }
+                Chip("⚙", palette) { sheet = Sheet.Settings }
                 Chip("stop", palette, onClick = onStop)
             }
         }
@@ -205,8 +235,73 @@ private fun Pickers(engine: PyEngine, palette: Palette, sheet: Sheet, onSheet: (
                 EngineManager.selectTheme(it)
                 onSheet(Sheet.None)
             }
+            Sheet.Settings -> SettingsList(palette)
             Sheet.None -> Unit
         }
+    }
+}
+
+@Composable
+private fun SettingsList(palette: Palette) {
+    val fg = Color(palette.fg)
+    Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
+        SettingRow(
+            "true black",
+            "Paints the background #000000 and fades the ramp's floor into it. " +
+                "An OLED pixel showing black is switched off, so on this panel that is " +
+                "not a darker theme — it is less screen.",
+            palette,
+        ) {
+            Chip(if (EngineManager.oled) "on" else "off", palette, emphasis = EngineManager.oled) {
+                EngineManager.useOled(!EngineManager.oled)
+            }
+        }
+
+        // Log scale: the useful range is multiplicative — 0.5 and 2.0 are the
+        // same size of change in opposite directions — and a linear slider
+        // over 0.15..8 puts everything under 1.0 in the first eighth of it.
+        val t = remember(EngineManager.sensitivity) {
+            (ln(EngineManager.sensitivity / 0.15f) / ln(8f / 0.15f)).coerceIn(0f, 1f)
+        }
+        SettingRow(
+            "sensitivity  ×%.2f".format(EngineManager.sensitivity),
+            "Trim on top of the analyser's own auto-gain. Modes that trigger on level " +
+                "rather than draw it — Fireworks launches at a rate set by energy — get " +
+                "busier or calmer with this.",
+            palette,
+        ) {
+            Slider(
+                value = t,
+                onValueChange = { EngineManager.useSensitivity(0.15f * (8f / 0.15f).pow(it)) },
+                modifier = Modifier.width(280.dp),
+                colors = SliderDefaults.colors(
+                    thumbColor = fg,
+                    activeTrackColor = fg,
+                    inactiveTrackColor = fg.copy(alpha = 0.25f),
+                ),
+            )
+        }
+    }
+}
+
+@Composable
+private fun SettingRow(
+    title: String,
+    explanation: String,
+    palette: Palette,
+    control: @Composable () -> Unit,
+) {
+    val fg = Color(palette.fg)
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(20.dp),
+    ) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(title, color = fg, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Text(explanation, color = fg.copy(alpha = 0.65f), fontSize = 13.sp)
+        }
+        control()
     }
 }
 
@@ -297,23 +392,57 @@ private fun PickerRow(
 /** Measured cell geometry: how wide/tall one grid cell is at the chosen glyph size. */
 private data class CellMetrics(val w: Float, val h: Float, val fontSizeSp: Float)
 
-/**
- * Grid font plus a fallback for what it does not have.
- *
- * DejaVu Sans covers braille, the block elements and box drawing — which is
- * almost everything the modes emit. It does not cover halfwidth katakana, and
- * Matrix is built entirely out of it: shipping the picker without this makes
- * one of the fifty-two modes forty-five glyphs of tofu, which reads as a crash
- * rather than as a missing font.
- *
- * [has] caches the per-codepoint answer because `hasGlyph` takes a String and
- * the alternative is allocating one per cell per frame.
- */
-private class GridPaints(val main: android.graphics.Paint, val fallback: android.graphics.Paint) {
-    private val known = HashMap<Int, Boolean>(512)
+/** How to draw one codepoint: which Paint, the string, and the tracking that puts it on the grid. */
+private class Glyph(val text: String, val paint: android.graphics.Paint, val spacingEm: Float)
 
-    fun paintFor(code: Int): android.graphics.Paint =
-        if (known.getOrPut(code) { main.hasGlyph(String(Character.toChars(code))) }) main else fallback
+/**
+ * Grid font, a fallback for what it does not have, and one cell of tracking.
+ *
+ * Two separate problems, both invisible from the Python side.
+ *
+ * **Coverage.** DejaVu Sans has braille, the block elements and box drawing —
+ * nearly everything the modes emit — but not halfwidth katakana, and Matrix is
+ * built entirely out of it. A custom Typeface carries no system fallback, so
+ * those cells draw as tofu. Anything DejaVu lacks goes to a MONOSPACE Paint,
+ * which resolves through the platform chain and reaches Noto Sans CJK.
+ *
+ * **Advance.** This is what made a dozen modes look broken. The renderer
+ * measures one cell from U+2588 and draws a whole run as a single string —
+ * which only lands on the grid if every glyph advances by exactly one cell,
+ * and in DejaVu almost none of them do. Braille is 0.7324 em against the full
+ * block's 0.7690: every braille glyph in a run lands 4.8% of a cell to the
+ * left of the one before it, so a hundred-cell row finishes five cells adrift
+ * and the picture shears. Every braille mode was affected — Locket, Tunnel,
+ * Dither Storm, Gonio, Valentine — and the block-element modes were not, which
+ * is why Kaleidoscope looked perfect in v1 and hid the bug.
+ *
+ * The fix is tracking, not scaling: `letterSpacing` pads each glyph's advance
+ * out to exactly one cell without touching its shape, and Minikin splits that
+ * padding either side, so the glyph also ends up centred in its box. One
+ * drawText per run still, and the run stays on the grid however wide the
+ * glyph is.
+ */
+private class GridPaints(
+    private val main: android.graphics.Paint,
+    private val fallback: android.graphics.Paint,
+    private val cellW: Float,
+) {
+    /** Skia draws text from the baseline; the wire format positions cells by their top edge. */
+    val baseline: Float = -main.fontMetrics.top
+
+    // Cached per codepoint: hasGlyph and measureText both allocate a String,
+    // and the alternative is doing that per cell per frame.
+    private val known = HashMap<Int, Glyph>(512)
+
+    fun glyphFor(code: Int): Glyph = known.getOrPut(code) {
+        val text = String(Character.toChars(code))
+        val paint = if (main.hasGlyph(text)) main else fallback
+        // Measured with tracking off, or the measurement includes the tracking
+        // left over from whichever run was drawn last.
+        paint.letterSpacing = 0f
+        val advance = paint.measureText(text)
+        Glyph(text, paint, if (advance > 0f) (cellW - advance) / paint.textSize else 0f)
+    }
 }
 
 /**
@@ -374,7 +503,7 @@ fun GridView(palette: Palette) {
             typeface = android.graphics.Typeface.MONOSPACE
             textSize = size
         }
-        GridPaints(main, fallback)
+        GridPaints(main, fallback, cell?.w ?: size)
     }
 
     val gridW = if (cell != null) (viewW / cell.w).toInt().coerceIn(8, 400) else 0
@@ -408,9 +537,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawGrid(
     val ramp = palette.ramp
     val rampColor = { idx: Int -> if (idx < ramp.size) Color(ramp[idx]) else Color(0xFF000000) }
     val bgIndex = { i: Int -> if (frame.planes == 3) frame.bidx!![i].toInt() and 0xFF else -1 }
-    // Skia draws text from the baseline; the wire format positions cells by
-    // their top edge. `-top` is the ascent above the baseline for this font.
-    val baseline = -paints.main.fontMetrics.top
+    val baseline = paints.baseline
 
     // Background plane first, run-length over same-coloured cells per row.
     var i = 0
@@ -441,32 +568,22 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawGrid(
         val rowEnd = (row + 1) * cols
         while (j < rowEnd && frame.codes[j] == code && (frame.cidx[j].toInt() and 0xFF) == fg) j++
         if (code != 0) {
-            val paint = paints.paintFor(code)
+            val glyph = paints.glyphFor(code)
+            val paint = glyph.paint
             paint.color = ramp.getOrElse(fg) { 0xFF000000.toInt() }
+            // Tracking is set per run, not once: two codepoints sharing a
+            // Paint want different padding, and whichever ran last would
+            // otherwise decide it.
+            paint.letterSpacing = glyph.spacingEm
+            // The run is one glyph repeated. Built with appendCodePoint
+            // because some modes draw past U+FFFF and those need a surrogate
+            // pair, which Char.toChar would silently mangle.
+            val sb = StringBuilder((j - i) * 2)
+            for (k in 0 until (j - i)) sb.append(glyph.text)
             drawIntoCanvas { canvas ->
-                if (paint === paints.main) {
-                    // Codepoints may be astral (some modes draw past U+FFFF),
-                    // so the run is built with appendCodePoint, never
-                    // Char.toChar.
-                    val sb = StringBuilder((j - i) * 2)
-                    for (k in 0 until (j - i)) sb.appendCodePoint(code)
-                    canvas.nativeCanvas.drawText(
-                        sb.toString(), col * cell.w, row * cell.h + baseline, paint,
-                    )
-                } else {
-                    // A fallback glyph has its own advance width, which is not
-                    // this grid's cell width — drawn as one string the run
-                    // would drift out of its column. One cell at a time, each
-                    // centred in its own box, stays on the grid whatever font
-                    // the platform picked.
-                    val s = String(Character.toChars(code))
-                    val dx = (cell.w - paint.measureText(s)) * 0.5f
-                    for (k in 0 until (j - i)) {
-                        canvas.nativeCanvas.drawText(
-                            s, (col + k) * cell.w + dx, row * cell.h + baseline, paint,
-                        )
-                    }
-                }
+                canvas.nativeCanvas.drawText(
+                    sb.toString(), col * cell.w, row * cell.h + baseline, paint,
+                )
             }
         }
         i = j

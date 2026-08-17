@@ -107,7 +107,7 @@ Listed in the order the picker cycles them.
 | **Stereo** | per-band L/R meters, mirrored from centre | **Chladni** | vibrating-plate figure that snaps between real resonances |
 | **Matrix** | digital rain, falling faster when it's loud | **Helix** | two strands rotating, split by true L/R phase |
 | **Wave** | smoothed waveform | **Chladni Flow** | the same plate, melting continuously from one figure to the next |
-| **Spectro** | scrolling waterfall — frequency up, time across | **Flipbook** | your own ASCII animation, played by the music |
+| **Spectro** | scrolling waterfall — frequency up, time across | | |
 | **Scope** | trigger-synced oscilloscope — the trace holds still | **Maelstrom** | a real fluid sim, stirred by the music |
 | **Plasma** | solid colour field, warped by the spectrum | **Vinyl** | a record whose grooves light up as a radial spectrum |
 | **ECG** | scrolling trace, like a heart monitor | **Rain** | rain on the glass, falling harder when it's loud |
@@ -129,19 +129,6 @@ That is why the test output counts 50 modes against the forty-nine listed here.
 
 Still frames of a few of them, straight from the render path: **[docs/gallery.md](https://github.com/MrEmoji27/spektr/blob/main/docs/gallery.md)**.
 
-### Flipbook: playing your own ASCII art
-
-Drop a folder of numbered frames — `001.txt`, `002.txt`, … — into
-`~/.config/spektr/ascii/` (`%APPDATA%\spektr\ascii\` on Windows) and pick **Flipbook**
-from the `v` picker. A bare `.txt` at the top level works too, as a one-frame still.
-Two built-in reels ship so the mode works with nothing added.
-
-Open Settings (`c`) while Flipbook is active for two extra rows: which reel is
-playing, and which of three effects drives it — `warp` (a coherent field breathes
-the art), `dissolve` (it comes apart in quiet passages and snaps back on a hit),
-or `lit` (the geometry stays put; the spectrum lights it in horizontal bands).
-Playback speed and effect intensity both track the music. Press `r` to pick up
-edited or newly added frames without restarting.
 
 ## Themes
 

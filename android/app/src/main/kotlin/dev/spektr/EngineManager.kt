@@ -2,6 +2,7 @@ package dev.spektr
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.content.pm.ApplicationInfo
 import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -37,6 +38,8 @@ object EngineManager {
     private const val PREFS = "spektr"
     private const val KEY_MODE = "mode"
     private const val KEY_THEME = "theme"
+    private const val KEY_OLED = "oled"
+    private const val KEY_SENSITIVITY = "sensitivity"
 
     private val pyContext = newSingleThreadContext("spektr-py")
     private val scope = CoroutineScope(pyContext + SupervisorJob())
@@ -66,6 +69,18 @@ object EngineManager {
 
     /** Colours of the current theme; null until the engine has loaded one. */
     var palette: Palette? by mutableStateOf(null)
+        private set
+
+    /**
+     * True black. An OLED pixel showing #000000 is off, so this is the
+     * difference between a dark theme and a dark *screen* — and on this panel
+     * it is most of the picture.
+     */
+    var oled by mutableStateOf(false)
+        private set
+
+    /** Manual trim on the analyser, 0.15..8. Desktop's `[` and `]`. */
+    var sensitivity by mutableStateOf(1.0f)
         private set
 
     /** Every theme's colours, for the picker. Empty until [loadSwatches]. */
@@ -102,11 +117,15 @@ object EngineManager {
     private var prefs: SharedPreferences? = null
     private var renderJob: kotlinx.coroutines.Job? = null
 
+    /** Read from the manifest flag rather than BuildConfig, which this module does not generate. */
+    private var debuggable = false
+
     /** Builds the engine once per process. Interpreter + numpy import is ~0.5 s, so the UI shows a loading state meanwhile. */
     fun start(context: Context) {
         if (engine != null || error != null) return
         val store = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         prefs = store
+        debuggable = (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
         scope.launch {
             engine = try {
                 val e = PyEngine.create(context)
@@ -116,14 +135,16 @@ object EngineManager {
                 // name the engine no longer has would fail on the first render
                 // with nothing on screen to explain it.
                 mode = store.getString(KEY_MODE, null)?.takeIf { it in e.modes } ?: DEFAULT_MODE
+                oled = store.getBoolean(KEY_OLED, false)
+                sensitivity = e.setSensitivity(store.getFloat(KEY_SENSITIVITY, 1.0f))
                 val wanted = store.getString(KEY_THEME, null)?.takeIf { it in e.themes } ?: DEFAULT_THEME
-                val loaded = e.useTheme(wanted)
+                val loaded = e.useTheme(wanted, oled)
                 if (loaded != null) {
                     theme = wanted
                     palette = loaded
                 } else {
                     theme = DEFAULT_THEME
-                    palette = e.useTheme(DEFAULT_THEME)
+                    palette = e.useTheme(DEFAULT_THEME, oled)
                         ?: throw IllegalStateException("no theme named '$DEFAULT_THEME'")
                 }
                 e
@@ -189,7 +210,7 @@ object EngineManager {
         val previous = theme
         theme = name
         scope.launch {
-            val p = e.useTheme(name)
+            val p = e.useTheme(name, oled)
             if (p == null) {
                 Log.w("spektr", "theme '$name' was refused by the engine")
                 theme = previous
@@ -200,14 +221,68 @@ object EngineManager {
         }
     }
 
+    // `useOled`/`useSensitivity` for the same reason as `selectMode`: the
+    // properties already compile to JVM setters of those names.
+    fun useOled(on: Boolean) {
+        val e = engine ?: return
+        if (on == oled) return
+        oled = on
+        scope.launch {
+            e.setOled(on)?.let { palette = it }
+            prefs?.edit()?.putBoolean(KEY_OLED, on)?.apply()
+        }
+    }
+
+    fun useSensitivity(value: Float) {
+        val e = engine ?: return
+        scope.launch {
+            val settled = e.setSensitivity(value)
+            sensitivity = settled
+            prefs?.edit()?.putFloat(KEY_SENSITIVITY, settled)?.apply()
+        }
+    }
+
+    /** Step to the next or previous mode in the offered list, wrapping. */
+    fun cycleMode(step: Int) {
+        val e = engine ?: return
+        val at = e.modes.indexOf(mode)
+        if (at < 0) return
+        selectMode(e.modes[((at + step) % e.modes.size + e.modes.size) % e.modes.size])
+    }
+
     /** Called from the capture thread; the push hops to the Python thread. */
     fun push(pcm: ByteArray) {
         scope.launch { engine?.push(pcm) }
     }
 
+    /**
+     * Whether the app's own window is on screen.
+     *
+     * The home screen previews the selected mode, so frames are wanted while
+     * the UI is up and not only while capturing — but a loop that ran on
+     * whichever of those started first would also keep running after both had
+     * finished, burning a core in the background for a picture nobody can
+     * see. Both conditions are held here and the loop follows their union.
+     */
+    fun setUiVisible(visible: Boolean) {
+        uiVisible = visible
+        syncRendering()
+    }
+
+    private var uiVisible = false
+
+    fun syncRendering() {
+        if (uiVisible || CaptureController.state == CaptureController.State.Capturing) {
+            startRendering()
+        } else {
+            stopRendering()
+        }
+    }
+
     fun startRendering() {
         if (renderJob?.isActive == true) return
         renderJob = scope.launch {
+            var tick = 0
             while (isActive) {
                 val began = System.nanoTime()
                 val e = engine
@@ -216,6 +291,21 @@ object EngineManager {
                         e.render(mode, gridW, gridH)?.let { lastFrame = it }
                     } catch (t: Throwable) {
                         Log.w("spektr", "render failed", t)
+                    }
+                    // How the picture is behaving is decided by numbers that
+                    // never leave the Python side, and on a tablet logcat is
+                    // the only way to read them. Once a second, debug builds
+                    // only — a release build should not narrate itself.
+                    if (debuggable && ++tick >= 30) {
+                        tick = 0
+                        runCatching {
+                            val s = e.stats()
+                            if (s.size >= 6) Log.i(
+                                "spektr",
+                                "%s: %.1f fps  dt %.1f ms  energy %.3f  onsets %.1f/s  band %.2f  sample %.3f"
+                                    .format(mode, s[0], s[1], s[2], s[3], s[4], s[5])
+                            )
+                        }
                     }
                 }
                 // Sleep the remainder of the frame, not a whole frame on top of

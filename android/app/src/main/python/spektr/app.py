@@ -9,7 +9,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer, Header
 
-from . import __version__, asciiart, config, nowplaying
+from . import __version__, config, nowplaying
 from . import modes as mode_registry
 from . import palette as palette_mod
 from . import presets as presets_module
@@ -150,7 +150,6 @@ class Spektr(App):
         #: None means the platform default from palette.config_dir()
         self._config_dir = config_dir
         self.settings = settings or config.load(config_dir)
-        asciiart.restore(self.settings.ascii_reel, self.settings.ascii_fx)
         #: the picker/settings overlay currently mounted, if any
         self._overlay = None
         #: the shuffle timer, or None when shuffle is off
@@ -624,7 +623,6 @@ class Spektr(App):
         viz = self.viz
         themes = viz.reload_themes()
         viz.quarantine.clear()
-        asciiart.reload()
 
         loaded = reload_all(config_dir=self._config_dir)
         ok = sum(1 for p in loaded if p.loaded)
@@ -867,47 +865,7 @@ class Spektr(App):
             "shuffle_scope": s.shuffle_scope,
         }
 
-        # Flipbook-only rows: two more settings with no fixed choice list
-        # (which reel, which effect) that would just be dead weight on the
-        # other 40 modes, so they're appended only while it's the active one
-        # — action_settings rebuilds this list fresh every time the panel
-        # opens, so there's no stale-panel-shape problem to guard against.
-        if viz.mode_name == "Flipbook":
-            rows.append(
-                Setting(
-                    "ascii_reel",
-                    "ascii reel",
-                    [],
-                    live=self._ascii_reel_label,
-                    step=self._step_ascii_reel,
-                    note=f"drop .txt frames into {asciiart.ascii_dir(self._config_dir)}",
-                ),
-            )
-            rows.append(
-                Setting(
-                    "ascii_fx",
-                    "ascii fx",
-                    ("warp", "dissolve", "lit"),
-                    lambda v: v,
-                    self._set_ascii_fx,
-                    "warp breathes it, dissolve scatters it in quiet, lit just lights it",
-                ),
-            )
-            values["ascii_fx"] = s.ascii_fx
-
         self._open_overlay(SettingsPanel(rows, values), lambda *a: None)
-
-    def _ascii_reel_label(self) -> str:
-        r = asciiart.current(self._config_dir)
-        return f"{r.name} ({r.n_frames} frame{'s' if r.n_frames != 1 else ''})" if r else "none found"
-
-    def _step_ascii_reel(self, delta: int) -> None:
-        r = asciiart.step_reel(delta, self._config_dir)
-        self.settings.ascii_reel = r.name if r else ""
-
-    def _set_ascii_fx(self, fx: str) -> None:
-        asciiart.restore(self.settings.ascii_reel, fx)
-        self.settings.ascii_fx = fx
 
     def action_show_perf(self) -> None:
         self.notify(f"{self.viz.perf}\n{self.viz.level}", timeout=4)

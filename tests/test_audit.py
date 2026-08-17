@@ -50,8 +50,8 @@ SELF_ANIMATING = {
     # Chladni Flow and Chladni Extreme — but *not* plain Chladni, whose whole
     # point is that it holds a discrete figure and only snaps when the
     # spectrum moves),
-    # continuous orbital motion (Orbit), continuous scroll (Keys), a real
-    # playback clock (Flipbook), a persisted simulation that keeps evolving
+    # continuous orbital motion (Orbit), continuous scroll (Keys),
+    # a persisted simulation that keeps evolving
     # on its own (Maelstrom, and the octant variant of it), state that
     # accumulates over time by design
     # (Dune), and physics that keeps running after a trigger — a launched
@@ -67,7 +67,7 @@ SELF_ANIMATING = {
     # so the loop never looks paused (Rain), and embers keep drifting and
     # cooling on their own timers once spawned (Ember)
     "Readout", "Helix", "Chladni Flow", "Chladni Extreme", "Orbit", "Keys",
-    "Flipbook", "Maelstrom", "Maelstrom Fine", "Dune", "Fireworks", "Boot", "Murmuration",
+    "Maelstrom", "Maelstrom Fine", "Dune", "Fireworks", "Boot", "Murmuration",
     "Vinyl", "Rain", "Ember",
     # continuous spin (Kaleidoscope rotates its mirror array; the
     # scrollwork curls turn on their anchors even at a frozen spectrum)
@@ -249,9 +249,10 @@ def check_output_sanity() -> list[str]:
 
 #: Modes whose ramp usage is set by something other than the mode.
 #:
-#: ``Flipbook`` draws whatever ASCII art the user dropped in the folder, so the
-#: levels it emits are the art's, not the mode's. ``None`` is the off switch.
-_RAMP_EXEMPT = ("Flipbook", "None")
+#: ``None`` is the off switch, and the only one left — ``Flipbook`` was the
+#: other, and it drew whatever ASCII art was in the folder rather than
+#: anything of its own.
+_RAMP_EXEMPT = ("None",)
 
 
 def check_ramp_usage() -> list[str]:

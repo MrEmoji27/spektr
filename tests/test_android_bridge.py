@@ -310,6 +310,43 @@ def test_set_theme_reports_success_and_actually_changes_the_ramp(engine):
     assert engine.ramp_hexes() == after, "a rejected theme still moved the ramp"
 
 
+def test_stats_report_the_interval_they_cover_and_then_reset(engine):
+    """The debug build's only window onto how the engine is behaving."""
+    engine.push(_pcm())
+    for _ in range(5):
+        engine.render("Bars", 60, 20)
+
+    fps, dt_ms, energy, onsets, band, sample = engine.stats()
+    assert fps > 0, "frames were rendered but the rate came back zero"
+    assert dt_ms > 0
+    assert 0.0 <= energy <= 1.5
+    assert onsets >= 0.0
+    assert band >= 0.0
+    assert sample > 0.0, "audio was pushed but no sample peak was seen"
+
+    # Reset on read, or every line describes the whole session instead of its
+    # own second and a burst stops being visible.
+    assert engine.stats()[0] == 0.0
+
+
+def test_stats_see_the_level_of_what_was_pushed(engine):
+    """The number Fireworks' launch rate is a function of.
+
+    ``launch_acc += (0.35 + energy * 7.0) * dt``, so if a platform hands the
+    engine hotter audio than another the sky fills faster on the same music —
+    a difference no test of the mode itself would show.
+    """
+    quiet = spektr_android.Engine(samplerate=RATE)
+    loud = spektr_android.Engine(samplerate=RATE)
+    sig = _tone()
+    for e, mul in ((quiet, 0.05), (loud, 1.0)):
+        e.push(np.stack([sig * mul] * 2, axis=1).ravel().astype("<f4").tobytes())
+        for _ in range(5):
+            e.render("Bars", 60, 20)
+
+    assert loud.stats()[5] > quiet.stats()[5] * 10, "the sample peak did not follow the input"
+
+
 def test_use_theme_switches_and_yields_every_colour_in_one_call(engine):
     """One crossing, so a theme switch cannot half-apply.
 

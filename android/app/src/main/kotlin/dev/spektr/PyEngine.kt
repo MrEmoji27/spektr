@@ -83,11 +83,32 @@ class PyEngine private constructor(
             )
         }
 
+    /**
+     * `[fps, dt ms, energy, onsets/s, peak band, peak sample]` since the last
+     * call. Debug builds only — see [EngineManager.startRendering].
+     */
+    fun stats(): DoubleArray {
+        val row = engine.callAttr("stats").asList()
+        return DoubleArray(row.size) { row[it].toDouble() }
+    }
+
     /** Switches theme and returns its colours, or null if there is no such theme. */
-    fun useTheme(name: String): Palette? {
-        val hexes = engine.callAttr("use_theme", name)?.asList() ?: return null
+    fun useTheme(name: String, oled: Boolean): Palette? {
+        val hexes = engine.callAttr("use_theme", name, oled)?.asList() ?: return null
+        return toPalette(hexes, "theme '$name'")
+    }
+
+    /** Toggles true black and returns the colours that follow from it. */
+    fun setOled(on: Boolean): Palette? =
+        toPalette(engine.callAttr("set_oled", on).asList(), "oled")
+
+    /** Manual trim on the analyser, clamped by Python; returns what it settled on. */
+    fun setSensitivity(value: Float): Float =
+        engine.callAttr("set_sensitivity", value).toDouble().toFloat()
+
+    private fun toPalette(hexes: List<PyObject>, what: String): Palette? {
         if (hexes.size < 3) {
-            Log.w(TAG, "theme '$name' gave ${hexes.size} colours, expected bg + fg + ramp")
+            Log.w(TAG, "$what gave ${hexes.size} colours, expected bg + fg + ramp")
             return null
         }
         return Palette(

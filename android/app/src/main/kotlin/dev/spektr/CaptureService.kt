@@ -146,7 +146,7 @@ class CaptureService : Service() {
 
             running.set(true)
             CaptureController.state = CaptureController.State.Capturing
-            EngineManager.startRendering()
+            EngineManager.syncRendering()
             readThread = Thread({ readLoop(rec) }, "spektr-capture").also { it.start() }
             Log.i(TAG, "capture running at ${SAMPLE_RATE} Hz float stereo")
         } catch (t: Throwable) {
@@ -185,8 +185,11 @@ class CaptureService : Service() {
             it.stop()
         }
         projection = null
-        EngineManager.stopRendering()
         CaptureController.state = CaptureController.State.Idle
+        // Not an unconditional stop: if the app is still on screen it goes on
+        // previewing the mode, and only a backgrounded app with no capture
+        // has nothing left to draw for.
+        EngineManager.syncRendering()
         Log.i(TAG, "capture stopped")
         super.onDestroy()
     }

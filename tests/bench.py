@@ -124,7 +124,6 @@ BASELINE = {
     'Orbit': 0.46,
     'Gonio': 0.46,
     'Spectro': 0.36,
-    'Flipbook': 0.35,
     'Stereo': 0.33,
     'Needle': 0.30,
     'Keys': 0.30,
