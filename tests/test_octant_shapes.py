@@ -1,10 +1,10 @@
 """The octant variants: the same modes at 2x4 subcells, as separate modes.
 
-``Sonar Fine``, ``Scope Fine`` and ``ECG Fine`` pack the identical lit dot
+``Sonar (o)``, ``Scope (o)`` and ``ECG (o)`` pack the identical lit dot
 set into Unicode 16 octant glyphs (:func:`render.pack_octant_bits`) — a
 shape drawn against empty space wants one colour and a foreground only,
 because a background index would paint the whole cell opaque. ``Radial
-Fine`` and ``Maelstrom Fine`` threshold a continuous field at each cell's
+Fine`` and ``Maelstrom (o)`` threshold a continuous field at each cell's
 own midpoint (:func:`render.pack_octant` + :func:`render.cell_hilo`) — a
 mode that fills its viewport has both a background and a foreground.
 
@@ -34,11 +34,11 @@ PAL = Palette(BUILTIN["gruvbox"])
 #: (original, variant) pairs — the whole point of this file. A variant must
 #: register right behind its original in the mode cycle.
 VARIANT_OF = [
-    ("Sonar", "Sonar Fine"),
-    ("Scope", "Scope Fine"),
-    ("ECG", "ECG Fine"),
-    ("Radial", "Radial Fine"),
-    ("Maelstrom", "Maelstrom Fine"),
+    ("Sonar", "Sonar (o)"),
+    ("Scope", "Scope (o)"),
+    ("ECG", "ECG (o)"),
+    ("Radial", "Radial (o)"),
+    ("Maelstrom", "Maelstrom (o)"),
 ]
 
 #: bit weight per subcell for each packer, indexed [row][col]. Braille numbers
@@ -136,15 +136,15 @@ def _assert_solid_superset(plain, fine, frames=8, w=120, h=30):
 
 
 def test_sonar_fine_is_a_solid_superset_of_sonar():
-    _assert_solid_superset(_mode("Sonar"), _mode("Sonar Fine"))
+    _assert_solid_superset(_mode("Sonar"), _mode("Sonar (o)"))
 
 
 def test_scope_fine_is_a_solid_superset_of_scope():
-    _assert_solid_superset(_mode("Scope"), _mode("Scope Fine"))
+    _assert_solid_superset(_mode("Scope"), _mode("Scope (o)"))
 
 
 def test_ecg_fine_is_a_solid_superset_of_ecg():
-    _assert_solid_superset(_mode("ECG"), _mode("ECG Fine"))
+    _assert_solid_superset(_mode("ECG"), _mode("ECG (o)"))
 
 
 # ── the pack_octant ports: two colours a cell ────────────────────────────────
@@ -171,11 +171,11 @@ def _assert_two_colour(plain, fine, frames=8, w=120, h=30):
 
 
 def test_radial_fine_draws_two_colours():
-    _assert_two_colour(_mode("Radial"), _mode("Radial Fine"))
+    _assert_two_colour(_mode("Radial"), _mode("Radial (o)"))
 
 
 def test_maelstrom_fine_draws_two_colours():
-    _assert_two_colour(_mode("Maelstrom"), _mode("Maelstrom Fine"))
+    _assert_two_colour(_mode("Maelstrom"), _mode("Maelstrom (o)"))
 
 
 def test_maelstrom_itself_still_draws_braille():

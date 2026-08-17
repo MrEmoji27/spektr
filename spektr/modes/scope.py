@@ -145,13 +145,13 @@ def scope(ctx: Ctx):
     return _scope(ctx, octant=False)
 
 
-@mode("Scope Fine", hidden=True, after="Scope", group="scope",
+@mode("Scope (o)", hidden=True, after="Scope", group="scope",
       blurb="the same trace as a continuous stroke — needs a terminal that draws Unicode 16 octants")
 def scope_fine(ctx: Ctx):
     """Scope on octant cells.
 
     Separate mode rather than a switch on the original, for the same reason
-    Kaleidoscope Fine is: octants are Unicode 16 and an older terminal or
+    Kaleidoscope (o) is: octants are Unicode 16 and an older terminal or
     font draws a grid of tofu, which is a thing to opt into rather than to
     discover when a mode you liked stops working.
     """
@@ -273,13 +273,13 @@ def ecg(ctx: Ctx):
     return _ecg(ctx, octant=False)
 
 
-@mode("ECG Fine", hidden=True, after="ECG", group="scope",
+@mode("ECG (o)", hidden=True, after="ECG", group="scope",
       blurb="the same scrolling trace, drawn solid — needs a terminal that draws Unicode 16 octants")
 def ecg_fine(ctx: Ctx):
     """ECG on octant cells.
 
     Separate mode rather than a switch on the original, for the same reason
-    Kaleidoscope Fine is: octants are Unicode 16 and an older terminal or
+    Kaleidoscope (o) is: octants are Unicode 16 and an older terminal or
     font draws a grid of tofu, which is a thing to opt into rather than to
     discover when a mode you liked stops working. The two versions also keep
     separate scroll buffers in scratch, so switching between them never

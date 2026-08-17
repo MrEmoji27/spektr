@@ -97,7 +97,7 @@ BASELINE = {
     'Chladni Extreme': 1.76,
     'Dune': 1.60,
     'Chladni Flow': 1.59,
-    'Kaleidoscope Fine': 1.54,
+    'Kaleidoscope (o)': 1.54,
     'Locket': 1.52,
     'Chladni': 1.48,
     'Valentine': 1.38,

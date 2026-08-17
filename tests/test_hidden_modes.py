@@ -1,6 +1,6 @@
 """Hidden modes: out of the interface, still in the app.
 
-The twelve subcell variants — the ``Fine`` modes and ``Kaleidoscope Ultra`` —
+The twelve subcell variants — the ``Fine`` modes and ``Kaleidoscope Ultra (o)`` —
 are opt-in. They draw the same pictures as the originals at four times the
 subcell resolution, but they need a font with Unicode 16 octants, they cost
 roughly twice as much, and listing both halves of every pair doubles the menu.
@@ -41,17 +41,17 @@ def test_listed_excludes_exactly_the_hidden_ones():
 def test_the_hidden_set_is_exactly_the_subcell_variants():
     """Nothing else may drift into being opt-in without saying so here."""
     assert {m.name for m in M.MODES if m.hidden} == {
-        "Scope Fine", "ECG Fine", "Radial Fine", "Sonar Fine", "Plasma Fine",
-        "Chladni Fine", "Chladni Flow Fine", "Chladni Extreme Fine",
-        "Kaleidoscope Fine", "Kaleidoscope Ultra", "Valentine Fine",
-        "Maelstrom Fine",
+        "Scope (o)", "ECG (o)", "Radial (o)", "Sonar (o)", "Plasma (o)",
+        "Chladni (o)", "Chladni Flow (o)", "Chladni Extreme (o)",
+        "Kaleidoscope (o)", "Kaleidoscope Ultra (o)", "Valentine (o)",
+        "Maelstrom (o)",
     }
 
 
 @pytest.mark.parametrize("name", [m.name for m in M.MODES if m.hidden])
 def test_every_hidden_variant_has_its_original_on_the_menu(name):
     """A mode may only be hidden because something else stands in for it."""
-    base = name.removesuffix(" Fine").removesuffix(" Ultra")
+    base = name.removesuffix(" (o)").removesuffix(" Ultra")
     original = M.get(base)
     assert original is not None, f"{name} is hidden and {base} does not exist"
     assert not original.hidden, f"{name} is hidden and so is {base} — nothing is offered"
@@ -82,11 +82,11 @@ def test_the_setting_puts_the_variants_on_the_menu():
 def test_the_setting_flips_live():
     """The settings panel toggles the attribute; the list follows immediately."""
     viz = _viz()
-    assert "Chladni Fine" not in viz.mode_names
+    assert "Chladni (o)" not in viz.mode_names
     viz.show_fine = True
-    assert "Chladni Fine" in viz.mode_names
+    assert "Chladni (o)" in viz.mode_names
     viz.show_fine = False
-    assert "Chladni Fine" not in viz.mode_names
+    assert "Chladni (o)" not in viz.mode_names
 
 
 def test_the_originals_are_always_offered_either_way():
@@ -98,8 +98,8 @@ def test_the_originals_are_always_offered_either_way():
 def test_a_hidden_mode_can_still_be_selected_while_it_is_hidden():
     """--mode and a saved config name one; hiding must not break either."""
     viz = _viz()
-    viz.set_mode("Chladni Fine")
-    assert viz.mode_name == "Chladni Fine"
+    viz.set_mode("Chladni (o)")
+    assert viz.mode_name == "Chladni (o)"
 
 
 def test_the_setting_survives_a_round_trip(tmp_path):
@@ -144,3 +144,69 @@ def test_a_hidden_mode_still_draws():
                 )
             )
         assert out[0].shape == (24, 80), f"{m.name} stopped rendering when hidden"
+
+
+# ── the (o)/(q) naming ───────────────────────────────────────────────────────
+
+def test_the_variants_are_named_for_the_geometry_not_for_being_finer():
+    """They were "Fine", which said better rather than which glyphs."""
+    for m in M.MODES:
+        if m.hidden:
+            assert m.name.endswith(" (o)"), f"{m.name} is a variant without a geometry suffix"
+        else:
+            assert not m.name.endswith((" (o)", " (q)")), f"{m.name} claims a geometry"
+
+
+@pytest.mark.parametrize("old, new", sorted(M._RENAMED.items()))
+def test_every_name_these_modes_ever_had_still_resolves(old, new):
+    """A config or --mode flag from an earlier version must not fall to Bars.
+
+    A mode that stops resolving is silent: ``set_mode`` ignores it and the app
+    carries on with whatever it had, so the failure looks like the setting
+    being forgotten rather than like an error.
+    """
+    assert M.get(old) is M.get(new) is not None
+
+
+@pytest.mark.parametrize("name", [m.name for m in M.MODES if m.hidden])
+def test_the_quadrant_spelling_resolves_too(name):
+    """The picker shows (q) in quadrant mode, so (q) is a name people will type."""
+    assert M.get(name[:-4] + " (q)") is M.get(name)
+
+
+def test_the_label_follows_the_cell_setting():
+    """The suffix reports the geometry actually being drawn, which is a setting."""
+    import spektr.render as R
+
+    before = R.CELL_MODE
+    try:
+        R.set_cell_mode("octant")
+        assert M.label("Chladni (o)") == "Chladni (o)"
+        R.set_cell_mode("quadrant")
+        assert M.label("Chladni (o)") == "Chladni (q)"
+        assert M.label("Bars") == "Bars", "a plain mode must not grow a suffix"
+    finally:
+        R.set_cell_mode(before)
+
+
+def test_no_suffixed_name_is_visible_until_the_setting_is_on():
+    """The (o)/(q) names belong to opt-in modes and must not leak.
+
+    With subcell modes off, nothing in the interface should mention a geometry
+    — the picker, the cycle keys and shuffle all read the same list, so one
+    check covers all three.
+    """
+    off, on = _viz(), _viz(fine_modes=True)
+
+    leaked = [n for n in off.mode_names if n.endswith((" (o)", " (q)"))]
+    assert not leaked, f"geometry suffixes shown while the setting is off: {leaked}"
+
+    shown = [n for n in on.mode_names if n.endswith((" (o)", " (q)"))]
+    assert len(shown) == len([m for m in M.MODES if m.hidden])
+
+
+def test_cycling_never_lands_on_a_suffixed_mode_while_it_is_off():
+    """`m`/space walk the same list, so this is the keybinding's guarantee."""
+    viz = _viz()
+    seen = {viz.cycle_mode(1) for _ in range(len(viz.mode_names) + 5)}
+    assert not [n for n in seen if n.endswith((" (o)", " (q)"))]

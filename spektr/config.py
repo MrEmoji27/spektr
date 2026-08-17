@@ -87,7 +87,7 @@ class Settings:
     #: everywhere.
     cells: str = "octant"
     #: Offer the twelve subcell variants — the ``Fine`` modes and
-    #: ``Kaleidoscope Ultra`` — in the picker.
+    #: ``Kaleidoscope Ultra (o)`` — in the picker.
     #:
     #: Off by default. They draw the same pictures as the originals at four
     #: times the subcell resolution, but they need a font with Unicode 16

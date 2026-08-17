@@ -180,7 +180,7 @@ def plasma(ctx: Ctx):
     return _plasma(ctx, "half")
 
 
-@mode("Plasma Fine", hidden=True, after="Plasma", group="fields",
+@mode("Plasma (o)", hidden=True, after="Plasma", group="fields",
       blurb="the same field at eight samples a cell instead of two — needs Unicode 16 octants")
 def plasma_fine(ctx: Ctx):
     return _plasma(ctx, "octant")
@@ -330,7 +330,7 @@ def chladni(ctx: Ctx):
     return _chladni(ctx, "half")
 
 
-@mode("Chladni Fine", hidden=True, after="Chladni", group="fields",
+@mode("Chladni (o)", hidden=True, after="Chladni", group="fields",
       blurb="the same plate at eight samples a cell, nodal lines antialiased — needs Unicode 16 octants")
 def chladni_fine(ctx: Ctx):
     """Chladni on octant cells.
@@ -460,7 +460,7 @@ def _chladni_flow(ctx: Ctx, cells: str):
     # while keeping the ridge solid still broke the thin parts of the
     # figure, which is most of it. The clean field is the better picture.
     if octant:
-        # Shaded rather than masked — see Chladni Fine.
+        # Shaded rather than masked — see Chladni (o).
         #
         # A coarser colour block than the default, the same as Chladni Extreme
         # and for the same reason: this figure sweeps continuously, so a broad
@@ -500,7 +500,7 @@ def chladni_flow(ctx: Ctx):
     return _chladni_flow(ctx, "half")
 
 
-@mode("Chladni Flow Fine", hidden=True, after="Chladni Flow", group="fields",
+@mode("Chladni Flow (o)", hidden=True, after="Chladni Flow", group="fields",
       blurb="the melting plate at eight samples a cell — needs Unicode 16 octants")
 def chladni_flow_fine(ctx: Ctx):
     return _chladni_flow(ctx, "octant")
@@ -712,7 +712,7 @@ def _chladni_extreme(ctx: Ctx, cells: str):
     # is already nearly bimodal - most cells sit hard against 0 or 1 rather
     # than in the midtones the extra buckets would resolve.
     if octant:
-        # Shaded rather than masked — see Chladni Fine.
+        # Shaded rather than masked — see Chladni (o).
         #
         # The field is one sample per subcell *row* here, so each cell's two
         # subcell columns take the same value — one repeat rather than twice
@@ -739,7 +739,7 @@ def chladni_extreme(ctx: Ctx):
     return _chladni_extreme(ctx, "half")
 
 
-@mode("Chladni Extreme Fine", hidden=True, after="Chladni Extreme", group="fields",
+@mode("Chladni Extreme (o)", hidden=True, after="Chladni Extreme", group="fields",
       blurb="the overdriven plate at eight samples a cell — needs Unicode 16 octants")
 def chladni_extreme_fine(ctx: Ctx):
     return _chladni_extreme(ctx, "octant")
@@ -1526,7 +1526,7 @@ def kaleidoscope(ctx: Ctx):
     return _kaleido(ctx, "half")
 
 
-@mode("Kaleidoscope Fine", hidden=True, after="Kaleidoscope", group="fields",
+@mode("Kaleidoscope (o)", hidden=True, after="Kaleidoscope", group="fields",
       blurb="the same tube at four times the vertical detail — needs a terminal that draws Unicode 16 octants")
 def kaleidoscope_fine(ctx: Ctx):
     """Kaleidoscope on octant cells.
@@ -1540,7 +1540,7 @@ def kaleidoscope_fine(ctx: Ctx):
     return _kaleido(ctx, "octant")
 
 
-@mode("Kaleidoscope Ultra", hidden=True, after="Kaleidoscope Fine", group="fields",
+@mode("Kaleidoscope Ultra (o)", hidden=True, after="Kaleidoscope (o)", group="fields",
       blurb="the tube with its seams antialiased — the smoothest a terminal gets")
 def kaleidoscope_ultra(ctx: Ctx):
     """Kaleidoscope with the staircase taken out of its seams.
@@ -1964,13 +1964,13 @@ def valentine(ctx: Ctx):
     return _valentine(ctx, octant=False)
 
 
-@mode("Valentine Fine", hidden=True, after="Valentine", group="fields",
+@mode("Valentine (o)", hidden=True, after="Valentine", group="fields",
       blurb="the same heart drawn solid instead of stippled — needs a terminal that draws Unicode 16 octants")
 def valentine_fine(ctx: Ctx):
     """Valentine on octant cells.
 
     Separate mode rather than a switch on the original, for the same reason
-    Kaleidoscope Fine is: octants are Unicode 16 and an older terminal or font
+    Kaleidoscope (o) is: octants are Unicode 16 and an older terminal or font
     draws a grid of tofu. That is a thing to opt into, not to discover when a
     mode you liked stops working.
     """

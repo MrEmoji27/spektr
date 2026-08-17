@@ -259,13 +259,13 @@ def maelstrom(ctx: Ctx):
     return _maelstrom(ctx, octant=False)
 
 
-@mode("Maelstrom Fine", hidden=True, after="Maelstrom", group="fields",
+@mode("Maelstrom (o)", hidden=True, after="Maelstrom", group="fields",
       blurb="the same fluid as a solid field at two colours a cell — needs a terminal that draws Unicode 16 octants")
 def maelstrom_fine(ctx: Ctx):
     """Maelstrom on octant cells.
 
     Separate mode rather than a switch on the original, for the same reason
-    Kaleidoscope Fine is: octants are Unicode 16 and an older terminal or
+    Kaleidoscope (o) is: octants are Unicode 16 and an older terminal or
     font draws a grid of tofu, which is a thing to opt into rather than to
     discover when a mode you liked stops working. The two versions also keep
     separate sims in scratch, so switching between them never advances the

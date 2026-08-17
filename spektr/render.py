@@ -625,7 +625,7 @@ def pack_octant_smooth(
     field that is flat on each side of its edges — one drawn from a table of
     flat values, say — hands every cell exactly two values, and for two values
     every threshold in (0, 1) picks the same subcells. Interpolate the source
-    first or this is an expensive no-op; Kaleidoscope Ultra's docstring has
+    first or this is an expensive no-op; Kaleidoscope Ultra (o)'s docstring has
     the measured version of that mistake.
     """
     if lo is None or hi is None:

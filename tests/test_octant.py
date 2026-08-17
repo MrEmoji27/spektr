@@ -263,9 +263,9 @@ def _kaleido_fine():
     import spektr.modes as M
 
     reg = {m.name: m for m in M.MODES}
-    if "Kaleidoscope Fine" not in reg:
+    if "Kaleidoscope (o)" not in reg:
         pytest.skip("no built-in mode uses octant cells")
-    return reg["Kaleidoscope Fine"]
+    return reg["Kaleidoscope (o)"]
 
 
 def test_kaleidoscope_fine_draws_octants():
@@ -423,7 +423,7 @@ def test_the_dither_matrix_survives_a_mirror():
 
     Mirroring a cell swaps its subcell columns. The first version of this
     table was a 2-D Bayer spread with different values left and right, and
-    Kaleidoscope Ultra lost the bilateral symmetry that is the entire point of
+    Kaleidoscope Ultra (o) lost the bilateral symmetry that is the entire point of
     a mirror tube — caught by the symmetry test below, not by eye.
     """
     from spektr.render import OCTANT_DITHER
@@ -589,7 +589,7 @@ def test_valentine_fine_draws_the_same_heart_solid():
     from spektr.palette import BUILTIN, Palette
 
     pal = Palette(BUILTIN["gruvbox"])
-    plain, fine = _mode("Valentine"), _mode("Valentine Fine")
+    plain, fine = _mode("Valentine"), _mode("Valentine (o)")
     sa: dict = {}
     sb: dict = {}
     for f in range(8):
@@ -631,7 +631,7 @@ def test_kaleidoscope_ultra_is_smoother_and_still_symmetric():
     from spektr.palette import BUILTIN, Palette
 
     pal = Palette(BUILTIN["gruvbox"])
-    fine, ultra = _mode("Kaleidoscope Fine"), _mode("Kaleidoscope Ultra")
+    fine, ultra = _mode("Kaleidoscope (o)"), _mode("Kaleidoscope Ultra (o)")
     sa: dict = {}
     sb: dict = {}
     for f in range(10):

@@ -45,7 +45,7 @@ SELF_ANIMATING = {
     # breathing and angular
     # spin (Arcs), travelling particles (Bubbles), curtain billow (Auroras),
     # continuous sweep rotation (Sonar, and the octant variant of it)
-    "ECG", "ECG Fine", "Strings", "Arcs", "Bubbles", "Auroras", "Sonar", "Sonar Fine",
+    "ECG", "ECG (o)", "Strings", "Arcs", "Bubbles", "Auroras", "Sonar", "Sonar (o)",
     # continuous ticker scroll (Readout), continuous spin (Helix, and both
     # Chladni Flow and Chladni Extreme — but *not* plain Chladni, whose whole
     # point is that it holds a discrete figure and only snaps when the
@@ -67,14 +67,14 @@ SELF_ANIMATING = {
     # so the loop never looks paused (Rain), and embers keep drifting and
     # cooling on their own timers once spawned (Ember)
     "Readout", "Helix", "Chladni Flow", "Chladni Extreme", "Orbit", "Keys",
-    "Flipbook", "Maelstrom", "Maelstrom Fine", "Dune", "Fireworks", "Boot", "Murmuration",
+    "Flipbook", "Maelstrom", "Maelstrom (o)", "Dune", "Fireworks", "Boot", "Murmuration",
     "Vinyl", "Rain", "Ember",
     # continuous spin (Kaleidoscope rotates its mirror array; the
     # scrollwork curls turn on their anchors even at a frozen spectrum)
-    "Kaleidoscope", "Kaleidoscope Fine", "Kaleidoscope Ultra",
-    "Valentine", "Valentine Fine",
+    "Kaleidoscope", "Kaleidoscope (o)", "Kaleidoscope Ultra (o)",
+    "Valentine", "Valentine (o)",
     # the octant variants animate for exactly the reasons their originals do
-    "Plasma Fine", "Chladni Flow Fine", "Chladni Extreme Fine",
+    "Plasma (o)", "Chladni Flow (o)", "Chladni Extreme (o)",
     "Tunnel In", "Dither", "Locket",
     # every wave carries a phase that advances on its own, at a rate set by
     # the band driving it, and onset rings keep travelling outward after the
@@ -84,7 +84,7 @@ SELF_ANIMATING = {
 }
 
 #: Modes driven by the waveform rather than the band levels.
-WAVEFORM_DRIVEN = {"Wave", "Scope", "Gonio", "ECG", "Scope Fine", "ECG Fine"}
+WAVEFORM_DRIVEN = {"Wave", "Scope", "Gonio", "ECG", "Scope (o)", "ECG (o)"}
 
 
 def ctx_for(w, h, frame, state, t, bands=None, silent=False, stereo=None, dt=1 / 60):
@@ -342,7 +342,7 @@ def check_scratch_does_not_leak() -> list[str]:
 
 #: Modes that scroll their own history buffer on a clock. Their content has to
 #: travel the same distance per *second* at any frame rate — see the check.
-SCROLL_PACED = ("Spectro", "ECG", "ECG Fine")
+SCROLL_PACED = ("Spectro", "ECG", "ECG (o)")
 
 
 def check_scroll_is_frame_rate_independent() -> list[str]:

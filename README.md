@@ -7,21 +7,39 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-00c853)](https://github.com/MrEmoji27/spektr/blob/main/LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20·%20Linux%20·%20macOS-546e7a)](#how-it-captures-audio)
-[![Modes](https://img.shields.io/badge/render%20modes-49-ff6d00)](#modes)
+[![Modes](https://img.shields.io/badge/render%20modes-52-ff6d00)](#modes)
 [![Themes](https://img.shields.io/badge/themes-54-7c4dff)](#themes)
 [![Built with Textual](https://img.shields.io/badge/built%20with-Textual-5e35b1)](https://textual.textualize.io/)
 
-</div>
+<!-- ── HERO ─────────────────────────────────────────────────────────────────
+     Drop the demo here. Both forms below render on GitHub; keep whichever
+     one you record and delete the other.
 
-<!-- Drop a screenshot or GIF in docs/ and point this at it:
-     <img src="docs/demo.gif" alt="spektr running" width="900"> -->
+     A) GIF committed to the repo (autoplays, no controls, no sound):
+        <img src="assets/demo.gif" alt="spektr cycling modes and themes" width="900">
+
+     B) MP4/WebM (plays with controls, keeps sound, no repo weight): open a
+        new issue on the repo, drag the file into the comment box, copy the
+        https://github.com/user-attachments/... URL it produces, close the
+        issue without posting, then paste that URL on its own line here.
+
+     Recording notes, so the hero reads well at README width:
+       · terminal ~100x28, one theme change every few seconds, `f` for
+         full-screen (no header/footer) and `s` for shuffle on `both`
+       · 12-15 fps is enough for a GIF and roughly halves the file next to 30
+       · keep it under ~8 MB and under ~20 s; GitHub will render more, but a
+         cold page load will not
+       · width="900" matches the README's content column
+     ────────────────────────────────────────────────────────────────────── -->
+
+</div>
 
 Point it at nothing. Play music anywhere — Spotify, a browser tab, a game, a call — and
 spektr draws it: overlapped FFTs across 32 log-spaced bands (settable) from 50 Hz to 10 kHz, laid
 out the way cava does it, rendered with braille sub-characters so the picture moves at
 four times the vertical resolution of a text cell.
 
-**Forty-nine render modes. Fifty-four themes. 60 fps, or your display's.**
+**Fifty-one render modes. Fifty-four themes. 60 fps, or your display's.**
 
 ## Install
 
@@ -80,8 +98,8 @@ usual capture status — never an error.
 
 **Contents** · [Modes](#modes) · [Themes](#themes) ·
 [Plugins](#plugins) · [Keys](#keys) · [Command line](#command-line) ·
-[Audio capture](#how-it-captures-audio) · [How it works](#how-it-works) ·
-[Development](#development) · [Inspired by](#inspired-by)
+[Audio capture](docs/audio-capture.md) · [How it works](docs/how-it-works.md) ·
+[Development](docs/development.md) · [Inspired by](#inspired-by)
 
 ---
 
@@ -92,31 +110,32 @@ Listed in the order the picker cycles them.
 
 | | | | |
 |---|---|---|---|
-| **Bars** | the classic — bars with peak markers | **Gonio** | stereo phase scope with a phosphor trail |
-| **Bubbles** | bubbles from the low end, popping at the top | **VU** | big L/R LED meters with peak hold |
-| **Bricks** | chunky, no partial cells | **Scatter** | density sparkle, thicker where it's loud |
-| **Radial** | the spectrum wrapped into a circle | **Arcs** | hollow rings, one per band, pushed out by level |
-| **Columns** | gapless, interpolated across the full width | **Flame** | fire, licking upward from each band |
-| **Retro** | sunset grid, with the spectrum as the horizon | **Orbit** | bodies on real elliptical orbits; loud bands swing out |
-| **Ladder** | segmented LED stack | **Pulse** | radial pulse with shockwaves |
-| **Auroras** | a light ribbon whose lower rim rides the spectrum | **Dune** | sand piles up by band, avalanching past a threshold |
-| **Sonar** | one sweep, not the whole spectrum — returns fade like a scope | **Fireworks** | beat-triggered launches, bursts, and fall |
-| **Tunnel** | flying down a pipe, ribbed by the beat | **Keys** | a lit keyboard; struck bands scroll away as notes |
-| **Mirror** | grows out from the centre line | **Readout** | scrolling numeric ticker, band levels as plain digits |
-| **Warp** | starfield, accelerating with the music | **Boot** | an old PC waking up — BIOS POST, a boot log, a blinking cursor |
-| **Stereo** | per-band L/R meters, mirrored from centre | **Chladni** | vibrating-plate figure that snaps between real resonances |
-| **Matrix** | digital rain, falling faster when it's loud | **Helix** | two strands rotating, split by true L/R phase |
-| **Wave** | smoothed waveform | **Chladni Flow** | the same plate, melting continuously from one figure to the next |
-| **Spectro** | scrolling waterfall — frequency up, time across | **Flipbook** | your own ASCII animation, played by the music |
-| **Scope** | trigger-synced oscilloscope — the trace holds still | **Maelstrom** | a real fluid sim, stirred by the music |
-| **Plasma** | solid colour field, warped by the spectrum | **Vinyl** | a record whose grooves light up as a radial spectrum |
-| **ECG** | scrolling trace, like a heart monitor | **Rain** | rain on the glass, falling harder when it's loud |
-| **VFD** | vacuum-fluorescent bargraph with phosphor afterglow | **Ember** | a coal bed burning by band, sparks off the hot spots |
-| **Strings** | plucked strings, bowed by their own band | **Murmuration** | a flock wheeling and scattering with the beat |
-| **Needle** | analogue VU — one sweeping needle, one red zone | **Chladni Extreme** | the plate driven past its modes — morphs and escalates |
-| **Kaleidoscope** | radial mirror symmetry — the wedge count follows the spectrum | **Dither** | the spectrum printed as a newspaper halftone |
-| **Valentine** | a heart that beats with the track, trailing smaller ones upward | **Tunnel In** | rings thrown out of the centre on the beat, rushing past you |
-| **Locket** | an outlined heart, pulsing rings of hearts outward on the beat | | |
+| **Bars** | the classic — bars with peak markers | **Keys** | a lit keyboard; struck bands scroll away as notes |
+| **Bricks** | chunky, no partial cells | **Tunnel** | flying down a pipe, ribbed by the beat |
+| **Columns** | gapless, interpolated across the full width | **Tunnel In** | rings thrown out of the centre on the beat, rushing past you |
+| **Ladder** | segmented LED stack | **Warp** | starfield, accelerating with the music |
+| **Mirror** | grows out from the centre line | **Matrix** | digital rain, falling faster when it's loud |
+| **Readout** | scrolling numeric ticker, band levels as plain digits | **Boot** | an old PC waking up — BIOS POST, a boot log, a blinking cursor |
+| **Stereo** | per-band L/R meters, mirrored from centre | **Spectro** | scrolling waterfall — frequency up, time across |
+| **Wave** | smoothed waveform | **Plasma** | solid colour field, warped by the spectrum |
+| **Scope** | trigger-synced oscilloscope — the trace holds still | **Chladni** | vibrating-plate figure that snaps between real resonances |
+| **ECG** | scrolling trace, like a heart monitor | **Chladni Flow** | the same plate, melting continuously from one figure to the next |
+| **Strings** | plucked strings, bowed by their own band | **Chladni Extreme** | the plate driven past its modes — morphs and escalates |
+| **Helix** | two strands rotating, split by true L/R phase | **VFD** | vacuum-fluorescent bargraph with phosphor afterglow |
+| **Gonio** | stereo phase scope with a phosphor trail | **Needle** | analogue VU — one sweeping needle, one red zone |
+| **Scatter** | density sparkle, thicker where it's loud | **VU** | big L/R LED meters with peak hold |
+| **Flame** | fire, licking upward from each band | **Kaleidoscope** | radial mirror symmetry — the wedge count follows the spectrum |
+| **Pulse** | radial pulse with shockwaves | **Dither** | the spectrum printed as a newspaper halftone |
+| **Arcs** | hollow rings, one per band, pushed out by level | **Dither Storm** | the same crosshatch, but moving — each band drives its own wave, and beats throw rings through it |
+| **Bubbles** | bubbles from the low end, popping at the top | **Dither Storm Extreme** | Dither Storm with nothing holding it back — hits pile up and a dense passage blows the field to white |
+| **Radial** | the spectrum wrapped into a circle | **Valentine** | a heart that beats with the track, trailing smaller ones upward |
+| **Sonar** | one sweep, not the whole spectrum — returns fade like a scope | **Locket** | an outlined heart, pulsing rings of hearts outward on the beat |
+| **Orbit** | bodies on real elliptical orbits; loud bands swing out | **Flipbook** | your own ASCII animation, played by the music |
+| **Fireworks** | beat-triggered launches, bursts, and fall | **Maelstrom** | a real fluid sim, stirred by the music |
+| **Dune** | sand piles up by band, avalanching past a threshold | **Vinyl** | a record whose grooves light up as a radial spectrum |
+| **Murmuration** | a flock wheeling and scattering with the beat | **Rain** | rain on the glass, falling harder when it's loud |
+| **Retro** | sunset grid, with the spectrum as the horizon | **Ember** | a coal bed burning by band, sparks off the hot spots |
+| **Auroras** | a light ribbon whose lower rim rides the spectrum | | |
 
 Vinyl, Rain and Ember are the lofi group — a
 shared *look* (warm objects, soft edges, nothing strobing) rather than a
@@ -124,8 +143,44 @@ shared reactivity budget. Each one maps real band data into its geometry,
 so what the music changes is what the object is doing, not just how bright
 the picture is.
 
-A fiftieth entry, **None**, is registered as the off switch — it draws nothing.
-That is why the test output counts 50 modes against the forty-nine listed here.
+A fifty-second entry, **None**, is registered as the off switch — it draws nothing.
+That is why the test output counts 52 modes against the fifty-one listed here.
+
+### Subcell variants: `(o)` and `(q)`
+
+Twelve modes have a second version that draws with **subcell glyphs** — one text
+cell split into eight or four addressable pieces instead of being a single
+block. A nodal line or a scope trace then lands *inside* a cell rather than on
+its boundary, which is the difference between a curve and a staircase.
+
+They are **off by default**. Open Settings (`c`) and turn on **subcell modes** to
+put them in the `v` picker:
+
+| | |
+|---|---|
+| Scope, ECG, Sonar, Radial | the trace becomes a continuous stroke instead of separated dots |
+| Plasma, Chladni, Chladni Flow, Chladni Extreme | nodal lines and gradients resolve between cells |
+| Kaleidoscope, Kaleidoscope Ultra | mirror seams stop landing on cell edges |
+| Valentine, Maelstrom | the rim of the shape gets four times the vertical resolution |
+
+The suffix says **which glyphs the mode is drawing with**, and that is a
+setting rather than a property of the mode — the **subcell shape** row in
+Settings switches all of them at once:
+
+- **`(o)` — octants.** 2x4 pieces per cell, from Unicode 16. The default, and
+  what the modes are designed around. Needs a font that has them; run
+  `spektr --glyph-test` and you will know in two seconds.
+- **`(q)` — quadrants.** 2x2 pieces, from Block Elements, which every terminal
+  font has had for decades. The fallback that always works.
+
+So the same mode shows as `Chladni (o)` or `Chladni (q)` depending on that
+setting, and both spellings are accepted anywhere a mode is named. Quadrants
+are **not** a downgrade in speed — they are faster on the smooth field modes
+and slower on the silhouette ones. Pick by what your font can draw.
+
+At a normal terminal size the variants cost about what the originals do. Only
+at a maximised window on a large screen does the difference show, and the
+heaviest of them is Chladni Extreme.
 
 Still frames of a few of them, straight from the render path: **[docs/gallery.md](https://github.com/MrEmoji27/spektr/blob/main/docs/gallery.md)**.
 
@@ -308,109 +363,36 @@ preserved end to end, which is what the Stereo, VU, Needle and Gonio modes read.
 | **Linux** | PulseAudio / PipeWire monitor via `soundcard`, or a monitor input |
 | **macOS** | Needs a loopback device (BlackHole, Soundflower) |
 
-**Loopback comes from `soundcard`, not `sounddevice`.** PortAudio has no WASAPI loopback
-flag, so sounddevice cannot capture system audio at *any* version — a detail that costs
-people a lot of time, because the failure looks like a missing upgrade. `soundcard` talks
-to WASAPI directly and sets `AUDCLNT_STREAMFLAGS_LOOPBACK` itself. It's a hard dependency
-for that reason; sounddevice is still used to enumerate monitors and the mic.
+It taps whatever the OS calls your default output and stays there, and it will never pick
+your microphone on its own. If the display is flat, `spektr --diagnose` opens every
+candidate in turn and prints the measured RMS and peak for each, which settles it.
 
-If `spektr --diagnose` shows no `loopback:` entries, the environment block at the top says
-which library is missing or unusable.
-
-**It taps whatever the OS calls your default output, and stays there.** This is cava's
-rule, and it replaced a cleverer one that was worse: spektr used to open each candidate,
-listen for 2.5 seconds, and rotate onward if it was quiet. That cannot tell "wrong
-device" apart from "nothing is playing yet", so starting spektr before pressing play sent
-it wandering onto whichever endpoint enumerated first — on one laptop, a virtual
-"AI noise-cancelling output" that plays nothing — and it stayed there. Silence on your
-default output is a correct answer, and the only useful response to it is to say so,
-which the status line does.
-
-**It will never pick your microphone on its own.** A loopback tap reporting silence is
-telling the truth, whereas a mic always has *something* on it, so choosing by "which
-source has signal" picks the room every time you start with the music paused. The mic is
-used automatically only if no output tap can be opened at all. Press `d` to cycle onto it
-deliberately, or start with `--mic`.
-
-If the display is flat, `spektr --diagnose` prints which device Windows calls the default
-and which endpoint spektr resolved it to — those two lines answer it most of the time.
-
-The **source** row in `c` shows the current source and the input level against the noise gate, refreshing on its own as a switch settles.
-When nothing adds up, `spektr --diagnose` opens every candidate in turn and prints the
-measured RMS and peak for each, which settles it:
-
-```
-  source                                       rms     peak   x gate  verdict
-  loopback: Speakers (Realtek)            3.41e-02    0.412    426.6  AUDIO
-  loopback: HDMI Output                   1.00e-12    0.000      0.0  silent
-  microphone (NOT system audio)           8.80e-04    0.021     11.0  audio (microphone!)
-```
+Why loopback needs `soundcard` rather than `sounddevice`, why the tap doesn't audition
+devices for signal, and how to read `--diagnose`:
+**[docs/audio-capture.md](docs/audio-capture.md)**.
 
 ## How it works
 
-Three details do most of the work.
+Analysis runs on its own 256-sample-hop clock rather than off the frame timer, the bands
+use [cava](https://github.com/karlstav/cava)'s two-window distribution, the easing is
+expressed in seconds so the motion is identical at 15 and 240 fps, and modes emit arrays
+of codepoints and palette indices — never strings, never a Rich console render.
 
-**Analysis runs on its own clock.** The windows advance by a 256-sample hop — about 188
-analyses per second at 48 kHz, for roughly 7% of one core. Sampling the FFT from the frame
-timer instead (23 blocks/sec read by a 30–60 fps loop) produces beat-rate aliasing that no
-amount of easing can hide, because the target sequence itself is stepped. The hop is half
-what it needs to be for frequency resolution — that is set by the window, not the stride —
-and the redundant overlap is bought deliberately: it keeps new spectra arriving faster than
-any display refreshes, and it puts six analyses inside the ~30 ms envelope every onset
-detector uses instead of three, so transients land sooner and more sharply.
-
-**The bands come from [cava](https://github.com/karlstav/cava)'s distribution.** Two
-windows, not one: 8192 samples for everything below 100 Hz, where frequency resolution
-matters and time resolution doesn't, and 4096 above it, where the reverse is true. Bars
-span 50 Hz–10 kHz, their bin ranges are forced strictly disjoint, and each is tilted by
-`f^0.85` so the treble doesn't flatline. Sensitivity is judged on overshoot — down 2% per
-analysis while any bar is clipping, up 0.1% when none is — never on loudness, because a
-loudness-following gain shrinks the whole display on every kick.
-
-**The easing is expressed in seconds, not frames.** Bands are driven by a damped spring
-integrated with sub-stepping, and peak markers hold for a duration rather than a frame
-count. The animation feels identical at 15 fps and 240 fps, which means the frame rate
-can adapt to load without the motion changing character — and it is what makes the
-`unlimited` setting safe to offer. That one probes the display's refresh rate at startup
-(`EnumDisplaySettingsW` on Windows, `xrandr`/`wlr-randr` on Linux, `CGDisplayModeGetRefreshRate`
-on macOS), resolves it to a fixed number once, and paces to that. It is marked experimental
-because two of those three probes have not been exercised on real hardware; the failure
-mode is a wrong rate rather than a crash, so the settings row prints the value it detected
-next to the option.
-
-**Modes emit arrays, not strings.** Every mode returns a `(h, w)` grid of codepoints and
-a matching grid of palette indices; the widget run-length encodes those into Textual
-`Strip`s from `render_line`. Nothing goes through a Rich console render, and a smooth
-field costs a handful of segments per row instead of one per cell.
+The reasoning behind each of those, and what breaks without it:
+**[docs/how-it-works.md](docs/how-it-works.md)**.
 
 ## Development
 
 ```bash
-python tests/bench.py        # shape checks + per-mode render benchmark
+python -m pytest tests/ -q   # the whole suite
+python tests/bench.py        # shape checks, per-mode render benchmark, cost gate
+python tests/onset_score.py  # scores the real onset detector against the corpus
 python tests/test_audit.py   # logic audit: mutation, animation, reactivity, leaks
-python tests/test_audio.py   # analysis, gating, frame-rate independence
-python tests/test_app.py     # headless UI smoke test (no audio device needed)
-python tests/test_plugins.py # discovery, trust, loading, quarantine
-python tests/perf.py all     # analyser cost, strip scaling, memory, headroom
 ```
 
-Building the Windows exe and installer: **[packaging/README.md](https://github.com/MrEmoji27/spektr/blob/main/packaging/README.md)** —
-one PowerShell command, or a tagged push and let CI do it.
-
-`bench.py` prints build and strip time for every mode at 120×16, 200×50, 240×60
-and 400×100. Five batches per mode, reporting both the best batch median (stable,
-so it is what to compare across runs) and the median one (what the budget gate
-uses, because whether a mode drops frames is a question about its ordinary case).
-Run it with nothing else going — two overlapping runs measured a 41% spread.
-`test_audit.py` is the one that catches logic errors rather than crashes — a mode that
-writes into the shared band buffer, or renders the same picture regardless of the audio,
-passes every shape check ever written.
-
-Measured on one core: the analyser costs **2.9%** of a core continuously, the audio
-callback **0.02%**, and the heaviest mode at 240×60 takes **7.5 ms** against a 16.7 ms
-budget. Nothing exceeds budget even at 400×100, where the worst are Vinyl and
-Chladni Extreme at ~16.1 ms and ~16.6 ms against 16.7 — measured on the typical
-batch, not the best one.
+Benchmark method, what each gate actually gates, and their current state:
+**[docs/development.md](docs/development.md)**. Building the Windows exe and installer:
+**[packaging/README.md](https://github.com/MrEmoji27/spektr/blob/main/packaging/README.md)**.
 
 ## Why it exists
 

@@ -249,6 +249,11 @@ class Spektr(App):
             m.name: (f"·{m.plugin}" if m.is_plugin else "")
             for m in mode_registry.listed()
         }
+        # The subcell variants are registered as "(o)" and shown as "(q)"
+        # whenever the cell setting says quadrant — the suffix reports the
+        # geometry being drawn, and that is a setting, not a property of the
+        # mode. Selection still carries the registered name.
+        shown = {m.name: mode_registry.label(m.name) for m in mode_registry.listed()}
 
         def done(choice: str | None) -> None:
             if choice is None:
@@ -264,6 +269,7 @@ class Spektr(App):
                 current=viz.mode_name,
                 on_preview=viz.preview_mode,
                 labels=labels,
+                display=shown,
             ),
             done,
         )
@@ -818,12 +824,12 @@ class Spektr(App):
             ),
             Setting(
                 "fine_modes",
-                "fine modes",
+                "subcell modes",
                 (False, True),
                 lambda v: "shown" if v else "hidden",
                 self._set_fine_modes,
-                "the subcell variants — four times the detail, twice the cost, "
-                "and they need Unicode 16 octants or subcell shape = quadrant",
+                "the (o)/(q) variants — a cell split into pieces, so an edge "
+                "lands inside it; (o) needs Unicode 16, (q) works anywhere",
             ),
             Setting(
                 "cells",

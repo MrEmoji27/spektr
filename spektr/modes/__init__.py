@@ -332,8 +332,60 @@ def mode(name: str, group: str = "spectrum", blurb: str = "",
     return wrap
 
 
+#: What the subcell variants were called before the (o)/(q) suffix.
+#:
+#: A saved config, a preset or a ``--mode`` flag written against an earlier
+#: version still names them this way, and a mode that stops resolving is a
+#: silent fall back to Bars rather than an error anyone sees.
+_RENAMED = {
+    "Scope Fine": "Scope (o)",
+    "ECG Fine": "ECG (o)",
+    "Radial Fine": "Radial (o)",
+    "Sonar Fine": "Sonar (o)",
+    "Plasma Fine": "Plasma (o)",
+    "Chladni Fine": "Chladni (o)",
+    "Chladni Flow Fine": "Chladni Flow (o)",
+    "Chladni Extreme Fine": "Chladni Extreme (o)",
+    "Kaleidoscope Fine": "Kaleidoscope (o)",
+    "Kaleidoscope Ultra": "Kaleidoscope Ultra (o)",
+    "Valentine Fine": "Valentine (o)",
+    "Maelstrom Fine": "Maelstrom (o)",
+}
+
+#: The suffix each cell geometry is shown with.
+CELL_SUFFIX = {"octant": "(o)", "quadrant": "(q)"}
+
+
 def get(name: str) -> Mode | None:
-    return _BY_NAME.get(name)
+    """The mode by name, accepting every name it has ever answered to.
+
+    Registered under ``(o)`` because octants are the default and what these
+    modes are designed around — but the geometry is a *setting*, so the same
+    mode draws quadrants when ``cells`` says so, and someone reading ``(q)``
+    off the picker has every reason to type it back. Both resolve here, along
+    with the ``Fine`` names they carried before.
+    """
+    m = _BY_NAME.get(name)
+    if m is not None:
+        return m
+    alt = _RENAMED.get(name)
+    if alt is None and name.endswith(" (q)"):
+        alt = name[:-4] + " (o)"
+    return _BY_NAME.get(alt) if alt is not None else None
+
+
+def label(name: str) -> str:
+    """The name as the interface should show it, for the live cell geometry.
+
+    The registered name says ``(o)``; in quadrant mode the mode really is
+    drawing quadrants, and a picker that insists otherwise is lying about the
+    one thing the suffix exists to report.
+    """
+    if not name.endswith(" (o)"):
+        return name
+    from ..render import CELL_MODE
+
+    return name[:-4] + " " + CELL_SUFFIX.get(CELL_MODE, "(o)")
 
 
 def names() -> list[str]:

@@ -71,6 +71,7 @@ class Picker(Widget):
         on_preview: Callable[[str], None] | None = None,
         labels: dict[str, str] | None = None,
         on_done: Callable[[str | None], None] | None = None,
+        display: dict[str, str] | None = None,
     ):
         super().__init__()
         self._title = title
@@ -78,6 +79,12 @@ class Picker(Widget):
         self._current = current
         self._on_preview = on_preview
         self._labels = labels or {}
+        #: item -> the name to *show*, where that differs from the name the
+        #: item is selected and stored by. The subcell variants are registered
+        #: as ``(o)`` and shown as ``(q)`` while the cell setting says
+        #: quadrant, because the suffix is there to report the geometry the
+        #: mode is actually drawing with.
+        self._display = display or {}
         self._shown: list[str] = list(items)
         self._on_done = on_done
 
@@ -108,7 +115,7 @@ class Picker(Widget):
         """
         extra = self._labels.get(name)
         mark = "▸ " if name == self._current else "  "
-        line = f"{mark}{name}"
+        line = f"{mark}{self._display.get(name, name)}"
         return f"{line}\n    [dim]{extra}[/dim]" if extra else line
 
     def _match(self, query: str, item: str) -> bool:
