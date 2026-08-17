@@ -444,13 +444,15 @@ def test_stats_report_the_interval_they_cover_and_then_reset(engine):
     for _ in range(5):
         engine.render("Bars", 60, 20)
 
-    fps, dt_ms, energy, onsets, band, sample = engine.stats()
+    fps, dt_ms, energy, onsets, band, sample, render, render_max = engine.stats()
     assert fps > 0, "frames were rendered but the rate came back zero"
     assert dt_ms > 0
     assert 0.0 <= energy <= 1.5
     assert onsets >= 0.0
     assert band >= 0.0
     assert sample > 0.0, "audio was pushed but no sample peak was seen"
+    assert render > 0.0, "renders were timed at zero"
+    assert render_max >= render, "the worst frame cannot beat the average"
 
     # Reset on read, or every line describes the whole session instead of its
     # own second and a burst stops being visible.

@@ -83,6 +83,22 @@ instead of a dropped frame. Measured at 29.5 fps on the tablet at 4×.
 
 ### Performance
 
+Measured on the tablet rather than guessed at. The Python render turned out to
+be 3.5 ms a frame against a 33 ms budget — the cost was all on the UI thread,
+which is not where anyone would have looked first.
+
+- **Spectro's draw: 16 ms → 10 ms** at the 50th percentile (90th 17 → 11, jank
+  87% → 24%). Two causes. The foreground pass built a `StringBuilder` per run
+  to hold what was usually a single character — thousands of allocations a
+  frame on any mode with fine detail. And the background pass ran for
+  two-plane modes, which have no per-cell background, so every rect it drew
+  was the surface's own colour painted over itself.
+- **The field multiplier adapts to the mode.** At 4x the tablet's grid Chladni
+  costs 1.4 ms a frame and Tunnel In 11.5 — same cell count, but braille
+  carries eight picture pixels per cell where half-blocks carry two. A fixed
+  multiplier is wasted detail on one or a dropped frame on the other, so it is
+  a control loop on the measured render time, driven by a running average
+  because individual frames scatter too much to steer on.
 - The grid renderer built a fresh `TextStyle` per run and called Compose's
   `drawText`, which is a full measure-and-shape pass each time. Replaced with
   one reusable `android.graphics.Paint` drawing to the native canvas:

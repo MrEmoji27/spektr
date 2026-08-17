@@ -446,6 +446,23 @@ private class GridPaints(
     // and the alternative is doing that per cell per frame.
     private val known = HashMap<Int, Glyph>(512)
 
+    // One builder for the whole frame rather than one per run.
+    private val scratch = StringBuilder(256)
+
+    /**
+     * A run of [n] copies of [glyph], built into the shared scratch.
+     *
+     * appendCodePoint would be wrong here even though the glyph is one
+     * codepoint: [Glyph.text] already holds the surrogate pair for the astral
+     * codepoints some modes emit, so appending the string is both correct and
+     * cheaper than re-encoding it.
+     */
+    fun run(glyph: Glyph, n: Int): String {
+        scratch.setLength(0)
+        for (k in 0 until n) scratch.append(glyph.text)
+        return scratch.toString()
+    }
+
     fun glyphFor(code: Int): Glyph = known.getOrPut(code) {
         val text = String(Character.toChars(code))
         val paint = if (main.hasGlyph(text)) main else fallback
@@ -619,21 +636,27 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawGrid(
     val baseline = paints.baseline
 
     // Background plane first, run-length over same-coloured cells per row.
+    //
+    // Only when there is one. A two-plane mode has no per-cell background, so
+    // every rect this pass drew was the surface's own colour painted over
+    // itself — one wasted rect per row, every frame, for nothing visible.
     var i = 0
-    while (i < rows * cols) {
-        val row = i / cols
-        val col = i - row * cols
-        val bg = bgIndex(i)
-        val color = if (bg >= 0) rampColor(bg) else Color(palette.bg)
-        var j = i + 1
-        val rowEnd = (row + 1) * cols
-        while (j < rowEnd && bgIndex(j) == bg) j++
-        drawRect(
-            color,
-            topLeft = Offset(col * cell.w, row * cell.h),
-            size = Size((j - i) * cell.w, cell.h),
-        )
-        i = j
+    if (frame.planes == 3) {
+        while (i < rows * cols) {
+            val row = i / cols
+            val col = i - row * cols
+            val bg = bgIndex(i)
+            val color = if (bg >= 0) rampColor(bg) else Color(palette.bg)
+            var j = i + 1
+            val rowEnd = (row + 1) * cols
+            while (j < rowEnd && bgIndex(j) == bg) j++
+            drawRect(
+                color,
+                topLeft = Offset(col * cell.w, row * cell.h),
+                size = Size((j - i) * cell.w, cell.h),
+            )
+            i = j
+        }
     }
 
     // Foreground plane: runs of same glyph + same colour, one drawText each.
@@ -654,14 +677,15 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawGrid(
             // Paint want different padding, and whichever ran last would
             // otherwise decide it.
             paint.letterSpacing = glyph.spacingEm
-            // The run is one glyph repeated. Built with appendCodePoint
-            // because some modes draw past U+FFFF and those need a surrogate
-            // pair, which Char.toChar would silently mangle.
-            val sb = StringBuilder((j - i) * 2)
-            for (k in 0 until (j - i)) sb.append(glyph.text)
+            // The run is one glyph repeated. A run of one — much the commonest
+            // case on a mode with fine detail, where a whole row can be
+            // hundreds of one-cell runs — draws the cached string directly;
+            // building a StringBuilder to hold a single character was
+            // thousands of allocations a frame for nothing.
+            val text = if (j - i == 1) glyph.text else paints.run(glyph, j - i)
             drawIntoCanvas { canvas ->
                 canvas.nativeCanvas.drawText(
-                    sb.toString(), col * cell.w, row * cell.h + baseline, paint,
+                    text, col * cell.w, row * cell.h + baseline, paint,
                 )
             }
         }

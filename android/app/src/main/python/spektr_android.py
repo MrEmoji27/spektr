@@ -120,6 +120,8 @@ class Engine:
         self._stats_onsets = 0
         self._stats_band_peak = 0.0
         self._stats_sample_peak = 0.0
+        self._stats_render = 0.0
+        self._stats_render_max = 0.0
 
         # The motion layer, which is not in the analyser and not in the modes.
         #
@@ -151,8 +153,11 @@ class Engine:
         only way to read them is a log line. So they are collected here rather
         than inferred from the picture.
 
-        ``[fps, mean dt ms, mean energy, onsets/s, peak band, peak sample]``.
-        Resets on read, so each line describes its own interval.
+        ``[fps, mean dt ms, mean energy, onsets/s, peak band, peak sample,
+        mean render ms, worst render ms]``. Resets on read, so each line
+        describes its own interval rather than the whole session — a burst
+        that only shows in the average of one second disappears into the
+        average of five hundred.
         """
         now = time.monotonic()
         span = max(1e-6, now - self._stats_t0)
@@ -164,6 +169,8 @@ class Engine:
             self._stats_onsets / span,
             self._stats_band_peak,
             self._stats_sample_peak,
+            self._stats_render / n * 1000.0,
+            self._stats_render_max * 1000.0,
         ]
         self._stats_t0 = now
         self._stats_frames = 0
@@ -172,6 +179,8 @@ class Engine:
         self._stats_onsets = 0
         self._stats_band_peak = 0.0
         self._stats_sample_peak = 0.0
+        self._stats_render = 0.0
+        self._stats_render_max = 0.0
         return [float(v) for v in out]
 
     # ── audio in ──
@@ -328,6 +337,7 @@ class Engine:
         nothing here caches a size or objects to it changing mid-session — a
         rotation is just a different pair of numbers.
         """
+        began = time.monotonic()
         mode = self._modes.get(name)
         if mode is None:
             raise KeyError(f"no mode named {name!r}")
@@ -402,11 +412,16 @@ class Engine:
         bidx = out[2] if len(out) == 3 else None
         if self._field_mode:
             plane, fw, fh = _field(codes, cidx, bidx)
-            return b"".join((
+            out_bytes = b"".join((
                 _HEADER.pack(_MAGIC, WIRE_VERSION, 1, fw, fh),
                 np.ascontiguousarray(plane, dtype=np.uint8).tobytes(),
             ))
-        return _pack(codes, cidx, bidx)
+        else:
+            out_bytes = _pack(codes, cidx, bidx)
+        spent = time.monotonic() - began
+        self._stats_render += spent
+        self._stats_render_max = max(self._stats_render_max, spent)
+        return out_bytes
 
     def set_field_mode(self, on: bool) -> None:
         """Draw as a picture rather than as glyphs.

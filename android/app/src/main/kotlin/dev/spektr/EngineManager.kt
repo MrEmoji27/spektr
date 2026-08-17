@@ -97,15 +97,32 @@ object EngineManager {
         private set
 
     /**
-     * Cells the field path may ask a mode for, whatever the screen.
-     *
-     * Chladni at 4x the tablet's grid is 64k cells and about 1.8 ms on a
-     * laptop, but the modes are not all Chladni — Maelstrom runs a fluid sim
-     * and Murmuration an n-body flock, and those scale with cells too. This
-     * caps the work rather than the multiplier, so a bigger screen gets a
-     * smaller multiplier instead of a dropped frame.
+     * Cells the field path may ask a mode for, whatever the screen. A ceiling
+     * against an enormous display, not the working limit — [fieldScale] is
+     * what actually decides, and it decides by timing the renders.
      */
-    private const val FIELD_CELL_BUDGET = 70_000
+    private const val FIELD_CELL_BUDGET = 160_000
+
+    /**
+     * The field multiplier adapts, because the right one is per mode.
+     *
+     * Measured at 4x the tablet's grid: Chladni costs 1.4 ms a frame, Tunnel
+     * In 11.5. Same cell count — the difference is that Chladni's half-blocks
+     * carry two picture rows per cell where braille carries eight, so the
+     * braille modes are filling four times the pixels and doing more work per
+     * pixel to do it. A fixed multiplier is therefore either wasted detail on
+     * one or a dropped frame on the other.
+     *
+     * So it is a control loop on the measured render time instead: climb while
+     * frames are cheap, back off when they are not. The gap between the two
+     * thresholds is hysteresis — without it the scale oscillates every frame
+     * around whatever value happens to sit on the boundary.
+     */
+    private const val FIELD_MS_HIGH = 14.0
+    private const val FIELD_MS_LOW = 6.0
+    private const val FIELD_SCALE_MAX = 6
+    private var fieldScale = 2
+    private var renderEma = 0.0
 
     /** Every theme's colours, for the picker. Empty until [loadSwatches]. */
     var swatches: List<ThemeSwatch> by mutableStateOf(emptyList())
@@ -219,6 +236,11 @@ object EngineManager {
         val e = engine ?: return
         if (name == mode || name !in e.modes) return
         mode = name
+        // Back to a scale the next mode is certain to afford. Climbing again
+        // takes a few frames; inheriting a cheap mode's 6x into an expensive
+        // one costs a visible stall on the very first frame of the switch.
+        fieldScale = 2
+        renderEma = 0.0
         prefs?.edit()?.putString(KEY_MODE, name)?.apply()
     }
 
@@ -259,12 +281,38 @@ object EngineManager {
         }
     }
 
-    /** Biggest whole multiplier of the cell grid that stays inside the budget. */
-    private fun fieldScale(w: Int, h: Int): Int {
+    /** Clamps a wanted multiplier to something this grid can afford at all. */
+    private fun capScale(want: Int, w: Int, h: Int): Int {
         if (w <= 0 || h <= 0) return 1
-        var s = 4
+        var s = want.coerceIn(1, FIELD_SCALE_MAX)
         while (s > 1 && w.toLong() * h * s * s > FIELD_CELL_BUDGET) s--
         return s
+    }
+
+    /**
+     * One step of the control loop described on [fieldScale].
+     *
+     * Driven by a running average rather than the last frame. Individual
+     * renders scatter — Chladni at 4x measured 5.7 ms one frame and 10.7 the
+     * next — so a per-frame rule steps up and down constantly, and every step
+     * changes the field's shape and reallocates the bitmap. The average is
+     * cleared after a change because the frames either side of it are
+     * measurements of different things.
+     */
+    private fun adaptScale(renderMs: Double, w: Int, h: Int) {
+        renderEma = if (renderEma <= 0.0) renderMs else renderEma * 0.9 + renderMs * 0.1
+        if (renderEma > FIELD_MS_HIGH && fieldScale > 1) {
+            fieldScale--
+            renderEma = 0.0
+        } else if (renderEma < FIELD_MS_LOW && fieldScale < FIELD_SCALE_MAX) {
+            // Only climb if the next step is actually available on this grid,
+            // or a capped scale reads as "still cheap" forever and the counter
+            // runs away from what is being drawn.
+            if (capScale(fieldScale + 1, w, h) > fieldScale) {
+                fieldScale++
+                renderEma = 0.0
+            }
+        }
     }
 
     fun useSmooth(on: Boolean) {
@@ -332,8 +380,10 @@ object EngineManager {
                 val e = engine
                 if (e != null && gridW > 0 && gridH > 0) {
                     try {
-                        val s = if (smooth) fieldScale(gridW, gridH) else 1
+                        val s = if (smooth) capScale(fieldScale, gridW, gridH) else 1
+                        val t0 = System.nanoTime()
                         e.render(mode, gridW * s, gridH * s)?.let { lastFrame = it }
+                        if (smooth) adaptScale((System.nanoTime() - t0) / 1e6, gridW, gridH)
                     } catch (t: Throwable) {
                         Log.w("spektr", "render failed", t)
                     }
@@ -345,10 +395,15 @@ object EngineManager {
                         tick = 0
                         runCatching {
                             val s = e.stats()
-                            if (s.size >= 6) Log.i(
+                            if (s.size >= 8) Log.i(
                                 "spektr",
-                                "%s: %.1f fps  dt %.1f ms  energy %.3f  onsets %.1f/s  band %.2f  sample %.3f"
-                                    .format(mode, s[0], s[1], s[2], s[3], s[4], s[5])
+                                ("%s%s: %.1f fps  dt %.1f ms  render %.1f/%.1f ms  " +
+                                    "energy %.3f  onsets %.1f/s  band %.2f  sample %.3f")
+                                    .format(
+                                        mode,
+                                        if (smooth) " [smooth x$fieldScale]" else "",
+                                        s[0], s[1], s[6], s[7], s[2], s[3], s[4], s[5],
+                                    )
                             )
                         }
                     }
