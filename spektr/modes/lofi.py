@@ -40,6 +40,9 @@ from . import polar_grid as _polar
 
 _ARM_TURN = 0.08   # fixed tonearm rest angle, as a fraction of a full turn
 _VINYL_BANDS = 14
+#: groove spacing, in dots. A module constant rather than a local because the
+#: static cache divides the radius by it once instead of every frame.
+_VINYL_PERIOD = 2.6
 
 
 def _vinyl_static(dist: np.ndarray, turn: np.ndarray, max_r: float, dr: int, dc: int) -> dict:
@@ -71,6 +74,14 @@ def _vinyl_static(dist: np.ndarray, turn: np.ndarray, max_r: float, dr: int, dc:
 
     return {
         "disc_r": disc_r, "label_r": label_r, "hole_r": hole_r,
+        # Two rescalings of the radius the groove pass would otherwise redo
+        # every frame. At 400x100 the dot grid is 320,000 wide and this mode is
+        # memory-bound, so a pass saved is worth more than an operation saved:
+        # these two cost nothing here and remove two full traversals from the
+        # frame.
+        "dist035": (dist * np.float32(0.35)).astype(np.float32),
+        "dist_over_period": (dist / np.float32(_VINYL_PERIOD)).astype(np.float32),
+        "label_over_period": np.float32(label_r / _VINYL_PERIOD),
         "on_disc": on_disc,
         "groove_zone": on_disc & (dist > label_r),
         "label": on_disc & (dist <= label_r) & (dist > hole_r),
@@ -120,34 +131,54 @@ def vinyl(ctx: Ctx):
     if skip:
         sp["v"] += 1.4 * max(ctx.dt, 0.0)
 
-    lv = ctx.display_bands(_VINYL_BANDS)
-    # Both things the groove level is used for — how wide the lit part of a
-    # groove is, and how bright it burns — are functions of the band alone, so
-    # they are computed on the band vector and gathered where they are needed.
-    # Gathering the level over the whole dot grid first and then running the
-    # arithmetic on 320,000 cells cost 2.1 ms at 400x100 for numbers with
-    # sixteen possible values.
+    lv = ctx.display_bands(_VINYL_BANDS).astype(np.float32)
     band_at_r = sv["band_at_r"]
-    groove_width = 0.16 + 0.34 * lv
-    groove_heat = 0.12 + 0.80 * lv
 
     # float32 throughout the heat pipeline, the same deal Flame's docstring
     # makes: at 400x100 this is several passes over a 320k-cell grid, and
-    # every float64 one moves twice the memory of a float32 one.
+    # every float64 one moves twice the memory of a float32 one. Which also
+    # means the thing worth counting here is *passes*, not operations — this
+    # loop is memory-bound, and the sine below is not the expensive part of it.
+    #
     # groove rings ripple outward; the ripple rides the smoothed level so the
-    # whole surface breathes rather than jittering ring to ring
-    period = 2.6
-    ripple = dist + st["warm"] * 2.2 * np.sin(dist * 0.35 - sp["v"] * 3.0)
-    groove = frac((ripple - sv["label_r"]) / period)
-    groove_lit = sv["groove_zone"] & (groove < groove_width[band_at_r])
+    # whole surface breathes rather than jittering ring to ring. Built in place
+    # from the pre-divided radius, so what used to be
+    # ``frac((dist + k*sin(dist*0.35 - b) - label_r) / period)`` — nine
+    # traversals of the dot grid, four of them building temporaries that were
+    # read once and thrown away — is the same arithmetic in six.
+    groove = np.subtract(sv["dist035"], np.float32(sp["v"] * 3.0))
+    np.sin(groove, out=groove)
+    groove *= np.float32(st["warm"] * 2.2 / _VINYL_PERIOD)
+    groove += sv["dist_over_period"]
+    groove -= sv["label_over_period"]
+    groove -= np.floor(groove)                       # frac, in place
+
+    # One gather, not two, and none of it repeated on a boolean subset. Both
+    # numbers the groove needs — how wide the lit part is and how bright it
+    # burns — are affine in the band level, so the *level* is gathered once and
+    # the two are derived from it. The previous form gathered a width over the
+    # whole grid, then gathered the band index again through the lit mask, then
+    # gathered a heat through that: three irregular passes where one regular
+    # one and two multiply-adds do the same job.
+    lvg = np.take(lv, band_at_r)
+    groove_lit = sv["groove_zone"] & (groove < np.float32(0.16) + np.float32(0.34) * lvg)
+    heat = np.where(groove_lit, np.float32(0.12) + np.float32(0.80) * lvg, np.float32(0.0))
 
     # a narrow catch of light, not a wedge: 0.035 of a turn is 25 degrees of
     # solid fill sweeping the disc, which reads as a slab rather than a glint
-    spin = frac(turn - sp["v"])
-    glint = sv["glint_zone"] & (np.abs(spin - 0.5) < 0.010)
+    #
+    # Tested as a window on ``turn`` rather than by rotating the grid into the
+    # window's frame: ``frac(turn - v)`` is three traversals and an absolute
+    # value to find a band two percent of a turn wide, where two comparisons
+    # against a pair of scalars answer the same question. ``turn`` is in
+    # [0, 1), so the window wraps at most once and the wrapped case is an OR.
+    lo, hi = (sp["v"] + 0.49) % 1.0, (sp["v"] + 0.51) % 1.0
+    if lo < hi:
+        in_glint = (turn >= np.float32(lo)) & (turn < np.float32(hi))
+    else:
+        in_glint = (turn >= np.float32(lo)) | (turn < np.float32(hi))
+    glint = sv["glint_zone"] & in_glint
 
-    heat = np.zeros((dr, dc), dtype=np.float32)
-    heat[groove_lit] = groove_heat[band_at_r[groove_lit]]
     heat[sv["label"]] = 0.35 + 0.5 * bass
     heat[sv["dust"]] = np.maximum(heat[sv["dust"]], 0.55)
     heat[glint] = np.maximum(heat[glint], 0.80 + 0.20 * skip)

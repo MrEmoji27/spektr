@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 
 import numpy as np
+from numpy.lib.stride_tricks import sliding_window_view
 
 from ..palette import RAMP_STEPS
 from ..render import (
@@ -248,12 +249,28 @@ def auroras(ctx: Ctx):
     # truncating a full dot grid of floats: ``int(col + s) == col + int(s)``
     # exactly, for integral col and non-negative s. Halves the cost of building
     # the index and drops a 1.3 MB float temporary at 400x100.
-    idx = np.arange(dc, dtype=np.int32)[None, :] + (shift + dc).astype(np.int32)[:, None]
+    #
+    # And once the offset is per-row, the index array is not needed at all. Row
+    # ``r`` of the sheared picture is ``bright3[off[r] : off[r] + dc]`` — a
+    # contiguous *slice*, not a scatter of arbitrary positions — so a sliding
+    # window over the tiled profile turns each of the three shears from an
+    # element-wise gather driven by a 1.3 MB index into one row-sized memcpy
+    # apiece. The window itself is a view and costs nothing to build.
+    #
+    # The clip is not decoration: ``sway`` is capped at ``0.9 * dc`` while the
+    # two sine terms can reach 1.4x it, so a large enough sway would index past
+    # the end of a three-tile profile. Nothing reaches that today — ``treble``
+    # is at most 1, which puts sway at 0.13 dc — but the cap says otherwise and
+    # a latent out-of-bounds is not worth leaving in for a comparison per row.
+    off = np.clip((shift + dc).astype(np.int32), 0, 2 * dc)
+    bright_sheared = sliding_window_view(bright3, dc)[off]
+    boh_sheared = sliding_window_view(boh3, dc)[off]
+    inv_h_sheared = sliding_window_view(inv_h3, dc)[off]
 
     # Height *within* the ribbon: 0 at the lower rim, 1 at its top edge.
     # Negative below the rim, above 1 over the top, so one pair of comparisons
     # masks the whole shape.
-    u = boh3[idx] - y[:, None] * inv_h3[idx]
+    u = boh_sheared - y[:, None] * inv_h_sheared
     rim = np.clip(1.0 - u * np.float32(5.0), 0.0, 1.0)
 
     gain = np.float32(0.55 + 0.75 * lows)
@@ -264,7 +281,7 @@ def auroras(ctx: Ctx):
     rim *= np.float32(0.90)
     rim += np.float32(0.16) + np.float32(0.34) * (1.0 - u)
     rim *= gain
-    heat = bright3[idx]
+    heat = bright_sheared
     heat *= rim
     heat *= (u >= 0.0) & (u <= 1.0)
 

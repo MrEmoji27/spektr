@@ -828,6 +828,29 @@ def make_strips(
     if h == 0 or w == 0:
         return strips
 
+    # Blank cells inherit the colour to their left, so they stop splitting runs.
+    #
+    # The docstring has promised this for a long time and the code never did it.
+    # A space and a blank braille cell paint no foreground, so their colour
+    # index is not visible — but it was still compared, and a sparse mode is
+    # mostly blanks, so every gap between two lit cells forced two extra
+    # Segments for colours nobody can see. Measured at 400x100: Vinyl 7,774
+    # colour runs against 3,040, Ember 4,110 against 2,142, Murmuration 1,534
+    # against 985, Tunnel and Sonar both down by a third.
+    #
+    # Every *lit* cell keeps its own index exactly — the fill only ever writes
+    # to cells that have no ink — so this changes which Segments are emitted
+    # and never what any of them draws.
+    #
+    # Foreground-only path alone. With a background index the pair is what gets
+    # encoded, and a space's background is thoroughly visible.
+    if bidx is None:
+        blank = (codes == SPACE) | (codes == BRAILLE_BASE)
+        if blank.any():
+            src = np.where(blank, np.int32(0), np.arange(w, dtype=np.int32)[None, :])
+            np.maximum.accumulate(src, axis=1, out=src)
+            cidx = np.take_along_axis(cidx, src, axis=1)
+
     # Whole-grid run starts: column 0 of every row, plus every cell that
     # differs from its left neighbour. One flatnonzero over the whole grid
     # replaces ~five numpy calls per row — at h=50 that is roughly 200 calls
