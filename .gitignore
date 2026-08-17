@@ -14,6 +14,10 @@ venv/
 # local agent/editor config — machine-specific, never shared
 .claude/
 
+# android build output — machine-specific, never shared
+.gradle/
+local.properties
+
 # working notes: handoffs and the mode idea list. Kept out of the repo because
 # they are half-finished thinking addressed to whoever picks the work up next,
 # not documentation, and a reader landing on them from GitHub would take them
