@@ -810,9 +810,13 @@ def make_strips(
     h, w = codes.shape
     styles = palette.styles
     strips: list[Strip] = []
-    # Per-palette, not a module constant: how many ramp steps a run may drift
-    # is a question about *this* theme's colours. See Palette.rle_tol.
-    tol = palette.rle_tol
+    # Per-palette *and* per-index: how far a run may drift is a question about
+    # this theme's colours at the colour the run started on. See
+    # Palette.rle_budget — one number for the whole ramp is decided by its
+    # steepest segment, which on `classic` is 0 and switches the merge off
+    # entirely.
+    budget = palette.rle_budget
+    tol = budget.max()
 
     # One C-level decode for the whole grid beats h*w calls to chr(). At 240x60
     # that is 14,400 interpreter round trips replaced by a single memcpy and a
@@ -873,8 +877,8 @@ def make_strips(
         # forces a boundary immediately, by induction — and the whole Python
         # merge pass can be skipped. Rows of sharply distinct colours (a
         # Chladni grid, say) stay exactly as cheap as before this tolerance.
-        if np.any(np.abs(np.diff(arr)) <= tol):
-            ms, mv, ends = _rle_merge(starts, vals, w, tol)
+        if tol and np.any(np.abs(np.diff(arr)) <= budget[arr[:-1]]):
+            ms, mv, ends = _rle_merge(starts, vals, w, budget.tolist())
         else:
             ms, mv, ends = starts, vals, _row_clamped_ends(flat, h, w)
         row_end = w
@@ -904,11 +908,12 @@ def make_strips(
     # AND, not OR: a merge needs *both* channels inside the tolerance, so a
     # pair that qualifies on only one of them can never merge and must not
     # drag the grid onto the Python path.
-    if np.any(
-        (np.abs(np.diff(f_arr)) <= tol) & (np.abs(np.diff(b_arr)) <= tol)
+    if tol and np.any(
+        (np.abs(np.diff(f_arr)) <= budget[f_arr[:-1]])
+        & (np.abs(np.diff(b_arr)) <= budget[b_arr[:-1]])
     ):
         ms, mv, ends = _rle_merge_pair(
-            starts, f_arr.tolist(), b_arr.tolist(), w, tol
+            starts, f_arr.tolist(), b_arr.tolist(), w, budget.tolist()
         )
     else:
         ms = starts
@@ -929,7 +934,7 @@ def make_strips(
     return strips
 
 
-def _rle_merge(starts, vals, w, tol):
+def _rle_merge(starts, vals, w, budget):
     """Merge runs whose colour stays within ``tol`` of the current run's start.
 
     Sequential by nature — whether a run merges depends on the value the
@@ -949,7 +954,7 @@ def _rle_merge(starts, vals, w, tol):
     for k in range(1, len(starts)):
         p = starts[k]
         v = vals[k]
-        if p >= row_end or v > v0 + tol or v < v0 - tol:
+        if p >= row_end or abs(v - v0) > budget[v0]:
             me.append(row_end if p >= row_end else p)
             ms.append(p)
             mv.append(v)
@@ -960,7 +965,7 @@ def _rle_merge(starts, vals, w, tol):
     return ms, mv, me
 
 
-def _rle_merge_pair(starts, fvals, bvals, w, tol):
+def _rle_merge_pair(starts, fvals, bvals, w, budget):
     """Pair version of :func:`_rle_merge`.
 
     A run merges only if *both* channels stay within ``tol`` of the current
@@ -971,21 +976,23 @@ def _rle_merge_pair(starts, fvals, bvals, w, tol):
     mv = [fvals[0] * RAMP_STEPS + bvals[0]]
     me: list[int] = []
     f0, b0 = fvals[0], bvals[0]
+    fb, bb = budget[f0], budget[b0]
     row_end = w
     for k in range(1, len(starts)):
         p = starts[k]
         f, b = fvals[k], bvals[k]
         if (
             p >= row_end
-            or f > f0 + tol
-            or f < f0 - tol
-            or b > b0 + tol
-            or b < b0 - tol
+            or f > f0 + fb
+            or f < f0 - fb
+            or b > b0 + bb
+            or b < b0 - bb
         ):
             me.append(row_end if p >= row_end else p)
             ms.append(p)
             mv.append(f * RAMP_STEPS + b)
             f0, b0 = f, b
+            fb, bb = budget[f0], budget[b0]
             if p >= row_end:
                 row_end += w
     me.append(row_end)

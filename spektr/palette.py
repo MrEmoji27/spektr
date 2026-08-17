@@ -674,6 +674,7 @@ class Palette:
         "note",
         "pair_styles",
         "rgb",
+        "rle_budget",
         "rle_tol",
         "styles",
         "theme",
@@ -771,6 +772,46 @@ class Palette:
             if int(np.abs(rgb_int[t:] - rgb_int[:-t]).max()) > _RLE_MAX_RGB:
                 break
             self.rle_tol = t
+
+        # ...and the same question asked per index rather than once for the
+        # whole ramp, which is what ``make_strips`` actually uses.
+        #
+        # One number for the ramp is decided by its *worst* segment, and
+        # steepness is local. ``classic`` has a stretch where a single step
+        # moves more than ``_RLE_MAX_RGB``, so the rule above returns 0 and the
+        # merge never fires — on the default theme — even though the average
+        # index could safely drift nearly two steps. Measured on Plasma at
+        # 400x100: 10,579 colour runs against 2,203, which is 80% of the cost
+        # of the mode, given away to protect a handful of indices that needed
+        # protecting.
+        #
+        # Each index gets the drift *it* can afford. The guarantee is unchanged
+        # and still the one the constant names: no cell is more than
+        # ``_RLE_MAX_RGB`` per channel from the colour it asked for. A steep
+        # index still gets 0 and still splits exactly as before.
+        # Symmetric, which the first version was not: a run starting at index
+        # i absorbs values both above and below it, so i's budget has to hold
+        # for rgb[i-t] as well as rgb[i+t]. Checking only forward let `classic`
+        # drift 16/255 against a bound of 10 — caught by measuring the colour
+        # actually emitted for every cell rather than by trusting the
+        # construction.
+        n = len(rgb_int)
+        budget = np.zeros(n, dtype=np.int32)
+        for i in range(n):
+            t = 0
+            while t < _RLE_MAX_TOL:
+                nxt = t + 1
+                lo, hi = i - nxt, i + nxt
+                ok = True
+                if lo >= 0:
+                    ok = int(np.abs(rgb_int[lo] - rgb_int[i]).max()) <= _RLE_MAX_RGB
+                if ok and hi < n:
+                    ok = int(np.abs(rgb_int[hi] - rgb_int[i]).max()) <= _RLE_MAX_RGB
+                if not ok:
+                    break
+                t = nxt
+            budget[i] = t
+        self.rle_budget = budget
 
     # ── lookups ──
     def pair_style(self, key: int) -> Style:

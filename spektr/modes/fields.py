@@ -136,9 +136,19 @@ def _plasma(ctx: Ctx, cells: str):
     def geo():
         y = np.arange(rows2, dtype=np.float32)[:, None] / np.float32(max(1, rows2 - 1))
         x = np.arange(cols, dtype=np.float32)[None, :] / np.float32(max(1, cols - 1))
-        return y, x
+        # The ripple's distance-from-centre is pure geometry: no time in it and
+        # no audio, so it is the same array every frame for a given size. It
+        # was being rebuilt each one — two squares, a broadcast add, a square
+        # root and a scale over the whole grid — which at 400x100 is five
+        # traversals of 80,000 cells to arrive at the number it arrived at last
+        # frame. The other three terms are genuinely per-frame; this one is
+        # furniture. Scaled by 7 here too, so the per-frame form is one
+        # subtract and one sine.
+        r = np.sqrt((x - np.float32(0.5)) ** 2 * np.float32(2.2)
+                    + (y - np.float32(0.5)) ** 2) * np.float32(7.0)
+        return y, x, r.astype(np.float32)
 
-    y, x = ctx.scratch("plasma", geo)
+    y, x, ripple_r = ctx.scratch("plasma", geo)
 
     t = np.float32(ctx.t)
     # fractions rather than fixed indices — this mode has no business knowing
@@ -152,11 +162,7 @@ def _plasma(ctx: Ctx, cells: str):
         np.sin((x * np.float32(3.0) + t * np.float32(0.7)) * (np.float32(1.0) + lows * np.float32(1.4)))
         + np.sin((y * np.float32(2.5) - t * np.float32(0.5)) * (np.float32(1.0) + mids * np.float32(1.2)))
         + np.sin(((x + y) * np.float32(2.0) + t * np.float32(0.9)))
-        + np.sin(
-            np.sqrt((x - np.float32(0.5)) ** 2 * np.float32(2.2) + (y - np.float32(0.5)) ** 2)
-            * np.float32(7.0)
-            - t * np.float32(2.2) * (np.float32(0.4) + highs * np.float32(2.0))
-        )
+        + np.sin(ripple_r - t * np.float32(2.2) * (np.float32(0.4) + highs * np.float32(2.0)))
     )
     field = (v + np.float32(4.0)) * np.float32(0.125)
     field = np.clip(field * np.float32(0.35 + ctx.energy * 1.5), 0.0, 1.0)
