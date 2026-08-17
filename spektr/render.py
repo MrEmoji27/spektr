@@ -493,22 +493,6 @@ def shade_cells(
     nsub = rows * cols
     b = np.float32(shade_block_for(h * w, nsub) if block is None else block)
 
-    # Both ends snapped to a block of ramp steps, and the pair is *always* one
-    # block wide unless the cell genuinely spans more.
-    #
-    # Without this the two colours track the cell's own range, which is fine on
-    # a smooth field and ruinous on a sharp one: every edge cell picks its own
-    # pair and the strip builder pays a run boundary for each. Measured on
-    # Chladni at 400x100 — 11,039 colour runs against 7,300, and Chladni
-    # Extreme at 17,621. Snapping to blocks leaves ``steps / block`` distinct
-    # pairs for the whole frame, so neighbouring cells share one and merge,
-    # while the dither still resolves the value *inside* the block: sixteen
-    # blocks of eight subcell gradations is 128 levels where the ramp names 64.
-    lo_i = np.floor(np.clip(lo, 0.0, 1.0) * top / b) * b
-    hi_i = np.maximum(np.ceil(np.clip(hi, 0.0, 1.0) * top / b) * b, lo_i + b)
-    hi_i = np.minimum(hi_i, top)
-    lo_i = np.minimum(lo_i, hi_i - np.float32(1.0))
-
     # Where a cell holds no edge, do not dither it at all.
     #
     # This is the correction to the first version, and the screenshot that
@@ -546,12 +530,11 @@ def shade_cells(
     # and a cell holding a real edge has an edge to draw — there is nothing
     # left for a stipple to buy.
     #
-    # The midpoint comes from the cell's *own* range, not from the snapped pair,
-    # so ``block`` moves only the two colours and never the shape. Snapping the
-    # threshold too would tie the boundary's position to the colour
-    # quantisation: a mode passing a coarser block to buy back strip time would
-    # find its edges drifting off the field as a side effect, which is not a
-    # trade anyone would knowingly make.
+    # The midpoint comes from the cell's *own* range, so ``block`` below moves
+    # only the two colours and never the shape. Snapping the threshold too would
+    # tie the boundary's position to the colour quantisation: a mode passing a
+    # coarser block to buy back strip time would find its edges drifting off the
+    # field as a side effect, which is not a trade anyone would knowingly make.
     mid = (lo + hi) * np.float32(0.5) * top
 
     half = len(sub) // 2
@@ -564,25 +547,60 @@ def shade_cells(
         bot_mean += s
     bot_mean *= np.float32(1.0 / half)
 
+    # The mask, and with it the mean of the subcells on each side of the cut.
     mask = np.zeros((h, w), dtype=np.int32)
+    on_sum = np.zeros((h, w), dtype=np.float32)
+    n_on = np.zeros((h, w), dtype=np.float32)
     k = 0
     for r in range(rows):
         for c in range(cols):
             on = sub[k] * top >= mid
             weight = (1 << k) if bits is None else bits[r, c]
             np.add(mask, np.where(on, weight, 0), out=mask)
+            np.add(on_sum, sub[k], out=on_sum, where=on)
+            np.add(n_on, np.float32(1.0), out=n_on, where=on)
             k += 1
 
     lut = QUADRANT_LUT if CELL_MODE == "quadrant" else OCTANT_LUT_WIDE
     codes = np.where(edge, lut[mask], np.int32(UPPER_HALF))
+
+    # An edge cell is coloured by the **mean of each side**, not by the cell's
+    # two extremes.
+    #
+    # This is the last of the three things that made these modes read as
+    # pixels, and the one that survived the other two fixes. Painting a cell
+    # with its extremes makes it more contrasty than the field it stands for:
+    # around a Chladni nodal line the halo came out as flat slabs of orange
+    # with a hard step between them — "the coloured streaks are what are kinda
+    # pixelated" — because every cell in the halo reported the brightest and
+    # darkest thing in it rather than what was actually there. The mean of the
+    # subcells the glyph lights is what an antialiased downsample would use,
+    # and the halo becomes the gradient it is.
+    #
+    # Both sides are non-empty whenever ``edge`` is true: the cut is at the
+    # midpoint of a range that spans at least a ramp step and a half, so the
+    # subcell holding ``hi`` is above it and the one holding ``lo`` is below.
+    # The clamps are there for the flat cells sharing the array, not for these.
+    total = (top_mean + bot_mean) * np.float32(half)
+    fg_mean = on_sum / np.maximum(n_on, np.float32(1.0))
+    bg_mean = (total - on_sum) / np.maximum(np.float32(nsub) - n_on, np.float32(1.0))
+
+    # Snapped to the block, which is purely a strip-builder concession: exact
+    # means measured 45,216 colour runs against 18,629 on Chladni Extreme at
+    # 400x100 and cost 6 ms a frame, and against the snapped version the
+    # difference was not visible in the rasterised cells. Nothing above depends
+    # on it, so a mode may pass a coarser ``block`` to buy time knowing it moves
+    # the colours alone.
+    e_fg = np.clip(np.rint(np.clip(fg_mean * top, 0.0, top) / b) * b, 0.0, top)
+    e_bg = np.clip(np.rint(np.clip(bg_mean * top, 0.0, top) / b) * b, 0.0, top)
 
     # A flat cell's colours are its two halves, exact and unquantised beyond
     # the ramp itself — no block snapping, because there is no coverage to
     # resolve inside the block and snapping would only band a smooth gradient.
     flat_fg = np.clip(top_mean * top, 0.0, top)
     flat_bg = np.clip(bot_mean * top, 0.0, top)
-    fg = np.where(edge, hi_i, flat_fg).astype(np.int32)
-    bg = np.where(edge, lo_i, flat_bg).astype(np.int32)
+    fg = np.where(edge, e_fg, flat_fg).astype(np.int32)
+    bg = np.where(edge, e_bg, flat_bg).astype(np.int32)
     return codes, fg, bg
 
 

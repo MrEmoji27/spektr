@@ -374,6 +374,34 @@ def test_two_rows_cannot_place_a_horizontal_boundary_and_do_not_pretend_to():
         assert popcount[int(codes[0, 0])] in (0, 2, 4)
 
 
+def test_an_edge_cell_is_coloured_by_each_side_s_mean_not_its_extremes():
+    """The third and last thing that made these modes read as pixels.
+
+    A cell painted with its extremes is more contrasty than the field it
+    stands for. Around a Chladni nodal line that turned the halo into flat
+    slabs with a hard step between them, which is what "the coloured streaks
+    are what are kinda pixelated" was pointing at — every cell in the halo was
+    reporting the brightest and darkest thing in it rather than what was there.
+
+    Here the cut lights the top three rows, holding 1.0, 0.9 and 0.6, so the
+    foreground should be their mean of 0.833. The extremes version paints it
+    1.0 — a sixth of the ramp too bright, on every cell of the halo at once.
+    """
+    from spektr.render import RAMP_STEPS, UPPER_HALF
+
+    top = RAMP_STEPS - 1
+    col = np.array([1.0, 0.9, 0.6, 0.0], dtype=np.float32)[:, None]
+    codes, fg, bg = _shaded(np.repeat(col, 2, axis=1), "octant")
+
+    assert codes[0, 0] != UPPER_HALF, "three lit rows is not the half-block glyph"
+    want = (1.0 + 0.9 + 0.6) / 3.0 * top
+    assert abs(int(fg[0, 0]) - want) <= 4, (
+        f"foreground {fg[0, 0]} is not the mean of the lit subcells (~{want:.0f})"
+    )
+    assert int(fg[0, 0]) < 0.95 * top, "foreground is still tracking the cell's maximum"
+    assert int(bg[0, 0]) <= 4, f"background {bg[0, 0]} is not the mean of the dark side"
+
+
 @pytest.mark.parametrize("cells, rows", [("quadrant", 2), ("octant", 4)])
 def test_the_mask_follows_the_boundary_angle(cells, rows):
     """Both geometries are two columns wide, so both carry a boundary's slope.
