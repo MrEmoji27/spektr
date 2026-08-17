@@ -387,7 +387,16 @@ def _chladni_flow(ctx: Ctx, cells: str):
 
     octant = cells == "octant"
     rows2 = h * subcell_rows() if octant else h * 2
-    cols = w * 2 if octant else w
+    # Vertical only, the same trade Chladni Extreme documents at length and for
+    # the same reason: the rotation makes every sample cost four broadcast
+    # multiplies over the whole field, and at 4x2 a cell that was 3.0 ms of a
+    # 12.4 ms frame in `_rot_sines` alone. At 4x1 it is half of that, and the
+    # resolution it gives up is the horizontal one — a text cell is about twice
+    # as tall as it is wide, so the coarseness worth spending on is vertical.
+    # The two subcell columns of a cell then share a value, which costs
+    # something on a near-vertical nodal line and nothing on the horizontal
+    # ones the figure is mostly made of.
+    cols = w
 
     def geo():
         y = np.arange(rows2, dtype=np.float32)[:, None] / np.float32(max(1, rows2 - 1))
@@ -462,7 +471,18 @@ def _chladni_flow(ctx: Ctx, cells: str):
         # between sitting on the 16.7 ms budget and sitting clear of it. It
         # costs nothing visible: the block moves the two colours, never the
         # threshold, so the nodal lines land in exactly the same place.
-        return shade_cells(nodal, block=8)
+        #
+        # One repeat rather than twice the trig, exactly as Chladni Extreme
+        # does it — the field is built at one sample per cell column and the
+        # cell's two subcell columns take the same value.
+        #
+        # Block 12 rather than 8: measured 8,190 colour runs against 10,701 at
+        # 400x100, worth 2 ms of the frame, and rasterising both to pixels and
+        # looking showed no difference at all. Chladni Extreme cannot take the
+        # same widening — its field is a broad smooth wash rather than a
+        # plateau with lines through it, so at 16 the contours start to band
+        # and at 24 it is obvious.
+        return shade_cells(np.repeat(nodal, 2, axis=1), block=12)
 
     nodal = np.round(nodal * np.float32(12.0)) * np.float32(1.0 / 12.0)
 
