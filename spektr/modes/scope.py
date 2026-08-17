@@ -15,6 +15,20 @@ import numpy as np
 from ..render import cell_max, pack_braille, pack_octant_bits
 from . import Ctx, empty, mode
 
+#: How many seconds of audio ``ctx.wave`` spans.
+#:
+#: The analyser downsamples its mid FFT window — 4096 samples, whatever the
+#: rate — to WAVE_POINTS, so this is 85 ms at 48 kHz and 93 ms at 44.1 kHz.
+#: ECG needs it to work out how much of the buffer is genuinely new since the
+#: last column it committed.
+#:
+#: It read 0.043 for a long time, left over from the 2048-sample FFT the
+#: analyser used before the split into bass and mid windows. Exactly half, so
+#: every column reduced twice the audio it should have and the trace came out
+#: flatter than the signal. Not exact across rates, and it does not need to
+#: be: the result is clipped to the buffer either way.
+_WAVE_SPAN_S = 0.085
+
 
 def _stereo_mix(stereo: np.ndarray) -> np.ndarray | None:
     """Mono mix of a stereo buffer; ``None`` when the buffer is empty.
@@ -209,16 +223,16 @@ def _ecg(ctx: Ctx, octant: bool):
     acc["v"] -= step
 
     if step:
-        # Only the newest slice of the buffer is new: the analyser publishes a
-        # ~43 ms window and the render loop reads it every ~17 ms, so consuming
+        # Only the newest slice of the buffer is new: the analyser publishes an
+        # 85 ms window and the render loop reads it every ~17 ms, so consuming
         # the whole thing every frame would smear each column across the same
-        # three frames of audio and flatten the trace. Take the tail worth the
+        # five frames of audio and flatten the trace. Take the tail worth the
         # time actually elapsed since the last committed column — not this one
         # frame's dt, which would silently drop the audio from any frame that
         # advanced zero columns.
         span = acc["elapsed"]
         acc["elapsed"] = 0.0
-        take = int(np.clip(src.size * (span / 0.043), 8, src.size)) if src.size else 0
+        take = int(np.clip(src.size * (span / _WAVE_SPAN_S), 8, src.size)) if src.size else 0
         seg = src[-take:] if take else src
 
         if seg.size >= step * 2:
@@ -418,9 +432,24 @@ def goniometer(ctx: Ctx):
         y = (right + left) * 0.7071
 
         cx, cy = (dc - 1) / 2.0, (dr - 1) / 2.0
-        # squash x so the display stays circular despite non-square cells
-        px = np.clip(np.rint(cx + x * cx * 0.95).astype(np.int32), 0, dc - 1)
-        py = np.clip(np.rint(cy - y * cy * 0.95).astype(np.int32), 0, dr - 1)
+        # One radius for both axes, so the display is actually circular.
+        #
+        # The comment here used to claim a squash and there was none: both axes
+        # were scaled by their own half-extent, which draws the trace into
+        # whatever rectangle the terminal happens to be. Measured, a fully
+        # uncorrelated pair came out 684 x 344 dots at 400x100 — a 2:1 ellipse.
+        #
+        # That is not cosmetic on this mode. A goniometer is read by its
+        # geometry: a circle means uncorrelated, a 45-degree line means mono,
+        # a vertical one means out of phase. Stretched 2:1, mono drew at 27
+        # degrees and every phase judgement off the display was wrong.
+        #
+        # A braille dot is square — cells are about twice as tall as wide and
+        # hold 2x4 dots — so equal radii in dots really is a circle on screen.
+        # ``polar_grid`` normalises the same way for the same reason.
+        r = min(cx, cy) * 0.95
+        px = np.clip(np.rint(cx + x * r).astype(np.int32), 0, dc - 1)
+        py = np.clip(np.rint(cy - y * r).astype(np.int32), 0, dr - 1)
         np.add.at(field, (py, px), 0.6)
 
     np.clip(field, 0.0, 1.0, out=field)

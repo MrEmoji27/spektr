@@ -213,7 +213,7 @@ def _chladni(ctx: Ctx, cells: str):
     interference pattern has many local extrema even at low mode numbers.
     ``m``/``n`` are capped lower than a "real" Chladni figure would use
     (halving them only cut cost by ~15%, so frequency wasn't the main
-    driver), and ``nodal`` is quantised to 10 buckets before ramping so
+    driver), and ``nodal`` is quantised to 12 buckets before ramping so
     neighbouring pixels collapse into the same colour index more often. That
     combination measured worst-case ~7ms at 400x100, down from ~9-14ms and
     frequently over the 11ms slow-mode threshold — which read as exactly the
@@ -374,7 +374,7 @@ def _chladni_flow(ctx: Ctx, cells: str):
     interference pattern has many local extrema even at low mode numbers.
     ``m``/``n`` are capped lower than a "real" Chladni figure would use
     (halving them only cut cost by ~15%, so frequency wasn't the main
-    driver), and ``nodal`` is quantised to 10 buckets before ramping so
+    driver), and ``nodal`` is quantised to 12 buckets before ramping so
     neighbouring pixels collapse into the same colour index more often. That
     combination measured worst-case ~7ms at 400x100, down from ~9-14ms and
     frequently over the 11ms slow-mode threshold — which read as exactly the
@@ -1554,9 +1554,15 @@ def dither(ctx: Ctx):
     cross-hatch pattern varies across the frame instead of repeating. The
     level drives two scalars — a baseline lift and the texture depth — so a
     louder signal reads as a denser, deeper field and a quiet one as a flat,
-    even grey. There is no clock in here and no state beyond the cached
-    geometry: a frozen spectrum is a frozen frame, exactly like the bars
-    modes.
+    even grey.
+
+    The one piece of state is a slow drift phase integrated through ``ctx.dt``,
+    which rides a single low-frequency swell across the field so the crosshatch
+    does not look like a frozen print and a quiet passage still has something
+    to do. It is lighting, not subject: the pattern itself is a pure function
+    of the spectrum. This docstring claimed the opposite — no clock, no state,
+    a frozen spectrum giving a frozen frame — for as long as the drift has
+    existed.
 
     The threshold is an s x s Bayer matrix tiled by *absolute* dot position
     on both axes. The tile alignment is what makes this a texture rather

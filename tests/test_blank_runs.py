@@ -129,3 +129,36 @@ def test_no_mode_has_a_lit_cell_recoloured():
         assert np.array_equal(filled[~blank], cidx[~blank]), (
             f"{m.name}: the fill moved a lit cell's colour"
         )
+
+
+def test_the_goniometer_is_actually_circular():
+    """Its geometry *is* the reading, so a stretched display is a wrong one.
+
+    A goniometer is read by shape: uncorrelated stereo of equal level draws a
+    circle, mono draws a line. The mode scaled each axis by its own half-extent
+    and drew the trace into whatever rectangle the terminal was — measured at
+    400x100, a circle came out 684 x 344 dots — while the comment above it
+    claimed a squash that was never applied.
+    """
+    n = 2048
+    t = np.linspace(0, 2 * np.pi, n, dtype=np.float32)
+    stereo = (np.stack([np.sin(t), np.cos(t)], axis=1) * 0.9).astype(np.float32)
+    bands = np.full(N_BANDS, 0.5, dtype=np.float32)
+
+    for w, h in ((400, 100), (120, 30)):
+        state: dict = {}
+        for frame in range(3):
+            codes, _ = M.get("Gonio").fn(Ctx(
+                w=w, h=h, bands=bands, peaks=bands, bands_l=bands, bands_r=bands,
+                wave=stereo[:, 0].copy(), stereo=stereo, frame=frame,
+                t=frame / 60.0, dt=1 / 60.0, energy=0.6, silent=False,
+                palette=PAL, state=state, bars=N_BANDS,
+            ))
+        ys, xs = np.nonzero(codes != BRAILLE_BASE)
+        # cells -> dots: 2 wide and 4 tall per cell, and a terminal cell is
+        # about twice as tall as wide, so a braille dot is square.
+        wide = (xs.max() - xs.min() + 1) * 2
+        tall = (ys.max() - ys.min() + 1) * 4
+        assert abs(wide / tall - 1.0) < 0.10, (
+            f"{w}x{h}: a circle drew {wide}x{tall} dots, aspect {wide / tall:.2f}"
+        )
