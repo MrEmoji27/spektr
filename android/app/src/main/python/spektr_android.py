@@ -74,6 +74,7 @@ class Engine:
         self._modes = {m.name: m for m in MODES}
         self._theme = BUILTIN["gruvbox"]
         self._palette = Palette(self._theme)
+        self._swatches: list[list[str]] | None = None
 
         # The motion layer, which is not in the analyser and not in the modes.
         #
@@ -143,11 +144,62 @@ class Engine:
         """``[background, foreground]`` for the app's own chrome."""
         return [self._theme.bg, self._theme.fg]
 
+    def use_theme(self, name: str) -> list[str] | None:
+        """Switch theme and hand back every colour Kotlin needs, in one call.
+
+        ``[bg, fg, *ramp]``, or ``None`` for a theme that does not exist —
+        which is what a config saved by a newer build looks like to an older
+        one. Combined rather than ``set_theme`` plus two reads because those
+        three can half-fail: a theme that switches and then fails to yield its
+        ramp leaves Kotlin drawing the old colours over the new background,
+        and nothing in the app would say so.
+        """
+        if not self.set_theme(name):
+            return None
+        return [self._theme.bg, self._theme.fg, *self._palette.hexes]
+
     def mode_names(self) -> list[str]:
-        return [m.name for m in MODES]
+        """The modes the picker offers — everything except the hidden ones.
+
+        The twelve hidden variants draw through Unicode 16 octants (U+1CD00
+        and up), which landed in 2024 and which no font on Android carries
+        yet. Offering them would put twelve entries in the picker that render
+        as tofu, and tofu on a visualiser reads as a crash rather than as a
+        missing glyph. ``render`` still accepts them by name, exactly as
+        desktop keeps a hidden mode selectable from a config file.
+        """
+        return [m.name for m in MODES if not m.hidden]
 
     def theme_names(self) -> list[str]:
         return sorted(BUILTIN)
+
+    def theme_swatches(self, n: int = 6) -> list[list[str]]:
+        """``[name, bg, fg, *n ramp colours]`` per theme, for painting the picker.
+
+        Fifty-four theme names is a list, not a choice — nobody knows what
+        "ayu-mirage" looks like, and finding out by selecting each in turn is
+        the whole afternoon. The picker draws the colours instead.
+
+        Built once and cached: constructing a ``Palette`` interpolates the
+        whole ramp, and doing that for every theme is worth about a tenth of a
+        second. That is nothing on first open and everything at 30 fps, so it
+        never happens on a frame.
+        """
+        if self._swatches is None:
+            rows = []
+            for name in sorted(BUILTIN):
+                spec = BUILTIN[name]
+                hexes = Palette(spec).hexes
+                # Spread across the ramp rather than taking the first n: the
+                # low end of most ramps is near-background, so the first six
+                # colours of a dozen themes are six near-identical smudges.
+                step = max(1, len(hexes) // n)
+                picked = list(hexes[::step][:n])
+                while len(picked) < n:                       # very short ramps
+                    picked.append(hexes[-1])
+                rows.append([name, spec.bg, spec.fg, *picked])
+            self._swatches = rows
+        return self._swatches
 
     # ── one frame ──
     def render(self, name: str, w: int, h: int) -> bytes:

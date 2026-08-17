@@ -14,9 +14,11 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 
 /**
- * Consent -> capture -> grid. No pickers in v1: the mode and theme are
- * hardcoded in EngineManager and the only two surfaces are the start button
- * (which opens the OS screen-capture consent) and the stop button.
+ * Consent -> capture -> grid.
+ *
+ * The activity owns only the permission dance and the projection consent;
+ * mode and theme live in [EngineManager] and are picked from the screen, so
+ * nothing about a switch comes back through here.
  */
 class MainActivity : ComponentActivity() {
 

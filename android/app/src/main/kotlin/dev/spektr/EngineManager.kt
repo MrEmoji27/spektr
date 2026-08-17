@@ -1,13 +1,13 @@
 package dev.spektr
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -17,9 +17,10 @@ import kotlinx.coroutines.newSingleThreadContext
  * App-scoped owner of the Python engine and the frame pipeline.
  *
  * One thread ("spektr-py") carries every Python call: construction, pushes
- * from the capture thread and one render per frame tick. That serialises the
- * engine's only shared mutable state (its ring buffer and mode scratch)
- * without locks, and it keeps the JNI crossing off the main thread.
+ * from the capture thread, the theme switch and one render per frame tick.
+ * That serialises the engine's only shared mutable state (its ring buffer,
+ * palette and mode scratch) without locks, and it keeps the JNI crossing off
+ * the main thread.
  *
  * The render loop is paced at ~30 fps — the design's target rate, half the
  * desktop's, because every frame costs a JNI crossing and the panel is
@@ -28,12 +29,14 @@ import kotlinx.coroutines.newSingleThreadContext
  */
 object EngineManager {
 
-    // v1: one hardcoded mode and one hardcoded theme, per the design's build
-    // order. Kaleidoscope is a half-block mode: it carries the background
-    // plane, so the renderer's plane handling is exercised on day one.
-    const val MODE = "Kaleidoscope"
-    const val THEME = "gruvbox"
+    /** What a fresh install starts on. Kaleidoscope is a half-block mode, so it exercises the background plane on day one. */
+    const val DEFAULT_MODE = "Kaleidoscope"
+    const val DEFAULT_THEME = "gruvbox"
     private const val FRAME_MS = 33L
+
+    private const val PREFS = "spektr"
+    private const val KEY_MODE = "mode"
+    private const val KEY_THEME = "theme"
 
     private val pyContext = newSingleThreadContext("spektr-py")
     private val scope = CoroutineScope(pyContext + SupervisorJob())
@@ -47,20 +50,83 @@ object EngineManager {
     var lastFrame: FrameBuf? by mutableStateOf(null)
         private set
 
+    /**
+     * The selected mode. Read by the render loop every tick and by the chrome,
+     * so it is Compose state rather than a plain field.
+     *
+     * Switching is a pure assignment: Python takes the mode name per render
+     * call and drops the previous mode's scratch itself. Nothing has to be
+     * torn down, so a switch cannot half-apply and cannot race a frame.
+     */
+    var mode by mutableStateOf(DEFAULT_MODE)
+        private set
+
+    var theme by mutableStateOf(DEFAULT_THEME)
+        private set
+
+    /** Colours of the current theme; null until the engine has loaded one. */
+    var palette: Palette? by mutableStateOf(null)
+        private set
+
+    /** Every theme's colours, for the picker. Empty until [loadSwatches]. */
+    var swatches: List<ThemeSwatch> by mutableStateOf(emptyList())
+        private set
+
+    /**
+     * Fetches the picker's colours, once, on the Python thread.
+     *
+     * Called when the theme picker opens rather than at startup: it is 70 ms
+     * of ramp interpolation that most sessions never need, and 70 ms added to
+     * a launch is 70 ms of black screen.
+     */
+    fun loadSwatches() {
+        if (swatches.isNotEmpty()) return
+        val e = engine ?: return
+        scope.launch {
+            try {
+                swatches = e.swatches()
+            } catch (t: Throwable) {
+                // The picker falls back to plain names; it is not worth an
+                // error screen over, and the names still select correctly.
+                Log.w("spektr", "could not read theme swatches", t)
+            }
+        }
+    }
+
     /** Grid dimensions in cells, written by the view, read by the render loop. */
     var gridW by mutableStateOf(0)
         private set
     var gridH by mutableStateOf(0)
         private set
 
+    private var prefs: SharedPreferences? = null
     private var renderJob: kotlinx.coroutines.Job? = null
 
-    /** Builds the engine once per process. Interpreter + numpy import is seconds, so the UI shows a loading state meanwhile. */
+    /** Builds the engine once per process. Interpreter + numpy import is ~0.5 s, so the UI shows a loading state meanwhile. */
     fun start(context: Context) {
         if (engine != null || error != null) return
+        val store = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        prefs = store
         scope.launch {
             engine = try {
-                PyEngine.create(context)
+                val e = PyEngine.create(context)
+
+                // A saved name is not trusted to still exist: modes get
+                // renamed and themes get dropped, and a build that starts on a
+                // name the engine no longer has would fail on the first render
+                // with nothing on screen to explain it.
+                mode = store.getString(KEY_MODE, null)?.takeIf { it in e.modes } ?: DEFAULT_MODE
+                val wanted = store.getString(KEY_THEME, null)?.takeIf { it in e.themes } ?: DEFAULT_THEME
+                val loaded = e.useTheme(wanted)
+                if (loaded != null) {
+                    theme = wanted
+                    palette = loaded
+                } else {
+                    theme = DEFAULT_THEME
+                    palette = e.useTheme(DEFAULT_THEME)
+                        ?: throw IllegalStateException("no theme named '$DEFAULT_THEME'")
+                }
+                e
             } catch (t: Throwable) {
                 Log.e("spektr", "engine failed to start", t)
                 // The class name and the first frame inside our own code, not
@@ -99,6 +165,41 @@ object EngineManager {
         gridH = h
     }
 
+    // `selectMode`/`selectTheme`, not `setMode`/`setTheme`: `var mode` already
+    // compiles to a JVM `setMode(String)`, and a function of the same name is
+    // a platform declaration clash rather than an overload.
+    fun selectMode(name: String) {
+        val e = engine ?: return
+        if (name == mode || name !in e.modes) return
+        mode = name
+        prefs?.edit()?.putString(KEY_MODE, name)?.apply()
+    }
+
+    /**
+     * Switches theme on the Python thread and adopts its colours.
+     *
+     * [theme] is set optimistically so the chrome names the theme the moment
+     * it is tapped, but [palette] only changes when Python has actually
+     * switched — a tap that fails leaves the old colours and reverts the name
+     * rather than showing a theme the grid is not drawn in.
+     */
+    fun selectTheme(name: String) {
+        val e = engine ?: return
+        if (name == theme || name !in e.themes) return
+        val previous = theme
+        theme = name
+        scope.launch {
+            val p = e.useTheme(name)
+            if (p == null) {
+                Log.w("spektr", "theme '$name' was refused by the engine")
+                theme = previous
+            } else {
+                palette = p
+                prefs?.edit()?.putString(KEY_THEME, name)?.apply()
+            }
+        }
+    }
+
     /** Called from the capture thread; the push hops to the Python thread. */
     fun push(pcm: ByteArray) {
         scope.launch { engine?.push(pcm) }
@@ -112,7 +213,7 @@ object EngineManager {
                 val e = engine
                 if (e != null && gridW > 0 && gridH > 0) {
                     try {
-                        e.render(gridW, gridH)?.let { lastFrame = it }
+                        e.render(mode, gridW, gridH)?.let { lastFrame = it }
                     } catch (t: Throwable) {
                         Log.w("spektr", "render failed", t)
                     }

@@ -50,19 +50,58 @@ def engine():
     return spektr_android.Engine(samplerate=RATE)
 
 
+def _every_registered_mode() -> list[str]:
+    """Every mode ``render`` will accept, hidden ones included.
+
+    Not ``mode_names()``: that is the picker's list and deliberately shorter.
+    The wire format has to hold for anything renderable, so this coverage must
+    not quietly shrink because the interface stopped offering something.
+    """
+    import spektr.modes as M
+
+    return M.names()
+
+
 def test_the_engine_builds_and_lists_what_the_desktop_has(engine):
     import spektr.modes as M
     from spektr.palette import BUILTIN
 
-    assert len(engine.mode_names()) == len(M.MODES)
+    assert len(engine.mode_names()) == len(M.listed())
     assert len(engine.theme_names()) == len(BUILTIN)
+
+
+def test_the_picker_is_not_offered_modes_android_cannot_draw(engine):
+    """The hidden variants draw through Unicode 16 octants (U+1CD00 and up).
+
+    Those landed in 2024 and no font on the device has them, so offering the
+    twelve would put twelve entries in the picker that render as tofu — which
+    on a visualiser reads as a crash, not as a missing glyph. What the shipped
+    font does cover is checked in ``test_android_font.py``.
+    """
+    import spektr.modes as M
+
+    offered = engine.mode_names()
+    hidden = {m.name for m in M.MODES if m.hidden}
+    assert hidden, "nothing is hidden — has the flag stopped being applied?"
+    assert not (hidden & set(offered)), "a hidden mode reached the picker"
+    assert set(offered) == {m.name for m in M.listed()}
+
+
+def test_a_hidden_mode_is_still_renderable_by_name(engine):
+    """A saved selection naming one must keep working, exactly as on desktop."""
+    import spektr.modes as M
+
+    engine.push(_pcm())
+    for m in M.MODES:
+        if m.hidden:
+            engine.render(m.name, 60, 20)
 
 
 def test_every_mode_renders_through_the_wire_format(engine):
     """The failure this file was written for: all 64 raised on the first call."""
     pcm = _pcm()
     bad = []
-    for name in engine.mode_names():
+    for name in _every_registered_mode():
         try:
             for _ in range(6):
                 engine.push(pcm)
@@ -97,7 +136,7 @@ def test_some_modes_carry_three_planes_and_the_count_says_so():
     engine = spektr_android.Engine(samplerate=RATE)
     pcm = _pcm()
     counts = {2: 0, 3: 0}
-    for name in engine.mode_names():
+    for name in _every_registered_mode():
         for _ in range(4):
             engine.push(pcm)
             buf = engine.render(name, 40, 12)
@@ -114,7 +153,7 @@ def test_colour_indices_stay_inside_the_ramp(engine):
 
     pcm = _pcm()
     w, h = 60, 20
-    for name in engine.mode_names():
+    for name in _every_registered_mode():
         for _ in range(4):
             engine.push(pcm)
             buf = engine.render(name, w, h)
@@ -269,6 +308,64 @@ def test_set_theme_reports_success_and_actually_changes_the_ramp(engine):
     assert engine.chrome_hexes() != [], "chrome went missing with the theme"
     assert engine.set_theme("no such theme") is False
     assert engine.ramp_hexes() == after, "a rejected theme still moved the ramp"
+
+
+def test_use_theme_switches_and_yields_every_colour_in_one_call(engine):
+    """One crossing, so a theme switch cannot half-apply.
+
+    ``set_theme`` plus ``ramp_hexes`` plus ``chrome_hexes`` is three calls that
+    can fail independently: a theme that switches and then fails to yield its
+    ramp leaves the grid drawn in the old colours on the new background, and
+    nothing in the app would say so.
+    """
+    from spektr.palette import RAMP_STEPS
+
+    before = engine.ramp_hexes()
+    got = engine.use_theme("nord")
+    assert got is not None
+    assert len(got) == RAMP_STEPS + 2, "expected bg + fg + the whole ramp"
+    assert got[2:] == engine.ramp_hexes() != before
+    assert got[:2] == engine.chrome_hexes()
+    for h in got:
+        assert h.startswith("#") and len(h) == 7, f"{h!r} is not #rrggbb"
+        int(h[1:], 16)                       # Kotlin parses three hex pairs
+
+
+def test_use_theme_refuses_an_unknown_name_without_moving_anything(engine):
+    """What a selection saved by a newer build looks like to an older one."""
+    engine.use_theme("nord")
+    ramp = engine.ramp_hexes()
+    assert engine.use_theme("no such theme") is None
+    assert engine.ramp_hexes() == ramp, "a rejected theme still moved the ramp"
+
+
+def test_every_theme_has_a_swatch_the_picker_can_paint(engine):
+    """Fifty-four names is a list, not a choice — the picker draws colours."""
+    rows = engine.theme_swatches()
+    names = engine.theme_names()
+    assert [r[0] for r in rows] == names, "swatches and names are out of step"
+    for row in rows:
+        assert len(row) == 3 + 6, f"{row[0]}: {len(row)} fields"
+        for h in row[1:]:
+            assert h.startswith("#") and len(h) == 7, f"{row[0]}: {h!r}"
+            int(h[1:], 16)
+
+
+def test_a_swatch_shows_more_than_one_colour(engine):
+    """Taking the first n of a ramp gives six near-background smudges.
+
+    Which makes every theme look the same in the picker — the exact failure
+    the swatch exists to prevent, and invisible to a test that only checks the
+    fields parse.
+    """
+    flat = [r[0] for r in engine.theme_swatches() if len(set(r[3:])) < 3]
+    assert not flat, f"themes whose swatch is nearly one colour: {flat}"
+
+
+def test_swatches_are_built_once(engine):
+    """They cost ~70 ms of ramp interpolation; that must never land on a frame."""
+    first = engine.theme_swatches()
+    assert engine.theme_swatches() is first
 
 
 def test_every_builtin_theme_survives_the_kotlin_path(engine):
