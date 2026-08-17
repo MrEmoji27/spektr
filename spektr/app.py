@@ -717,8 +717,27 @@ class Spektr(App):
         keybinding you have to remember is not a discoverable setting — and
         seeing the current value is half of knowing which way to nudge it.
         """
-        viz = self.viz
-        s = self.settings
+        rows, values = self._settings_rows(self.viz, self.settings)
+        self._open_overlay(SettingsPanel(rows, values), lambda *a: None)
+
+    def _settings_rows(self, viz, s) -> "tuple[list[Setting], dict]":
+        """Build the panel's rows and the values they open on.
+
+        Split out of :meth:`action_settings` so the shape of the panel can be
+        checked without a running app, because two invariants decide whether
+        it opens at all and neither is visible from any one row:
+
+        * a row needs either a ``live`` callback or an entry in ``values`` —
+          :meth:`SettingsPanel._row_text` subscripts ``values`` directly, so a
+          row with neither raises ``KeyError`` the moment the panel opens;
+        * a row needs either a ``step`` callback or a non-empty ``choices`` —
+          :meth:`Setting.index_of` falls back to ``min(choices)`` for a numeric
+          value, and ``min`` of an empty list raises.
+
+        Both hold today by construction, which is exactly the kind of thing
+        that stops holding when someone adds a row. tests/test_settings.py
+        asserts them over the whole list, in every mode that changes it.
+        """
 
         def show_bands(v):
             return (
@@ -895,7 +914,7 @@ class Spektr(App):
             )
             values["ascii_fx"] = s.ascii_fx
 
-        self._open_overlay(SettingsPanel(rows, values), lambda *a: None)
+        return rows, values
 
     def _ascii_reel_label(self) -> str:
         r = asciiart.current(self._config_dir)
