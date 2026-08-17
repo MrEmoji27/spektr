@@ -18,7 +18,18 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         ndk {
-            abiFilters += listOf("arm64-v8a", "x86_64")
+            // Both by default: arm64-v8a is every real device, x86_64 is the
+            // emulator, and a debug build that cannot run on the emulator is a
+            // nuisance to inherit.
+            //
+            // But CPython and numpy ship per ABI, so the second architecture
+            // roughly doubles the APK. `-Pabi=arm64-v8a` builds just the one,
+            // which is what you want when the APK has to reach a device
+            // through something with a size limit on it. Same code, same
+            // assets, one less architecture.
+            val requested = (project.findProperty("abi") as String?)
+                ?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
+            abiFilters += requested ?: listOf("arm64-v8a", "x86_64")
         }
     }
 
