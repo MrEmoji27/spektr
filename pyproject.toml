@@ -51,7 +51,12 @@ dependencies = [
 # Everything CI needs beyond the runtime deps. `pip install -e .[dev]` gets a
 # checkout to the same state the workflows run in, so a failure there is
 # reproducible locally without guessing at versions.
-dev = ["pytest>=8.0"]
+dev = [
+  "pytest>=8.0",
+  # Reads the cmap of the font the APK ships, so a mode emitting a codepoint
+  # that font lacks fails here rather than rendering as tofu on a tablet.
+  "fonttools>=4.50",
+]
 
 [project.scripts]
 spektr = "spektr.app:main"

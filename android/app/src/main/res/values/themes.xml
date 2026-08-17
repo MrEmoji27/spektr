@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Near-black chrome: the grid itself draws on a pure black window so
+         OLED pixels are genuinely off, which is the design's burn-in stance. -->
+    <style name="Theme.Spektr" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#000000</item>
+        <item name="android:statusBarColor">#000000</item>
+        <item name="android:navigationBarColor">#000000</item>
+    </style>
+</resources>

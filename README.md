@@ -130,7 +130,7 @@ Listed in the order the picker cycles them.
 | **Bubbles** | bubbles from the low end, popping at the top | **Dither Storm Extreme** | Dither Storm with nothing holding it back — hits pile up and a dense passage blows the field to white |
 | **Radial** | the spectrum wrapped into a circle | **Valentine** | a heart that beats with the track, trailing smaller ones upward |
 | **Sonar** | one sweep, not the whole spectrum — returns fade like a scope | **Locket** | an outlined heart, pulsing rings of hearts outward on the beat |
-| **Orbit** | bodies on real elliptical orbits; loud bands swing out | **Flipbook** | your own ASCII animation, played by the music |
+| **Orbit** | bodies on real elliptical orbits; loud bands swing out | | |
 | **Fireworks** | beat-triggered launches, bursts, and fall | **Maelstrom** | a real fluid sim, stirred by the music |
 | **Dune** | sand piles up by band, avalanching past a threshold | **Vinyl** | a record whose grooves light up as a radial spectrum |
 | **Murmuration** | a flock wheeling and scattering with the beat | **Rain** | rain on the glass, falling harder when it's loud |
@@ -186,19 +186,6 @@ heaviest of them is Chladni Extreme.
 
 Still frames of a few of them, straight from the render path: **[docs/gallery.md](https://github.com/MrEmoji27/spektr/blob/main/docs/gallery.md)**.
 
-### Flipbook: playing your own ASCII art
-
-Drop a folder of numbered frames — `001.txt`, `002.txt`, … — into
-`~/.config/spektr/ascii/` (`%APPDATA%\spektr\ascii\` on Windows) and pick **Flipbook**
-from the `v` picker. A bare `.txt` at the top level works too, as a one-frame still.
-Two built-in reels ship so the mode works with nothing added.
-
-Open Settings (`c`) while Flipbook is active for two extra rows: which reel is
-playing, and which of three effects drives it — `warp` (a coherent field breathes
-the art), `dissolve` (it comes apart in quiet passages and snaps back on a hit),
-or `lit` (the geometry stays put; the spectrum lights it in horizontal bands).
-Playback speed and effect intensity both track the music. Press `r` to pick up
-edited or newly added frames without restarting.
 
 ## Themes
 

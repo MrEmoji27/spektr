@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">spektr</string>
+    <string name="notification_capturing">Capturing system audio</string>
+    <string name="notification_stop">Stop</string>
+</resources>

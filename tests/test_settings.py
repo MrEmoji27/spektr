@@ -53,7 +53,7 @@ def panel():
 
 # ── the two that decide whether it opens at all ──────────────────────────────
 
-@pytest.mark.parametrize("mode", ["Bars", "Flipbook"])
+@pytest.mark.parametrize("mode", ["Bars", "Kaleidoscope"])
 def test_every_row_can_show_a_value(mode):
     """No row may reach ``values[key]`` without an entry there."""
     _, _, rows, values = _rows(mode)
@@ -63,7 +63,7 @@ def test_every_row_can_show_a_value(mode):
         )
 
 
-@pytest.mark.parametrize("mode", ["Bars", "Flipbook"])
+@pytest.mark.parametrize("mode", ["Bars", "Kaleidoscope"])
 def test_every_row_can_be_stepped(mode):
     """No row may fall through to ``min([])``."""
     _, _, rows, _ = _rows(mode)
@@ -73,14 +73,15 @@ def test_every_row_can_be_stepped(mode):
         )
 
 
-def test_the_flipbook_rows_appear_only_for_flipbook():
-    _, _, bars_rows, _ = _rows("Bars")
-    _, _, flip_rows, flip_values = _rows("Flipbook")
-    bars, flip = {r.key for r in bars_rows}, {r.key for r in flip_rows}
-    assert {"ascii_reel", "ascii_fx"} <= flip
-    assert not ({"ascii_reel", "ascii_fx"} & bars)
-    assert flip - bars == {"ascii_reel", "ascii_fx"}
-    assert "ascii_fx" in flip_values, "ascii_fx has choices, so it needs a value"
+def test_the_panel_is_the_same_whatever_mode_is_showing():
+    """Flipbook was the only mode that added rows of its own, and it is gone.
+
+    Asserted rather than dropped with it: a per-mode row is a panel whose
+    *shape* depends on state, which is how a row ends up with no value or no
+    step behind it. If one comes back, it should come back deliberately.
+    """
+    keys = [{r.key for r in _rows(m)[2]} for m in ("Bars", "Kaleidoscope", "Snow")]
+    assert keys[0] == keys[1] == keys[2]
 
 
 # ── the values dict ──────────────────────────────────────────────────────────
@@ -170,21 +171,12 @@ def test_every_choice_round_trips_through_the_file(tmp_path, panel):
     assert not bad, "settings that do not survive a restart:\n" + "\n".join(bad)
 
 
-def test_the_flipbook_effect_choices_are_the_ones_clamp_accepts():
-    """The one row whose choices are duplicated as a literal in clamp()."""
-    _, _, rows, _ = _rows("Flipbook")
-    fx = next(r for r in rows if r.key == "ascii_fx")
-    for choice in fx.choices:
-        s = Settings(ascii_fx=choice).clamp()
-        assert s.ascii_fx == choice, f"clamp rejects the offered effect {choice!r}"
-
-
 def test_a_config_full_of_junk_still_builds_a_panel():
     """The panel is built from settings; settings can come off disk corrupt."""
     junk = Settings(
         fps="soon", bands=None, sensitivity=[], gate="low", cells="sextants",
         fine_modes="yes", chrome=None, shuffle_scope="everything",
-        ascii_fx="sparkle", mode=None, theme=42,
+        mode=None, theme=42,
     ).clamp()
     app = Spektr(settings=junk)
     viz = AudioVisualizer(settings=app.settings)
