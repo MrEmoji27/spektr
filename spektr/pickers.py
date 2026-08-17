@@ -453,3 +453,82 @@ class HexPrompt(NamePrompt):
             )
             return _KEEP_OPEN
         return colour
+
+
+#: How a Textual key name reads on a keyboard.
+_KEY_LABEL = {
+    "left_square_bracket": "[",
+    "right_square_bracket": "]",
+    "space": "space",
+    "escape": "esc",
+    "question_mark": "?",
+    "minus": "-",
+    "plus": "+",
+}
+
+
+def key_label(key: str) -> str:
+    """``"m,space"`` -> ``"m / space"``, with the punctuation keys spelled out."""
+    return " / ".join(_KEY_LABEL.get(k.strip(), k.strip()) for k in key.split(","))
+
+
+class HelpPanel(Widget):
+    """Every key the app answers to, plus where its files live.
+
+    Built from the live ``BINDINGS`` list rather than from a written-out copy.
+    A help screen is the one piece of documentation guaranteed to be read at
+    the moment someone is confused, and a hand-maintained one goes stale the
+    first time a key moves — this app's own README had drifted twice in a day
+    before anything checked it. Here there is nothing to keep in step: a
+    binding that exists is a line in the list, including the ones hidden from
+    the footer, which are the ones most worth a help screen in the first place.
+    """
+
+    BINDINGS = [
+        Binding("escape,enter,q,h,question_mark", "close", "Close", show=False),
+        Binding("up", "scroll(-1)", "Up", show=False),
+        Binding("down", "scroll(1)", "Down", show=False),
+        Binding("pageup", "scroll(-10)", "Page up", show=False),
+        Binding("pagedown", "scroll(10)", "Page down", show=False),
+    ]
+
+    def __init__(
+        self,
+        sections: Sequence[tuple[str, Sequence[tuple[str, str]]]],
+        on_done: Callable[[], None] | None = None,
+    ):
+        super().__init__()
+        self._sections = list(sections)
+        self._on_done = on_done
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="panel"):
+            yield Label("help", id="title")
+            yield OptionList(id="rows")
+            yield Label("↑↓ scroll · esc close", id="hint")
+
+    def on_mount(self) -> None:
+        rows = self.query_one("#rows", OptionList)
+        lines: list[str] = []
+        for i, (heading, entries) in enumerate(self._sections):
+            if i:
+                lines.append("")
+            lines.append(f"[b]{heading}[/b]")
+            for left, right in entries:
+                if not left:
+                    lines.append(f"  [dim]{right}[/dim]")
+                    continue
+                pad = " " * max(1, 12 - len(left))
+                lines.append(f"  {left}{pad}[dim]{right}[/dim]")
+        rows.add_options(lines)
+        rows.focus()
+
+    def action_scroll(self, delta: int) -> None:
+        rows = self.query_one("#rows", OptionList)
+        at = (rows.highlighted or 0) + delta
+        rows.highlighted = max(0, min(len(rows._options) - 1, at))
+
+    def action_close(self) -> None:
+        if self._on_done:
+            self._on_done()
+        self.remove()

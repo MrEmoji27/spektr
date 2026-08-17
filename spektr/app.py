@@ -13,7 +13,16 @@ from . import __version__, asciiart, config, nowplaying
 from . import modes as mode_registry
 from . import palette as palette_mod
 from . import presets as presets_module
-from .pickers import ColourPicker, HexPrompt, NamePrompt, Picker, Setting, SettingsPanel
+from .pickers import (
+    ColourPicker,
+    HelpPanel,
+    HexPrompt,
+    NamePrompt,
+    Picker,
+    Setting,
+    SettingsPanel,
+    key_label,
+)
 from .widget import AudioVisualizer
 
 #: How often shuffle picks a new mode, in seconds — long enough to actually
@@ -132,6 +141,7 @@ class Spektr(App):
         Binding("right_square_bracket", "gain(1)", "Sens +", show=False),
         Binding("g", "gate(-1)", "Gate -", show=False),
         Binding("G", "gate(1)", "Gate +", show=False),
+        Binding("h,question_mark", "help", "Help"),
         Binding("p", "show_perf", "Perf", show=False),
         Binding("q", "quit", "Quit"),
     ]
@@ -149,7 +159,12 @@ class Spektr(App):
         #: where settings, presets, themes, plugins and ascii reels live;
         #: None means the platform default from palette.config_dir()
         self._config_dir = config_dir
-        self.settings = settings or config.load(config_dir)
+        # Clamped whatever the source. `config.load` already does it, but an
+        # injected Settings — a preset being applied, a test, an embedder —
+        # goes straight into the widget, where an fps of "soon" raises out of
+        # `int()` before anything is on screen. Nothing in a settings object is
+        # worth failing to start over.
+        self.settings = (settings or config.load(config_dir)).clamp()
         asciiart.restore(self.settings.ascii_reel, self.settings.ascii_fx)
         #: the picker/settings overlay currently mounted, if any
         self._overlay = None
@@ -715,6 +730,55 @@ class Spektr(App):
         # once music is actually going: capture status is diagnostic, this is
         # content
         self.sub_title = self._now_playing or self._capture_status
+
+    def action_help(self) -> None:
+        """Every key, and where the files are — generated, never written out.
+
+        The keys come from ``BINDINGS`` and the counts from the registry, so
+        this cannot describe a version of the app that no longer exists. That
+        is not a hypothetical worry: the README drifted twice in a day before
+        anything checked it, and a help screen is read at exactly the moment
+        someone is least able to tell that it is wrong.
+
+        The hidden bindings are included. They are hidden from the footer
+        because it has room for eight, not because they are secret — and the
+        ones you cannot see are the ones a help screen is for.
+        """
+        viz = self.viz
+        listed = len(mode_registry.listed())
+        opt_in = len([m for m in mode_registry.MODES if m.hidden])
+        cells = mode_registry.CELL_SUFFIX.get(self.settings.cells, "?")
+
+        sections = [
+            ("keys", [
+                (key_label(b.key), b.description)
+                for b in self.BINDINGS
+                if b.description
+            ]),
+            ("in a picker or panel", [
+                ("↑ ↓", "move"),
+                ("← →", "change the value (settings)"),
+                ("type", "filter the list (pickers)"),
+                ("enter", "keep it"),
+                ("esc", "cancel — the previous mode or theme comes back"),
+            ]),
+            ("now", [
+                ("mode", mode_registry.label(viz.mode_name)),
+                ("theme", viz.palette.name),
+                ("source", viz.status),
+                ("modes", f"{listed} offered, {opt_in} more with subcell modes on"),
+                ("subcells", f"{self.settings.cells} — shown as {cells}"),
+            ]),
+            ("files", [
+                ("config", str(self._config_dir or palette_mod.config_dir())),
+                ("", "themes/, plugins/ and ascii/ live in there too"),
+            ]),
+            ("more", [
+                ("", f"spektr {__version__} — spektr --help for the command line"),
+                ("", "spektr --glyph-test checks this terminal for octants"),
+            ]),
+        ]
+        self._open_overlay(HelpPanel(sections), lambda *a: None)
 
     def action_settings(self) -> None:
         """The live settings panel.

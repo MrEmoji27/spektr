@@ -298,7 +298,7 @@ Full guide, including the whole of `ctx` and the drawing toolkit: **[docs/plugin
 | `m` / `space` | Next mode (`M` for previous) | | `g` `G` | Noise gate down / up |
 | `T` | Next theme | | `r` | Reload themes and plugins from disk |
 | `f` | Hide header and footer — full-screen visual | | `q` | Quit |
-| `p` | Frame time and FPS | | | |
+| `p` | Frame time and FPS | | `h` / `?` | Help — every key, plus where the files live |
 | `L` | Save the current mode + theme + settings as a preset | | `l` | Load a saved preset — live preview, `esc` restores |
 
 Mode, theme, frame rate, band count, sensitivity, gate, and shuffle with its scope are remembered between runs.
