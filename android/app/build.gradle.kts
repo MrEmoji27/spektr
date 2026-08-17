@@ -55,6 +55,22 @@ kotlin {
     }
 }
 
+// The app shows the changelog on its home screen, and there is exactly one
+// changelog. Copying it in at build time rather than keeping a second copy
+// under assets/ means the shipped one cannot quietly fall behind the real
+// one, which is the only failure mode a changelog really has.
+val copyChangelog by tasks.registering(Copy::class) {
+    from(rootProject.file("../CHANGELOG.md"))
+    into(layout.buildDirectory.dir("generated/changelog/assets"))
+}
+
+android.sourceSets.getByName("main").assets.srcDir(
+    layout.buildDirectory.dir("generated/changelog/assets")
+)
+
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }
+    .configureEach { dependsOn(copyChangelog) }
+
 chaquopy {
     defaultConfig {
         version = "3.13"

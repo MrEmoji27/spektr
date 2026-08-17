@@ -215,7 +215,7 @@ def _ecg(ctx: Ctx, octant: bool):
     # exact at any width and frame rate.
     acc = ctx.scratch(
         "ecg_acc" if not octant else "ecg_acc_fine",
-        lambda: {"v": 0.0, "elapsed": 0.0},
+        lambda: {"v": 0.0, "elapsed": 0.0, "filled": 0},
     )
     acc["v"] += dc * 0.55 * max(ctx.dt, 0.0)
     acc["elapsed"] += max(ctx.dt, 0.0)
@@ -247,6 +247,7 @@ def _ecg(ctx: Ctx, octant: bool):
         hist[:, :-step] = hist[:, step:]
         hist[0, -step:] = hi
         hist[1, -step:] = lo
+        acc["filled"] = min(dc, acc["filled"] + step)
 
     # Filled between the per-column minimum and maximum rather than drawn as a
     # single line. That is how every audio editor draws a waveform, and it is
@@ -257,6 +258,18 @@ def _ecg(ctx: Ctx, octant: bool):
     bot = np.clip(np.rint(centre - np.clip(hist[1] * 0.95, -1, 1) * centre), 0, dr - 1)
     rows = np.arange(dr, dtype=np.float64)[:, None]
     dots = (rows >= top[None, :]) & (rows <= bot[None, :])
+
+    # Columns the trace has not reached yet draw nothing at all.
+    #
+    # The buffer starts as zeros and zero is the centre line, so an unwritten
+    # column drew a dot exactly halfway up — and a screen's worth of them drew
+    # a hard horizontal rule across the middle of the mode. It reads as a
+    # feature of the display rather than as an absence of data, and it is
+    # visible every time the mode is selected, every resize, and for the whole
+    # of any silence, which is precisely when there is nothing else to look at.
+    filled = int(acc["filled"])
+    if filled < dc:
+        dots[:, : dc - filled] = False
 
     # colour by age: the leading edge is hot and the tail cools behind it,
     # which is what makes the direction of travel readable

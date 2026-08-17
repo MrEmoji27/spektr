@@ -41,6 +41,42 @@ screen-capture dialog had been accepted.
 Also: prev/next mode buttons, chrome that hides on a tap over the picture, and
 a "made by zemo" footer.
 
+### The changelog is in the app
+
+On the home screen, behind **what's new**, with each version collapsible —
+the newest open, the rest shut, because what you want from a changelog is what
+changed *this* time. It is the same `CHANGELOG.md` you are reading now, copied
+into the APK at build time rather than kept as a second copy, so the shipped
+one cannot quietly fall behind.
+
+### New: a detail setting
+
+How many rows of cells fit on the screen — the app's resolution, and the one
+number that decides how coarse everything looks.
+
+It matters most for the modes that draw at cell resolution rather than into
+braille dots. Needle's dial and pointer are built from whole cells, so at 40
+rows on a 2560-wide tablet one cell is a 21×42 pixel pixel and the meter reads
+as broken rather than as coarse. At 72 rows the same dial is a fine arc.
+
+24 to 72 rows, in the settings sheet. More rows is a finer picture and more
+cells to compute and draw; which trade is right depends on the screen and on
+how far away you are sitting, which is why it is a setting.
+
+### Fixed: ECG drew a rule across the middle of itself
+
+Its scroll buffer starts as zeros, and zero is the centre line — so every
+column the trace had not reached yet drew a dot exactly halfway up, and a
+screen's worth of them drew a hard horizontal line through the middle of the
+mode. It reads as part of the display rather than as an absence of data, and
+it appeared every time the mode was selected, on every resize, and for the
+whole of any silence — which is exactly when there is nothing else to look at.
+
+Unwritten columns now draw nothing. Measured before and after through the full
+Android engine: the centre dot-row went from covering 100% of the width on
+every single frame to covering only what the arriving signal actually puts
+there.
+
 ### Fixed: a dozen modes drew sheared
 
 The bug was in the renderer, not in any mode. It measures one cell from U+2588

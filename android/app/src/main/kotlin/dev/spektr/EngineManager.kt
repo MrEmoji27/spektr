@@ -41,6 +41,7 @@ object EngineManager {
     private const val KEY_OLED = "oled"
     private const val KEY_SENSITIVITY = "sensitivity"
     private const val KEY_SMOOTH = "smooth"
+    private const val KEY_ROWS = "rows"
 
     private val pyContext = newSingleThreadContext("spektr-py")
     private val scope = CoroutineScope(pyContext + SupervisorJob())
@@ -94,6 +95,25 @@ object EngineManager {
      * whole, to be blitted and filtered — smooth curves instead of stairs.
      */
     var smooth by mutableStateOf(false)
+        private set
+
+    /**
+     * How many rows of cells to fit on the screen — the app's resolution.
+     *
+     * This is the single number that decides how coarse everything looks. At
+     * 40 rows the tablet gets a 118x34 grid, and the modes that draw at cell
+     * resolution rather than into braille dots — Needle's dial and pointer,
+     * VU's meters — are working with 21x42 pixel pixels. Needle's shaft is
+     * about two cells wide whatever the grid, so at 40 rows it is a 42-pixel
+     * bar, and it reads as a broken mode rather than a coarse one.
+     *
+     * More rows means smaller glyphs and a finer picture, at the cost of more
+     * cells to compute and draw. Which trade is right depends on the screen
+     * and on how far away it is, so it is a setting rather than a constant.
+     */
+    val ROW_CHOICES = listOf(24, 32, 40, 56, 72)
+
+    var targetRows by mutableStateOf(40)
         private set
 
     /**
@@ -179,6 +199,9 @@ object EngineManager {
                 oled = store.getBoolean(KEY_OLED, false)
                 sensitivity = e.setSensitivity(store.getFloat(KEY_SENSITIVITY, 1.0f))
                 smooth = store.getBoolean(KEY_SMOOTH, false)
+                targetRows = store.getInt(KEY_ROWS, 40).let { r ->
+                    if (r in ROW_CHOICES) r else 40
+                }
                 e.setFieldMode(smooth)
                 val wanted = store.getString(KEY_THEME, null)?.takeIf { it in e.themes } ?: DEFAULT_THEME
                 val loaded = e.useTheme(wanted, oled)
@@ -313,6 +336,16 @@ object EngineManager {
                 renderEma = 0.0
             }
         }
+    }
+
+    fun useRows(rows: Int) {
+        if (rows == targetRows || rows !in ROW_CHOICES) return
+        targetRows = rows
+        // The grid is about to change shape, so whatever the control loop had
+        // learned about render cost at the old one is no longer about this.
+        fieldScale = 2
+        renderEma = 0.0
+        prefs?.edit()?.putInt(KEY_ROWS, rows)?.apply()
     }
 
     fun useSmooth(on: Boolean) {

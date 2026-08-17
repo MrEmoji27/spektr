@@ -10,7 +10,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -30,6 +32,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -45,7 +48,11 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -57,7 +64,50 @@ import kotlin.math.ln
 import kotlin.math.pow
 
 /** Which sheet, if any, is open. */
-private enum class Sheet { None, Mode, Theme, Settings }
+private enum class Sheet { None, Mode, Theme, Settings, Changelog }
+
+/**
+ * The changelog, as shipped in the APK's assets.
+ *
+ * Read once and remembered: it is a few kilobytes, and re-reading it every
+ * recomposition to draw the same text would be work for nothing.
+ */
+@Composable
+private fun rememberChangelog(): List<String> {
+    val context = LocalContext.current
+    return remember {
+        runCatching {
+            context.assets.open("CHANGELOG.md").bufferedReader().readLines()
+        }.getOrElse { listOf("The changelog did not ship with this build.") }
+    }
+}
+
+/**
+ * Just enough Markdown to read a changelog, and no more.
+ *
+ * Headings, bullets and `**bold**` are what this document is made of. A real
+ * Markdown renderer would be a dependency and a lot of surface area to display
+ * one file that we also write.
+ */
+private fun markdownLine(raw: String): AnnotatedString = buildAnnotatedString {
+    var text = raw.trimEnd()
+    var indent = ""
+    if (text.startsWith("- ")) {
+        indent = "  •  "
+        text = text.removePrefix("- ")
+    }
+    append(indent)
+    // Split on ** and alternate plain/bold; backticks become plain text, since
+    // a monospace run inside a proportional paragraph reads worse than none.
+    val parts = text.replace("`", "").split("**")
+    parts.forEachIndexed { i, part ->
+        if (i % 2 == 1) {
+            withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(part) }
+        } else {
+            append(part)
+        }
+    }
+}
 
 /**
  * The v2 screen: loading, idle (pick and start), or the grid with chrome.
@@ -143,12 +193,18 @@ private fun IdleView(engine: PyEngine, palette: Palette, onStart: () -> Unit) {
             }
             Chip("start capture", palette, emphasis = true, onClick = onStart)
         }
-        Text(
-            "made by zemo",
-            color = Color(palette.fg).copy(alpha = 0.55f),
-            fontSize = 12.sp,
-            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 20.dp),
-        )
+        Column(
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 18.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Chip("what's new", palette) { sheet = Sheet.Changelog }
+            Text(
+                "made by zemo",
+                color = Color(palette.fg).copy(alpha = 0.55f),
+                fontSize = 12.sp,
+            )
+        }
     }
     Pickers(engine, palette, sheet) { sheet = it }
 }
@@ -236,8 +292,140 @@ private fun Pickers(engine: PyEngine, palette: Palette, sheet: Sheet, onSheet: (
                 onSheet(Sheet.None)
             }
             Sheet.Settings -> SettingsList(palette)
+            Sheet.Changelog -> ChangelogList(palette)
             Sheet.None -> Unit
         }
+    }
+}
+
+/** One `##` section of the changelog: a version, and everything said about it. */
+private class Release(val title: String, val body: List<String>)
+
+/**
+ * Splits the changelog into its versions.
+ *
+ * Everything before the first `##` is the document's own preamble and belongs
+ * to no release, so it is returned separately rather than folded into the
+ * first one — collapsing the newest version should not hide the explanation
+ * of what the file is.
+ */
+private fun releases(lines: List<String>): Pair<List<String>, List<Release>> {
+    val preamble = lines.takeWhile { !it.startsWith("## ") }
+    val out = mutableListOf<Release>()
+    var title: String? = null
+    var body = mutableListOf<String>()
+    for (line in lines.drop(preamble.size)) {
+        if (line.startsWith("## ")) {
+            title?.let { out += Release(it, body) }
+            title = line.removePrefix("## ")
+            body = mutableListOf()
+        } else {
+            body += line
+        }
+    }
+    title?.let { out += Release(it, body) }
+    return preamble to out
+}
+
+@Composable
+private fun ChangelogList(palette: Palette) {
+    val lines = rememberChangelog()
+    val fg = Color(palette.fg)
+    val (preamble, versions) = remember(lines) { releases(lines) }
+    // The newest is open and the rest are shut. What people want from a
+    // changelog is what changed *this* time; the older entries are there to
+    // be looked up, not to be scrolled past on the way.
+    val open = remember(versions) { mutableStateListOf(*Array(versions.size) { it == 0 }) }
+
+    LazyColumn(
+        Modifier.fillMaxWidth().heightIn(max = 560.dp).padding(horizontal = 24.dp),
+    ) {
+        items(preamble.size) { i -> ChangelogLine(preamble[i], fg) }
+
+        versions.forEachIndexed { v, release ->
+            item {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable { open[v] = !open[v] }
+                        .padding(top = 18.dp, bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Text(if (open[v]) "▾" else "▸", color = fg, fontSize = 18.sp)
+                    Text(
+                        release.title,
+                        color = fg,
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f),
+                    )
+                    // Only when there is a count worth showing: a release
+                    // written as plain paragraphs has no `###` headings, and
+                    // "0 sections" reads as an empty release rather than as
+                    // one that simply is not subdivided.
+                    val sections = release.body.count { it.startsWith("### ") }
+                    if (!open[v] && sections > 0) {
+                        Text(
+                            "$sections sections",
+                            color = fg.copy(alpha = 0.5f),
+                            fontSize = 12.sp,
+                        )
+                    }
+                }
+            }
+            if (open[v]) {
+                items(release.body.size) { i -> ChangelogLine(release.body[i], fg) }
+            }
+        }
+
+        item { Spacer(Modifier.height(24.dp)) }
+    }
+}
+
+@Composable
+private fun ChangelogLine(raw: String, fg: Color) {
+    when {
+        raw.isBlank() -> Spacer(Modifier.height(10.dp))
+
+        // `##` never reaches here — those are the collapsible release headers,
+        // drawn by ChangelogList itself.
+        raw.startsWith("### ") -> Text(
+            raw.removePrefix("### "),
+            color = fg,
+            fontSize = 17.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(top = 14.dp, bottom = 4.dp),
+        )
+
+        raw.startsWith("# ") -> Text(
+            raw.removePrefix("# "),
+            color = fg,
+            fontSize = 26.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(bottom = 8.dp),
+        )
+
+        // A table row would wrap into nonsense at this width, and the
+        // changelog's tables are all "measurement | number" pairs that
+        // read fine as one line. The |---|---| separator carries nothing.
+        raw.startsWith("|") ->
+            if (raw.replace("-", "").replace("|", "").isBlank()) {
+                Spacer(Modifier.height(2.dp))
+            } else {
+                Text(
+                    raw.trim('|', ' ').replace("|", "   ·   "),
+                    color = fg.copy(alpha = 0.85f),
+                    fontSize = 13.sp,
+                )
+            }
+
+        else -> Text(
+            markdownLine(raw),
+            color = fg.copy(alpha = 0.85f),
+            fontSize = 14.sp,
+            lineHeight = 20.sp,
+        )
     }
 }
 
@@ -254,6 +442,22 @@ private fun SettingsList(palette: Palette) {
         ) {
             Chip(if (EngineManager.oled) "on" else "off", palette, emphasis = EngineManager.oled) {
                 EngineManager.useOled(!EngineManager.oled)
+            }
+        }
+
+        SettingRow(
+            "detail  ${EngineManager.targetRows} rows",
+            "How many rows of cells fit on the screen — the app's resolution. Modes that " +
+                "draw at cell resolution rather than into braille dots (Needle's dial, VU) " +
+                "look coarse at low row counts, because one cell is a very large pixel.",
+            palette,
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (r in EngineManager.ROW_CHOICES) {
+                    Chip("$r", palette, emphasis = r == EngineManager.targetRows) {
+                        EngineManager.useRows(r)
+                    }
+                }
             }
         }
 
@@ -490,13 +694,15 @@ fun GridView(palette: Palette) {
     var viewW by remember { mutableStateOf(0) }
     var viewH by remember { mutableStateOf(0) }
 
-    // Glyph size derives from the view height (~40 rows on a tablet); the cell
-    // metrics are the measured glyph box. U+2588 (full block) is measured: it
-    // is the widest glyph the modes emit, so nothing ever overflows a cell.
-    val cell = remember(viewH, density) {
+    // Glyph size derives from the view height and the chosen row count; the
+    // cell metrics are the measured glyph box. U+2588 (full block) is
+    // measured: it is the widest glyph the modes emit, so nothing ever
+    // overflows a cell.
+    val rows = EngineManager.targetRows
+    val cell = remember(viewH, density, rows) {
         if (viewH <= 0) null
         else {
-            val px = (viewH / 40f).coerceIn(8f, 72f)
+            val px = (viewH / rows.toFloat()).coerceIn(6f, 72f)
             val sp = with(density) { px.toSp() }
             val layout = textMeasurer.measure(
                 "█",
