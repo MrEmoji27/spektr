@@ -160,3 +160,34 @@ def test_the_engine_smooths_like_the_desktop_widget():
     settled = float(engine._spring.x.max())
     assert first < settled, "bands arrived instantly — the spring is not in the path"
     assert engine._peaks.value is not None
+
+
+def test_the_vendored_engine_matches_the_one_the_desktop_runs():
+    """The APK ships a *copy* of ``spektr/``, and a copy can drift.
+
+    It is vendored rather than pip-installed because pip would resolve the
+    desktop-only dependencies (sounddevice, soundcard, winrt, dbus-next), none
+    of which have Android wheels. ``android/scripts/sync-python.ps1`` refreshes
+    it — but a script nobody is forced to run is how this branch got 101
+    commits behind in the first place, so forgetting has to fail here instead
+    of shipping an APK that renders a stale engine.
+    """
+    real = ROOT / "spektr"
+    shipped = ROOT / "android" / "app" / "src" / "main" / "python" / "spektr"
+    assert shipped.is_dir(), "the vendored engine is missing from the APK tree"
+
+    def files(base):
+        return {
+            p.relative_to(base).as_posix(): p.read_bytes()
+            for p in sorted(base.rglob("*.py"))
+            if "__pycache__" not in p.parts
+        }
+
+    a, b = files(real), files(shipped)
+    missing = sorted(set(a) - set(b))
+    extra = sorted(set(b) - set(a))
+    differs = sorted(k for k in set(a) & set(b) if a[k] != b[k])
+
+    assert not missing, f"not shipped in the APK: {missing}  (run sync-python.ps1)"
+    assert not extra, f"in the APK but not in spektr/: {extra}  (run sync-python.ps1)"
+    assert not differs, f"vendored copy is stale: {differs}  (run sync-python.ps1)"
