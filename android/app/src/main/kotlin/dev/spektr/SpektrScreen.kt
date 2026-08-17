@@ -257,6 +257,18 @@ private fun SettingsList(palette: Palette) {
             }
         }
 
+        SettingRow(
+            "smooth",
+            "Draws the picture instead of the glyphs. A cell is not a pixel — Chladni " +
+                "computes a smooth field and then picks one half-block to stand for each " +
+                "cell. This runs the mode finer and blits what it actually computed.",
+            palette,
+        ) {
+            Chip(if (EngineManager.smooth) "on" else "off", palette, emphasis = EngineManager.smooth) {
+                EngineManager.useSmooth(!EngineManager.smooth)
+            }
+        }
+
         // Log scale: the useful range is multiplicative — 0.5 and 2.0 are the
         // same size of change in opposite directions — and a linear slider
         // over 0.15..8 puts everything under 1.0 in the first eighth of it.
@@ -513,6 +525,11 @@ fun GridView(palette: Palette) {
         EngineManager.setGrid(gridW, gridH)
     }
 
+    // One bitmap and one pixel buffer for the whole session, resized only when
+    // the field's shape changes. Allocating a 470x270 Bitmap per frame at 30
+    // fps is 130k ints of garbage a frame, and the collector notices.
+    val blitter = remember { FieldBlitter() }
+
     Canvas(
         Modifier.fillMaxSize().onSizeChanged { size ->
             viewW = size.width
@@ -520,8 +537,70 @@ fun GridView(palette: Palette) {
         }
     ) {
         val frame = EngineManager.lastFrame ?: return@Canvas
+        if (frame.isField) {
+            blitter.draw(this, frame, palette)
+            return@Canvas
+        }
         val c = cell ?: return@Canvas
         drawGrid(frame, palette, c, paints)
+    }
+}
+
+/**
+ * Draws a field frame as one filtered bitmap.
+ *
+ * The picture arrives at whatever resolution the mode's own geometry has —
+ * for Chladni's half-blocks that is two rows per cell, and rendered at 4x the
+ * grid it is 472x272 — and is stretched to the view. Bilinear, deliberately:
+ * the nodal lines of a Chladni figure are smooth curves, and the whole
+ * complaint about the glyph renderer was that it drew them as staircases.
+ */
+private class FieldBlitter {
+    private var bitmap: android.graphics.Bitmap? = null
+    private var pixels = IntArray(0)
+    private var lut = IntArray(0)
+    private var lutFor: Palette? = null
+
+    fun draw(
+        scope: androidx.compose.ui.graphics.drawscope.DrawScope,
+        frame: FrameBuf,
+        palette: Palette,
+    ) {
+        val n = frame.size
+        if (n <= 0) return
+        var bmp = bitmap
+        if (bmp == null || bmp.width != frame.w || bmp.height != frame.h) {
+            bmp?.recycle()
+            bmp = android.graphics.Bitmap.createBitmap(
+                frame.w, frame.h, android.graphics.Bitmap.Config.ARGB_8888
+            )
+            bitmap = bmp
+            pixels = IntArray(n)
+        }
+        if (lutFor != palette) {
+            // 256 entries so the byte index needs no bounds check per pixel,
+            // with everything past the ramp — FIELD_EMPTY included — reading
+            // as the background.
+            lut = IntArray(256) { palette.bg }
+            for (i in palette.ramp.indices) lut[i] = palette.ramp[i]
+            lutFor = palette
+        }
+        val src = frame.cidx
+        val dst = pixels
+        val table = lut
+        for (i in 0 until n) dst[i] = table[src[i].toInt() and 0xFF]
+        bmp.setPixels(dst, 0, frame.w, 0, 0, frame.w, frame.h)
+
+        scope.drawIntoCanvas { canvas ->
+            val paint = android.graphics.Paint().apply {
+                isFilterBitmap = true
+                isDither = true
+            }
+            val dstRect = android.graphics.Rect(
+                0, 0, scope.size.width.toInt(), scope.size.height.toInt()
+            )
+            canvas.nativeCanvas.drawBitmap(bmp, null, dstRect, paint)
+        }
     }
 }
 

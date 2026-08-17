@@ -11,6 +11,11 @@ import java.nio.ByteOrder
  * then cidx as w*h uint8 (foreground ramp index), then bidx as w*h uint8 —
  * only when planes == 3. The plane count must be honoured: dropping the
  * background plane of a half-block mode does not crash, it renders half-wrong.
+ *
+ * `planes == 1` is the field format: no codes and no glyphs, just w*h ramp
+ * indices, one per picture pixel, with [FIELD_EMPTY] for "paint the
+ * background". The grid is the terminal's constraint, not the mode's, and
+ * this is the same frame with that constraint taken off.
  */
 class FrameBuf(
     val w: Int,
@@ -22,10 +27,16 @@ class FrameBuf(
 ) {
     val size: Int get() = w * h
 
+    /** True when this is a picture to blit rather than a grid to typeset. */
+    val isField: Boolean get() = planes == 1
+
     companion object {
         const val MAGIC = "SPKT"
         const val VERSION = 1
         const val HEADER_SIZE = 12
+
+        /** Ramp indices are 0..63, so 255 is free to mean "background here". */
+        const val FIELD_EMPTY = 255
 
         /** Strict parser: returns null for any unrecognised or truncated buffer. */
         fun parse(data: ByteArray): FrameBuf? {
@@ -39,9 +50,15 @@ class FrameBuf(
             val w = bb.short.toInt() and 0xFFFF
             val h = bb.short.toInt() and 0xFFFF
             if (version != VERSION) return null
-            if (planes != 2 && planes != 3) return null
+            if (planes < 1 || planes > 3) return null
             if (w == 0 || h == 0) return null
             val cells = w * h
+            if (planes == 1) {
+                if (data.size != HEADER_SIZE + cells) return null
+                val field = ByteArray(cells)
+                bb.get(field)
+                return FrameBuf(w, h, 1, IntArray(0), field, null)
+            }
             val expected = HEADER_SIZE + cells * 4 + cells + if (planes == 3) cells else 0
             if (data.size != expected) return null
             val codes = IntArray(cells)

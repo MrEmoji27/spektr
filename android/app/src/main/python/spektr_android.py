@@ -110,6 +110,7 @@ class Engine:
         self._palette = Palette(self._theme)
         self._swatches: list[list[str]] | None = None
         self._oled = False
+        self._field_mode = False
 
         # Debug counters; see stats().
         self._stats_t0 = self._t0
@@ -399,7 +400,98 @@ class Engine:
         out = mode.fn(ctx)
         codes, cidx = out[0], out[1]
         bidx = out[2] if len(out) == 3 else None
+        if self._field_mode:
+            plane, fw, fh = _field(codes, cidx, bidx)
+            return b"".join((
+                _HEADER.pack(_MAGIC, WIRE_VERSION, 1, fw, fh),
+                np.ascontiguousarray(plane, dtype=np.uint8).tobytes(),
+            ))
         return _pack(codes, cidx, bidx)
+
+    def set_field_mode(self, on: bool) -> None:
+        """Draw as a picture rather than as glyphs.
+
+        The glyph grid is the terminal's constraint, not the mode's: Chladni
+        computes a smooth nodal field and then throws most of it away choosing
+        a half-block to stand for each cell. Android has a canvas and no such
+        constraint, so this returns the field itself and lets Kotlin scale it —
+        which is the difference between a 118x34 mosaic and a picture.
+        """
+        self._field_mode = bool(on)
+
+
+#: Ramp indices are 0..63, so 255 is free to mean "nothing here — paint the
+#: background". A separate plane would double the buffer to carry one bit.
+FIELD_EMPTY = 255
+
+#: Braille dot bits, in Unicode's order, as (sub-row, sub-col) in a 4x2 cell.
+#: Dots 1-3 run down the left column, 4-6 down the right, and 7-8 are the low
+#: pair added when braille went to eight dots — which is why the last two are
+#: not where counting straight down would put them.
+_BRAILLE_BITS = ((0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1), (3, 0), (3, 1))
+
+
+def _field(codes: np.ndarray, cidx: np.ndarray, bidx: np.ndarray | None) -> tuple[np.ndarray, int, int]:
+    """Unpack a glyph grid into the picture those glyphs would have drawn.
+
+    A cell is not a pixel. Braille carries eight, the half-block trick carries
+    two, and the mode computed its field at that finer resolution before
+    choosing a glyph to approximate it with. Drawing the glyph throws the
+    difference away; this puts it back, so the bitmap renderer can draw what
+    the mode actually computed instead of a 118x34 mosaic of it.
+
+    Sub-cell shape follows the geometry rather than being fixed: braille
+    modes give 4x2 a cell, block modes 2x1, and a mode drawing text gives 1x1
+    because there is nothing finer in it to recover.
+    """
+    h, w = codes.shape
+    fg = cidx.astype(np.uint8)
+    bg = bidx.astype(np.uint8) if bidx is not None else None
+
+    braille = (codes >= 0x2800) & (codes <= 0x28FF)
+    if braille.any():
+        sr, sc = 4, 2
+        out = np.full((h * sr, w * sc), FIELD_EMPTY, dtype=np.uint8)
+        bits = np.where(braille, codes - 0x2800, 0)
+        for bit, (dr, dc) in enumerate(_BRAILLE_BITS):
+            on = (bits >> bit) & 1
+            sub = out[dr::sr, dc::sc]
+            np.copyto(sub, fg, where=on.astype(bool))
+        # Cells that are not braille still have to say something. Anything
+        # solid fills its whole cell; a blank leaves the background showing.
+        solid = ~braille & (codes != 0) & (codes != 0x20)
+        if solid.any():
+            for dr in range(sr):
+                for dc in range(sc):
+                    sub = out[dr::sr, dc::sc]
+                    np.copyto(sub, fg, where=solid)
+        return out, w * sc, h * sr
+
+    # The half-block plane: `▀` is the top half in fg over the bottom half in
+    # bg, which is two rows of picture per row of cells and the reason these
+    # modes look twice as tall as they read.
+    upper = codes == 0x2580
+    full = codes == 0x2588
+    lower = codes == 0x2584
+    if upper.any() or full.any() or lower.any():
+        top = np.where(full | upper, fg, bg if bg is not None else FIELD_EMPTY)
+        bot = np.where(full | lower, fg, bg if bg is not None else FIELD_EMPTY)
+        blank = (codes == 0) | (codes == 0x20)
+        if bg is None:
+            top = np.where(blank, FIELD_EMPTY, top)
+            bot = np.where(blank, FIELD_EMPTY, bot)
+        other = ~(upper | full | lower | blank)
+        top = np.where(other, fg, top)
+        bot = np.where(other, fg, bot)
+        out = np.empty((h * 2, w), dtype=np.uint8)
+        out[0::2] = top
+        out[1::2] = bot
+        return out, w, h * 2
+
+    # Nothing sub-cell to recover — text, box drawing, geometric shapes.
+    solid = (codes != 0) & (codes != 0x20)
+    base = bg if bg is not None else np.full_like(fg, FIELD_EMPTY)
+    return np.where(solid, fg, base).astype(np.uint8), w, h
 
 
 def _pack(codes: np.ndarray, cidx: np.ndarray, bidx: np.ndarray | None) -> bytes:

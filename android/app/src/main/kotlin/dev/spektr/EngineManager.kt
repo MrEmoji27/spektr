@@ -40,6 +40,7 @@ object EngineManager {
     private const val KEY_THEME = "theme"
     private const val KEY_OLED = "oled"
     private const val KEY_SENSITIVITY = "sensitivity"
+    private const val KEY_SMOOTH = "smooth"
 
     private val pyContext = newSingleThreadContext("spektr-py")
     private val scope = CoroutineScope(pyContext + SupervisorJob())
@@ -82,6 +83,29 @@ object EngineManager {
     /** Manual trim on the analyser, 0.15..8. Desktop's `[` and `]`. */
     var sensitivity by mutableStateOf(1.0f)
         private set
+
+    /**
+     * Draw the picture rather than the glyphs.
+     *
+     * A cell is not a pixel: Chladni computes a smooth nodal field and then
+     * picks one half-block to stand for each cell, which on this screen means
+     * a 118x34 mosaic of a thing that had far more detail in it. With this on
+     * the mode is run at a higher grid and the field it computed is sent
+     * whole, to be blitted and filtered — smooth curves instead of stairs.
+     */
+    var smooth by mutableStateOf(false)
+        private set
+
+    /**
+     * Cells the field path may ask a mode for, whatever the screen.
+     *
+     * Chladni at 4x the tablet's grid is 64k cells and about 1.8 ms on a
+     * laptop, but the modes are not all Chladni — Maelstrom runs a fluid sim
+     * and Murmuration an n-body flock, and those scale with cells too. This
+     * caps the work rather than the multiplier, so a bigger screen gets a
+     * smaller multiplier instead of a dropped frame.
+     */
+    private const val FIELD_CELL_BUDGET = 70_000
 
     /** Every theme's colours, for the picker. Empty until [loadSwatches]. */
     var swatches: List<ThemeSwatch> by mutableStateOf(emptyList())
@@ -137,6 +161,8 @@ object EngineManager {
                 mode = store.getString(KEY_MODE, null)?.takeIf { it in e.modes } ?: DEFAULT_MODE
                 oled = store.getBoolean(KEY_OLED, false)
                 sensitivity = e.setSensitivity(store.getFloat(KEY_SENSITIVITY, 1.0f))
+                smooth = store.getBoolean(KEY_SMOOTH, false)
+                e.setFieldMode(smooth)
                 val wanted = store.getString(KEY_THEME, null)?.takeIf { it in e.themes } ?: DEFAULT_THEME
                 val loaded = e.useTheme(wanted, oled)
                 if (loaded != null) {
@@ -233,6 +259,24 @@ object EngineManager {
         }
     }
 
+    /** Biggest whole multiplier of the cell grid that stays inside the budget. */
+    private fun fieldScale(w: Int, h: Int): Int {
+        if (w <= 0 || h <= 0) return 1
+        var s = 4
+        while (s > 1 && w.toLong() * h * s * s > FIELD_CELL_BUDGET) s--
+        return s
+    }
+
+    fun useSmooth(on: Boolean) {
+        val e = engine ?: return
+        if (on == smooth) return
+        smooth = on
+        scope.launch {
+            e.setFieldMode(on)
+            prefs?.edit()?.putBoolean(KEY_SMOOTH, on)?.apply()
+        }
+    }
+
     fun useSensitivity(value: Float) {
         val e = engine ?: return
         scope.launch {
@@ -288,7 +332,8 @@ object EngineManager {
                 val e = engine
                 if (e != null && gridW > 0 && gridH > 0) {
                     try {
-                        e.render(mode, gridW, gridH)?.let { lastFrame = it }
+                        val s = if (smooth) fieldScale(gridW, gridH) else 1
+                        e.render(mode, gridW * s, gridH * s)?.let { lastFrame = it }
                     } catch (t: Throwable) {
                         Log.w("spektr", "render failed", t)
                     }

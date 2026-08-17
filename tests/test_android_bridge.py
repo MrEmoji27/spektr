@@ -310,6 +310,134 @@ def test_set_theme_reports_success_and_actually_changes_the_ramp(engine):
     assert engine.ramp_hexes() == after, "a rejected theme still moved the ramp"
 
 
+# ── the field renderer ───────────────────────────────────────────────────────
+
+def _field_of(engine, name, w, h):
+    engine.set_field_mode(True)
+    engine.push(_pcm())
+    for _ in range(6):
+        buf = engine.render(name, w, h)
+    magic, ver, planes, fw, fh = spektr_android._HEADER.unpack_from(buf, 0)
+    assert magic == spektr_android._MAGIC and ver == spektr_android.WIRE_VERSION
+    assert planes == 1, "the field format is one plane"
+    assert len(buf) == spektr_android._HEADER.size + fw * fh
+    plane = np.frombuffer(buf, np.uint8, fw * fh, spektr_android._HEADER.size)
+    return plane.reshape(fh, fw)
+
+
+def test_the_field_is_finer_than_the_cell_grid(engine):
+    """The whole point: a cell is not a pixel.
+
+    Chladni draws through half-blocks, so it computes two rows of picture per
+    row of cells and then throws one away choosing a glyph. At 118x34 — the
+    tablet's grid — that is a mosaic of something with four times the detail
+    in it.
+    """
+    w, h = 118, 34
+    field = _field_of(engine, "Chladni", w, h)
+    assert field.shape == (h * 2, w), "half-block modes carry two rows a cell"
+
+    braille = _field_of(engine, "Dither Storm", w, h)
+    assert braille.shape == (h * 4, w * 2), "braille carries eight dots a cell"
+
+
+def test_the_field_says_where_there_is_nothing():
+    """Background has to be distinguishable from ramp index 0, which is a colour.
+
+    Built from a grid rather than from a mode: whether a given mode has any
+    blank cells this frame depends on the analyser thread having published,
+    and that is not what this is about.
+    """
+    codes = np.array([[0x20, 0x2588, 0x00]], dtype=np.int32)
+    cidx = np.array([[7, 41, 7]], dtype=np.uint8)
+    field, fw, fh = spektr_android._field(codes, cidx, None)
+    # A full block puts this row on the half-block path, so each cell is two
+    # rows of picture — which is the whole reason the field is finer.
+    assert (fw, fh) == (3, 2)
+    for row in (0, 1):
+        assert field[row, 0] == spektr_android.FIELD_EMPTY, "a space is not ramp index 0"
+        assert field[row, 1] == 41, "a full block is the foreground colour"
+        assert field[row, 2] == spektr_android.FIELD_EMPTY, "codepoint 0 is nothing at all"
+
+
+def test_a_mode_that_fills_the_screen_fills_the_field(engine):
+    field = _field_of(engine, "Chladni", 80, 24)
+    lit = field[field != spektr_android.FIELD_EMPTY]
+    assert lit.size, "Chladni drew nothing"
+    assert lit.max() < 64, "a ramp index escaped the ramp"
+
+
+def test_every_mode_survives_the_field_path(engine):
+    """It unpacks glyphs, and a mode may emit any glyph at all."""
+    engine.set_field_mode(True)
+    engine.push(_pcm())
+    bad = []
+    for name in _every_registered_mode():
+        try:
+            for _ in range(3):
+                buf = engine.render(name, 60, 20)
+            _, _, planes, fw, fh = spektr_android._HEADER.unpack_from(buf, 0)
+            assert planes == 1
+            assert len(buf) == spektr_android._HEADER.size + fw * fh
+            assert fw >= 60 and fh >= 20, f"{name}: field {fw}x{fh} is coarser than the grid"
+        except Exception as exc:                     # noqa: BLE001 — reporting
+            bad.append(f"{name}: {type(exc).__name__}: {exc}")
+    assert not bad, "modes that broke the field path:\n" + "\n".join(bad[:10])
+
+
+def test_the_field_draws_the_same_picture_the_glyphs_would(engine):
+    """Not a different renderer — the same one, without the quantisation.
+
+    A braille cell's dots and a half-block's two halves are exactly what the
+    glyph would have shown. If the field disagreed with the glyph grid it
+    would be a second implementation of every mode, quietly drifting.
+    """
+    engine.set_field_mode(False)
+    engine.push(_pcm())
+    for _ in range(6):
+        buf = engine.render("Chladni", 60, 20)
+    off = spektr_android._HEADER.size
+    n = 60 * 20
+    planes = spektr_android._HEADER.unpack_from(buf, 0)[2]
+    codes = np.frombuffer(buf, "<i4", n, off).reshape(20, 60)
+    cidx = np.frombuffer(buf, np.uint8, n, off + n * 4).reshape(20, 60)
+    bidx = np.frombuffer(buf, np.uint8, n, off + n * 5).reshape(20, 60) if planes == 3 else None
+
+    field, fw, fh = spektr_android._field(codes, cidx, bidx)
+    full = codes == 0x2588
+    if full.any():
+        # A full block is the foreground colour over the whole cell, so both
+        # of its sub-rows must be exactly that.
+        assert (field[0::2][full] == cidx[full]).all()
+        assert (field[1::2][full] == cidx[full]).all()
+    upper = codes == 0x2580
+    if upper.any() and bidx is not None:
+        assert (field[0::2][upper] == cidx[upper]).all(), "top half is not the fg"
+        assert (field[1::2][upper] == bidx[upper]).all(), "bottom half is not the bg"
+
+
+def test_braille_dots_land_where_unicode_puts_them():
+    """Dots 7 and 8 are not where counting down the columns would put them."""
+    codes = np.array([[0x2800 | 0b00000001]], dtype=np.int32)   # dot 1: top-left
+    cidx = np.array([[9]], dtype=np.uint8)
+    field, fw, fh = spektr_android._field(codes, cidx, None)
+    assert (fw, fh) == (2, 4)
+    assert field[0, 0] == 9
+    assert (field != 9).sum() == 7, "one dot lit, seven dark"
+
+    codes = np.array([[0x2800 | 0b10000000]], dtype=np.int32)   # dot 8: bottom-right
+    field, _, _ = spektr_android._field(codes, cidx, None)
+    assert field[3, 1] == 9, "dot 8 belongs at the bottom right"
+
+
+def test_field_mode_is_a_switch_not_a_one_way_door(engine):
+    engine.set_field_mode(True)
+    engine.push(_pcm())
+    assert spektr_android._HEADER.unpack_from(engine.render("Bars", 40, 12), 0)[2] == 1
+    engine.set_field_mode(False)
+    assert spektr_android._HEADER.unpack_from(engine.render("Bars", 40, 12), 0)[2] in (2, 3)
+
+
 def test_stats_report_the_interval_they_cover_and_then_reset(engine):
     """The debug build's only window onto how the engine is behaving."""
     engine.push(_pcm())

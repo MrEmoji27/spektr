@@ -102,6 +102,11 @@ class PyEngine private constructor(
     fun setOled(on: Boolean): Palette? =
         toPalette(engine.callAttr("set_oled", on).asList(), "oled")
 
+    /** Draw the field rather than glyphs — see [EngineManager.smooth]. */
+    fun setFieldMode(on: Boolean) {
+        engine.callAttr("set_field_mode", on)
+    }
+
     /** Manual trim on the analyser, clamped by Python; returns what it settled on. */
     fun setSensitivity(value: Float): Float =
         engine.callAttr("set_sensitivity", value).toDouble().toFloat()
