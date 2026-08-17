@@ -174,13 +174,13 @@ def _plasma(ctx: Ctx, cells: str):
     return codes, idx[0::2], idx[1::2]
 
 
-@mode("Plasma", group="fields", hidden=True,
+@mode("Plasma", group="fields",
       blurb="solid colour field, warped by the spectrum")
 def plasma(ctx: Ctx):
     return _plasma(ctx, "half")
 
 
-@mode("Plasma Fine", after="Plasma", group="fields",
+@mode("Plasma Fine", hidden=True, after="Plasma", group="fields",
       blurb="the same field at eight samples a cell instead of two — needs Unicode 16 octants")
 def plasma_fine(ctx: Ctx):
     return _plasma(ctx, "octant")
@@ -324,13 +324,13 @@ def _chladni(ctx: Ctx, cells: str):
     return codes, idx[0::2], idx[1::2]
 
 
-@mode("Chladni", group="fields", hidden=True,
+@mode("Chladni", group="fields",
       blurb="nodal interference pattern, plate modes set by the dominant pitch")
 def chladni(ctx: Ctx):
     return _chladni(ctx, "half")
 
 
-@mode("Chladni Fine", after="Chladni", group="fields",
+@mode("Chladni Fine", hidden=True, after="Chladni", group="fields",
       blurb="the same plate at eight samples a cell, nodal lines antialiased — needs Unicode 16 octants")
 def chladni_fine(ctx: Ctx):
     """Chladni on octant cells.
@@ -474,14 +474,13 @@ def _chladni_flow(ctx: Ctx, cells: str):
 @mode(
     "Chladni Flow",
     group="fields",
-    hidden=True,
     blurb="a plate figure melting continuously from one resonance into the next",
 )
 def chladni_flow(ctx: Ctx):
     return _chladni_flow(ctx, "half")
 
 
-@mode("Chladni Flow Fine", after="Chladni Flow", group="fields",
+@mode("Chladni Flow Fine", hidden=True, after="Chladni Flow", group="fields",
       blurb="the melting plate at eight samples a cell — needs Unicode 16 octants")
 def chladni_flow_fine(ctx: Ctx):
     return _chladni_flow(ctx, "octant")
@@ -714,14 +713,13 @@ def _chladni_extreme(ctx: Ctx, cells: str):
 @mode(
     "Chladni Extreme",
     group="fields",
-    hidden=True,
     blurb="a plate driven past its modes - morphs, escalates, and snaps on the beat",
 )
 def chladni_extreme(ctx: Ctx):
     return _chladni_extreme(ctx, "half")
 
 
-@mode("Chladni Extreme Fine", after="Chladni Extreme", group="fields",
+@mode("Chladni Extreme Fine", hidden=True, after="Chladni Extreme", group="fields",
       blurb="the overdriven plate at eight samples a cell — needs Unicode 16 octants")
 def chladni_extreme_fine(ctx: Ctx):
     return _chladni_extreme(ctx, "octant")
@@ -1502,13 +1500,13 @@ def _kaleido(ctx: Ctx, cells: str):
     return codes, idx[0::2], idx[1::2]
 
 
-@mode("Kaleidoscope", group="fields", hidden=True,
+@mode("Kaleidoscope", group="fields",
       blurb="a mirrored tube of stained glass — the wedge count follows the spectrum, beats shake the chamber")
 def kaleidoscope(ctx: Ctx):
     return _kaleido(ctx, "half")
 
 
-@mode("Kaleidoscope Fine", after="Kaleidoscope", group="fields",
+@mode("Kaleidoscope Fine", hidden=True, after="Kaleidoscope", group="fields",
       blurb="the same tube at four times the vertical detail — needs a terminal that draws Unicode 16 octants")
 def kaleidoscope_fine(ctx: Ctx):
     """Kaleidoscope on octant cells.
@@ -1522,7 +1520,7 @@ def kaleidoscope_fine(ctx: Ctx):
     return _kaleido(ctx, "octant")
 
 
-@mode("Kaleidoscope Ultra", after="Kaleidoscope Fine", group="fields",
+@mode("Kaleidoscope Ultra", hidden=True, after="Kaleidoscope Fine", group="fields",
       blurb="the tube with its seams antialiased — the smoothest a terminal gets")
 def kaleidoscope_ultra(ctx: Ctx):
     """Kaleidoscope with the staircase taken out of its seams.
@@ -1934,13 +1932,13 @@ def _valentine(ctx: Ctx, octant: bool):
     return codes, idx
 
 
-@mode("Valentine", group="fields", hidden=True,
+@mode("Valentine", group="fields",
       blurb="a heart that beats with the track, trailing smaller ones upward")
 def valentine(ctx: Ctx):
     return _valentine(ctx, octant=False)
 
 
-@mode("Valentine Fine", after="Valentine", group="fields",
+@mode("Valentine Fine", hidden=True, after="Valentine", group="fields",
       blurb="the same heart drawn solid instead of stippled — needs a terminal that draws Unicode 16 octants")
 def valentine_fine(ctx: Ctx):
     """Valentine on octant cells.

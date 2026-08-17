@@ -86,14 +86,19 @@ class Settings:
     #: draw them, and ``--cells quadrant`` is the fallback that works
     #: everywhere.
     cells: str = "octant"
-    #: Offer the superseded half-block modes in the picker again.
+    #: Offer the twelve subcell variants — the ``Fine`` modes and
+    #: ``Kaleidoscope Ultra`` — in the picker.
     #:
-    #: Nine of them were replaced by octant variants that draw the same picture
-    #: at four times the subcell resolution, and a menu that lists both twice
-    #: over is a choice nobody wants to make nine times. They are still
-    #: registered and still selectable by name whatever this says; this only
+    #: Off by default. They draw the same pictures as the originals at four
+    #: times the subcell resolution, but they need a font with Unicode 16
+    #: octants (or ``cells = "quadrant"``), they cost roughly twice as much,
+    #: and listing both halves of every pair doubles the menu for a difference
+    #: that only shows on the modes with real edges in them. So the originals
+    #: are what the interface offers and these are opt-in.
+    #:
+    #: They are registered and selectable by name whatever this says; it only
     #: decides whether the interface offers them.
-    legacy_modes: bool = False
+    fine_modes: bool = False
 
     def clamp(self) -> "Settings":
         """Force every field back into range, replacing junk with the default.
@@ -126,7 +131,7 @@ class Settings:
         self.mode = self.mode if isinstance(self.mode, str) and self.mode else "Bars"
         self.theme = self.theme if isinstance(self.theme, str) and self.theme else "classic"
         self.cells = self.cells if self.cells in ("octant", "quadrant") else "octant"
-        self.legacy_modes = bool(self.legacy_modes)
+        self.fine_modes = bool(self.fine_modes)
         self.chrome = bool(self.chrome)
         # `shuffle` has been a bool and, briefly, a four-state string. Accept
         # both: a string means the scope came from the interim form, where

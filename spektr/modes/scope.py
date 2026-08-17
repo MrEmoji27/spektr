@@ -125,13 +125,13 @@ def _scope(ctx: Ctx, octant: bool):
     return codes, cidx
 
 
-@mode("Scope", group="scope", hidden=True,
+@mode("Scope", group="scope",
       blurb="trigger-synced oscilloscope — the trace holds still")
 def scope(ctx: Ctx):
     return _scope(ctx, octant=False)
 
 
-@mode("Scope Fine", after="Scope", group="scope",
+@mode("Scope Fine", hidden=True, after="Scope", group="scope",
       blurb="the same trace as a continuous stroke — needs a terminal that draws Unicode 16 octants")
 def scope_fine(ctx: Ctx):
     """Scope on octant cells.
@@ -253,13 +253,13 @@ def _ecg(ctx: Ctx, octant: bool):
     return codes, cidx
 
 
-@mode("ECG", group="scope", hidden=True,
+@mode("ECG", group="scope",
       blurb="scrolling trace, like a heart monitor")
 def ecg(ctx: Ctx):
     return _ecg(ctx, octant=False)
 
 
-@mode("ECG Fine", after="ECG", group="scope",
+@mode("ECG Fine", hidden=True, after="ECG", group="scope",
       blurb="the same scrolling trace, drawn solid — needs a terminal that draws Unicode 16 octants")
 def ecg_fine(ctx: Ctx):
     """ECG on octant cells.

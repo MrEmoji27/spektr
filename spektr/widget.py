@@ -64,11 +64,11 @@ class AudioVisualizer(Widget):
     ):
         super().__init__(**kwargs)
         self.settings = settings or Settings()
-        #: Whether the picker, the cycle keys and shuffle offer the superseded
-        #: modes. Read from the setting at construction and flipped live by the
-        #: settings panel; the modes themselves are registered and selectable
-        #: either way, so this only changes what is *offered*.
-        self.show_legacy = bool(getattr(self.settings, "legacy_modes", False))
+        #: Whether the picker, the cycle keys and shuffle offer the subcell
+        #: variants. Read from the setting at construction and flipped live by
+        #: the settings panel; the modes themselves are registered and
+        #: selectable either way, so this only changes what is *offered*.
+        self.show_fine = bool(getattr(self.settings, "fine_modes", False))
         #: where user themes are read from; None means the platform default
         #: from palette.config_dir(). Handed straight to all_themes() so an
         #: injected config root redirects the theme-list read exactly like it
@@ -185,11 +185,12 @@ class AudioVisualizer(Widget):
         """Every mode the picker and the cycle keys offer.
 
         Quarantined ones are left out so cycling cannot land you back on
-        something broken, and hidden ones because they have been superseded —
-        both are still registered and both still render if something asks for
-        them by name, which is what ``--mode`` and a saved config do.
+        something broken, and hidden ones — the subcell variants — because
+        they are opt-in. Both are still registered and both still render if
+        something asks for them by name, which is what ``--mode`` and a saved
+        config do.
         """
-        pool = mode_registry.MODES if self.show_legacy else mode_registry.listed()
+        pool = mode_registry.MODES if self.show_fine else mode_registry.listed()
         return [m.name for m in pool if not self.quarantine.is_disabled(m.name)]
 
     def redraw(self) -> None:
@@ -207,7 +208,7 @@ class AudioVisualizer(Widget):
         """Switch to a mode by name — including a hidden one, deliberately.
 
         Hiding is about what the interface *offers*, not about what it will
-        run: a config file or ``--mode`` naming a superseded mode has to keep
+        run: a config file or ``--mode`` naming a hidden mode has to keep
         working, or hiding one would silently change what someone's setup does.
         """
         if mode_registry.get(name) is None or self.quarantine.is_disabled(name):

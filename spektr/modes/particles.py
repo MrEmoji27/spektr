@@ -583,7 +583,7 @@ def radial(ctx: Ctx):
     return _radial(ctx, octant=False)
 
 
-@mode("Radial Fine", after="Radial", group="particles",
+@mode("Radial Fine", hidden=True, after="Radial", group="particles",
       blurb="the same ring as a solid field at two colours a cell — needs a terminal that draws Unicode 16 octants")
 def radial_fine(ctx: Ctx):
     """Radial on octant cells.
@@ -750,13 +750,13 @@ def _sonar(ctx: Ctx, octant: bool):
     return codes, cidx
 
 
-@mode("Sonar", group="particles", hidden=True,
+@mode("Sonar", group="particles",
       blurb="one sweep, not the whole spectrum — returns fade like CRT phosphor")
 def sonar(ctx: Ctx):
     return _sonar(ctx, octant=False)
 
 
-@mode("Sonar Fine", after="Sonar", group="particles",
+@mode("Sonar Fine", hidden=True, after="Sonar", group="particles",
       blurb="the same sweep drawn solid instead of stippled — needs a terminal that draws Unicode 16 octants")
 def sonar_fine(ctx: Ctx):
     """Sonar on octant cells.

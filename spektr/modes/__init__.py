@@ -308,8 +308,8 @@ def mode(name: str, group: str = "spectrum", blurb: str = "",
     later version renames should still load.
 
     ``hidden`` registers the mode without listing it: it stays out of the
-    picker and out of shuffle, and stays reachable by name. That is what a
-    superseded mode wants — the code is still there, still tested, still the
+    picker and out of shuffle, and stays reachable by name. That is what an
+    opt-in variant wants — the code is still there, still tested, still the
     thing a plugin or a config file can ask for, without a menu that offers
     the same picture twice.
     """
@@ -343,9 +343,9 @@ def names() -> list[str]:
 def listed() -> list[Mode]:
     """Every mode the interface offers — everything except the hidden ones.
 
-    The picker, the cycle keys and shuffle all go through here, so a
-    superseded mode disappears from all three at once while staying available
-    to ``--mode`` and to anything that already has its name.
+    The picker, the cycle keys and shuffle all go through here, so an
+    opt-in mode disappears from all three at once while staying available to
+    ``--mode`` and to anything that already has its name.
     """
     return [m for m in MODES if not m.hidden]
 

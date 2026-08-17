@@ -798,13 +798,13 @@ class Spektr(App):
                 "same as f",
             ),
             Setting(
-                "legacy_modes",
-                "legacy modes",
+                "fine_modes",
+                "fine modes",
                 (False, True),
                 lambda v: "shown" if v else "hidden",
-                self._set_legacy_modes,
-                "the half-block originals the octant variants replaced — "
-                "they still work, they are just not offered by default",
+                self._set_fine_modes,
+                "the subcell variants — four times the detail, twice the cost, "
+                "and they need Unicode 16 octants or subcell shape = quadrant",
             ),
             Setting(
                 "cells",
@@ -859,7 +859,7 @@ class Spektr(App):
             # for even while the pacer is throttling.
             "fps": s.fps,
             "bands": s.bands,
-            "legacy_modes": s.legacy_modes,
+            "fine_modes": s.fine_modes,
             "cells": s.cells,
             "sensitivity": s.sensitivity,
             "gate": s.gate,
@@ -922,8 +922,8 @@ class Spektr(App):
     def action_toggle_chrome(self) -> None:
         self._set_chrome(not self.settings.chrome)
 
-    def _set_legacy_modes(self, on: bool) -> None:
-        """Put the superseded modes back on the menu, or take them off again.
+    def _set_fine_modes(self, on: bool) -> None:
+        """Put the subcell variants on the menu, or take them off again.
 
         Nothing about the modes changes — they are registered either way, and
         selectable by name either way. This is only whether the picker, the
@@ -934,8 +934,8 @@ class Spektr(App):
         because a menu setting changed would be the wrong reading of what this
         does. It simply stops being offered next time.
         """
-        self.settings.legacy_modes = bool(on)
-        self.viz.show_legacy = bool(on)
+        self.settings.fine_modes = bool(on)
+        self.viz.show_fine = bool(on)
 
     def _set_cells(self, shape: str) -> None:
         """Switch every subcell mode between octant and quadrant geometry."""
@@ -1201,7 +1201,7 @@ def main() -> None:
         # them unfindable rather than merely unoffered.
         for m in mode_registry.MODES:
             tag = f"  [{m.plugin}]" if m.is_plugin else ""
-            mark = "  (superseded — still selectable with --mode)" if m.hidden else ""
+            mark = "  (opt-in — settings, or --mode)" if m.hidden else ""
             print(f"  {m.name:<10} {m.blurb}{tag}{mark}")
         return
     if "--glyph-test" in argv:

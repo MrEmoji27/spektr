@@ -1,11 +1,15 @@
 """Hidden modes: out of the interface, still in the app.
 
-Nine modes were superseded by their octant variants and taken out of the
-picker. "Taken out of the picker" has to mean exactly that and nothing more —
-they are still registered, still rendered, still tested by the audit, and
-still selectable by name, because a config file or a ``--mode`` flag naming
-one has to keep working. Hiding a mode must not quietly change what someone's
-setup does.
+The twelve subcell variants — the ``Fine`` modes and ``Kaleidoscope Ultra`` —
+are opt-in. They draw the same pictures as the originals at four times the
+subcell resolution, but they need a font with Unicode 16 octants, they cost
+roughly twice as much, and listing both halves of every pair doubles the menu.
+So the originals are what the interface offers.
+
+"Not offered" has to mean exactly that and nothing more: they are still
+registered, still rendered, still tested by the audit, and still selectable by
+name, because a config file or a ``--mode`` flag naming one has to keep
+working. Hiding a mode must not quietly change what someone's setup does.
 """
 
 from __future__ import annotations
@@ -34,32 +38,27 @@ def test_listed_excludes_exactly_the_hidden_ones():
     assert [m.name for m in M.listed()] == [m.name for m in M.MODES if not m.hidden]
 
 
-@pytest.mark.parametrize(
-    "superseded, replacement",
-    [
-        ("Scope", "Scope Fine"),
-        ("ECG", "ECG Fine"),
-        ("Sonar", "Sonar Fine"),
-        ("Plasma", "Plasma Fine"),
-        ("Chladni", "Chladni Fine"),
-        ("Chladni Flow", "Chladni Flow Fine"),
-        ("Chladni Extreme", "Chladni Extreme Fine"),
-        ("Kaleidoscope", "Kaleidoscope Fine"),
-        ("Valentine", "Valentine Fine"),
-    ],
-)
-def test_nothing_is_hidden_without_a_replacement_on_the_menu(superseded, replacement):
-    """A mode may only be hidden because something else took its place."""
-    old, new = M.get(superseded), M.get(replacement)
-    assert old is not None and new is not None
-    assert old.hidden, f"{superseded} was expected to be superseded by {replacement}"
-    assert not new.hidden, f"{replacement} replaced {superseded} and is itself hidden"
+def test_the_hidden_set_is_exactly_the_subcell_variants():
+    """Nothing else may drift into being opt-in without saying so here."""
+    assert {m.name for m in M.MODES if m.hidden} == {
+        "Scope Fine", "ECG Fine", "Radial Fine", "Sonar Fine", "Plasma Fine",
+        "Chladni Fine", "Chladni Flow Fine", "Chladni Extreme Fine",
+        "Kaleidoscope Fine", "Kaleidoscope Ultra", "Valentine Fine",
+        "Maelstrom Fine",
+    }
 
 
-@pytest.mark.parametrize("name", ["Radial", "Maelstrom"])
-def test_these_two_keep_their_place(name):
-    """Kept on the menu beside their variants, deliberately — they read as
-    different pictures rather than as the same one drawn better."""
+@pytest.mark.parametrize("name", [m.name for m in M.MODES if m.hidden])
+def test_every_hidden_variant_has_its_original_on_the_menu(name):
+    """A mode may only be hidden because something else stands in for it."""
+    base = name.removesuffix(" Fine").removesuffix(" Ultra")
+    original = M.get(base)
+    assert original is not None, f"{name} is hidden and {base} does not exist"
+    assert not original.hidden, f"{name} is hidden and so is {base} — nothing is offered"
+
+
+@pytest.mark.parametrize("name", ["Radial", "Maelstrom", "Plasma", "Chladni"])
+def test_the_originals_are_what_the_interface_offers(name):
     m = M.get(name)
     assert m is not None and not m.hidden
 
@@ -71,47 +70,53 @@ def _viz(**settings):
     return AudioVisualizer(settings=Settings(**settings))
 
 
-def test_legacy_setting_puts_them_back_on_the_menu():
-    off, on = _viz(), _viz(legacy_modes=True)
+def test_the_setting_puts_the_variants_on_the_menu():
+    off, on = _viz(), _viz(fine_modes=True)
     hidden = {m.name for m in M.MODES if m.hidden}
 
     assert not (hidden & set(off.mode_names)), "a hidden mode is being offered"
-    assert hidden <= set(on.mode_names), "legacy_modes did not bring them back"
+    assert hidden <= set(on.mode_names), "fine_modes did not bring them in"
     assert len(on.mode_names) == len(off.mode_names) + len(hidden)
 
 
-def test_legacy_setting_flips_live():
+def test_the_setting_flips_live():
     """The settings panel toggles the attribute; the list follows immediately."""
     viz = _viz()
-    assert "Chladni" not in viz.mode_names
-    viz.show_legacy = True
-    assert "Chladni" in viz.mode_names
-    viz.show_legacy = False
-    assert "Chladni" not in viz.mode_names
+    assert "Chladni Fine" not in viz.mode_names
+    viz.show_fine = True
+    assert "Chladni Fine" in viz.mode_names
+    viz.show_fine = False
+    assert "Chladni Fine" not in viz.mode_names
+
+
+def test_the_originals_are_always_offered_either_way():
+    for viz in (_viz(), _viz(fine_modes=True)):
+        for name in ("Chladni", "Plasma", "Scope", "Valentine"):
+            assert name in viz.mode_names, f"{name} went missing from the menu"
 
 
 def test_a_hidden_mode_can_still_be_selected_while_it_is_hidden():
     """--mode and a saved config name one; hiding must not break either."""
     viz = _viz()
-    viz.set_mode("Chladni")
-    assert viz.mode_name == "Chladni"
+    viz.set_mode("Chladni Fine")
+    assert viz.mode_name == "Chladni Fine"
 
 
 def test_the_setting_survives_a_round_trip(tmp_path):
     from spektr import config
 
-    s = config.Settings(legacy_modes=True, cells="quadrant")
+    s = config.Settings(fine_modes=True, cells="quadrant")
     config.save(s, config_dir=tmp_path)
     back = config.load(config_dir=tmp_path)
-    assert back.legacy_modes is True
+    assert back.fine_modes is True
     assert back.cells == "quadrant"
 
 
 def test_junk_in_the_config_falls_back_rather_than_raising():
     from spektr.config import Settings
 
-    s = Settings(legacy_modes="yes please", cells="sextants").clamp()
-    assert s.legacy_modes is True          # any truthy string is "on"
+    s = Settings(fine_modes="yes please", cells="sextants").clamp()
+    assert s.fine_modes is True            # any truthy string is "on"
     assert s.cells == "octant"             # not a geometry spektr has
 
 
