@@ -41,6 +41,45 @@ screen-capture dialog had been accepted.
 Also: prev/next mode buttons, chrome that hides on a tap over the picture, and
 a "made by zemo" footer.
 
+### Fixed: the cell was the wrong shape, so nothing round was round
+
+Every mode in the engine assumes a terminal cell — about twice as tall as it
+is wide. That assumption is load-bearing: it is why Radial's rings are round,
+why Kaleidoscope's symmetry is symmetric, and why the modes that halve a
+vertical velocity or a horizontal delta do so at all.
+
+DejaVu Sans in a Compose line box is **1.53:1**, not 2:1. So every one of those
+corrections was over-correcting by a quarter, on every mode, since v1.
+
+The cell is now forced to exactly 2:1 and the glyph squeezed horizontally to
+fill it (measured on the tablet: 14.5×29.0 px, squeeze 0.763). Squeezing
+rather than padding, because a block element has to keep tiling — U+2588 fills
+its advance box, so scaling the box scales the fill and solid areas stay
+solid. Adding leading instead would put a gap between every row.
+
+### Fixed: Fireworks burst low and sideways
+
+Two faults, both measured rather than guessed, and both in the mode rather
+than the port.
+
+**Bursts were 2.4 to 3.6 times wider than tall.** The shower's vertical
+velocity was being halved, which reads as an aspect correction and is not one:
+a terminal cell is twice as tall as it is wide and braille puts four dot rows
+and two dot columns in it, so a dot is already square. Halving it a second
+time made every shell an ellipse. Now isotropic, and only gravity bends it —
+measured at 1.20–1.77, the remainder being the fall, which is real.
+
+**Rockets never used the top of the screen.** Burst height was mapped from
+`ctx.energy`, which is the mean over every band — and with the analyser's
+autosens normalising the loudest band to about 1.0, a busy track means a mean
+of 0.25 to 0.35, not 0.8. The old mapping wanted 0.77 before it would send a
+shell high, so in practice rockets burst at 56–65% of the screen height and
+the sky above them was never used. Recalibrated: 75–89% across the range music
+actually produces.
+
+Both apply to the desktop too — the mode was mis-calibrated on both, and the
+tablet's wide screen is only what made it obvious.
+
 ### The changelog is in the app
 
 On the home screen, behind **what's new**, with each version collapsible —

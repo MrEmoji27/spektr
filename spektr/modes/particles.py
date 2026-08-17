@@ -1071,8 +1071,19 @@ def fireworks(ctx: Ctx):
             # how it flew.
             lift = 0.55 + ctx.energy * 0.75
             st["rvy"][i] = dr * rng.uniform(1.1, 1.5) * lift
-            top = dr * (0.55 - 0.38 * min(1.0, ctx.energy * 1.3))
-            st["rtarget"][i] = rng.uniform(max(dr * 0.08, top * 0.7), max(top, dr * 0.14))
+            # Burst height, as a distance down from the top of the screen —
+            # so a smaller number is a higher shell.
+            #
+            # Recalibrated for the energy real music actually produces.
+            # ``ctx.energy`` is the mean over every band, and the analyser's
+            # autosens normalises the loudest band to about 1.0, so a mean of
+            # 0.25-0.35 is a busy track, not a quiet one. The previous mapping
+            # wanted 0.77 before it would send a shell near the top, which
+            # nothing short of white noise reaches: measured across the range,
+            # rockets burst at 56-65% of the screen height and the sky above
+            # them was simply never used.
+            top = dr * (0.42 - 0.30 * min(1.0, ctx.energy * 2.2))
+            st["rtarget"][i] = rng.uniform(max(dr * 0.06, top * 0.7), max(top, dr * 0.10))
             st["rkind"][i] = pick_kind()
 
     # stage 2: a bursting rocket seeds a shower of sparks from its position,
@@ -1088,7 +1099,18 @@ def fireworks(ctx: Ctx):
             spd = rng.uniform(dr * spd_lo, dr * spd_hi, k)
             st["sy"][slots] = st["ry"][i]
             st["sx"][slots] = st["rx"][i]
-            st["svy"][slots] = -np.sin(ang) * spd * 0.5
+            # Isotropic, because a shell bursts as a sphere and only gravity
+            # is allowed to make it anything else.
+            #
+            # The vertical component used to be halved, which reads as an
+            # aspect correction and is not one: a terminal cell is twice as
+            # tall as it is wide, and braille puts four dot rows and two dot
+            # columns in it, so a dot is already square and needs no
+            # correction at all. Halving it a second time made every burst an
+            # ellipse — measured at 2.4 to 3.6 times wider than tall across
+            # the energy range, which is what a firework looks like if you
+            # sit on it.
+            st["svy"][slots] = -np.sin(ang) * spd
             st["svx"][slots] = np.cos(ang) * spd
             st["sage"][slots] = 0.0
             st["sgrav"][slots] = dr * grav_mul

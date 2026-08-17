@@ -605,8 +605,17 @@ private fun PickerRow(
     }
 }
 
-/** Measured cell geometry: how wide/tall one grid cell is at the chosen glyph size. */
-private data class CellMetrics(val w: Float, val h: Float, val fontSizeSp: Float)
+/**
+ * Cell geometry: how wide/tall one grid cell is, and how far the glyph has to
+ * be squeezed horizontally to fill it. See where this is built for why the
+ * cell is forced to 2:1 rather than taken as the font gives it.
+ */
+private data class CellMetrics(
+    val w: Float,
+    val h: Float,
+    val fontSizeSp: Float,
+    val scaleX: Float = 1f,
+)
 
 /** How to draw one codepoint: which Paint, the string, and the tracking that puts it on the grid. */
 private class Glyph(val text: String, val paint: android.graphics.Paint, val spacingEm: Float)
@@ -708,7 +717,27 @@ fun GridView(palette: Palette) {
                 "█",
                 style = TextStyle(fontSize = sp, fontFamily = fontFamily),
             )
-            CellMetrics(layout.size.width.toFloat(), layout.size.height.toFloat(), sp.value)
+            val natural = layout.size.width.toFloat()
+            val h = layout.size.height.toFloat()
+
+            // The cell is forced to 2:1, and the glyphs are squeezed to fit it.
+            //
+            // Every mode in the engine assumes a terminal cell: about twice as
+            // tall as it is wide. That assumption is load-bearing — it is why
+            // Radial's rings are round, why Fireworks' bursts are spherical,
+            // and why the modes that halve a vertical velocity or a dx do so.
+            // DejaVu Sans in a Compose line box is 1.57:1, not 2:1, so every
+            // one of those corrections was over-correcting by 27%: bursts came
+            // out two and a half times wider than tall, and a rocket climbing
+            // a given number of dot rows rose 21% less far up the screen than
+            // the mode intended.
+            //
+            // Squeezing horizontally rather than padding vertically, because a
+            // block element has to keep tiling: U+2588 fills its advance box,
+            // so scaling the box scales the fill and solid areas stay solid.
+            // Adding leading instead would put a gap between every row.
+            val target = h * 0.5f
+            CellMetrics(target, h, sp.value, scaleX = target / natural)
         }
     }
 
@@ -727,9 +756,11 @@ fun GridView(palette: Palette) {
     val context = LocalContext.current
     val paints = remember(cell) {
         val size = with(density) { (cell?.fontSizeSp ?: 12f).sp.toPx() }
+        val squeeze = cell?.scaleX ?: 1f
         val main = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
             typeface = ResourcesCompat.getFont(context, R.font.dejavu_sans)
             textSize = size
+            textScaleX = squeeze
         }
         // MONOSPACE rather than a second bundled font: it resolves through the
         // platform's fallback chain, which reaches Noto Sans CJK, so the app
@@ -737,6 +768,7 @@ fun GridView(palette: Palette) {
         val fallback = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
             typeface = android.graphics.Typeface.MONOSPACE
             textSize = size
+            textScaleX = squeeze
         }
         GridPaints(main, fallback, cell?.w ?: size)
     }
@@ -746,6 +778,13 @@ fun GridView(palette: Palette) {
 
     LaunchedEffect(gridW, gridH) {
         EngineManager.setGrid(gridW, gridH)
+        cell?.let {
+            android.util.Log.i(
+                "spektr",
+                "grid ${gridW}x${gridH}  cell %.1fx%.1f px (%.2f:1)  glyph squeeze %.3f"
+                    .format(it.w, it.h, it.h / it.w, it.scaleX)
+            )
+        }
     }
 
     // One bitmap and one pixel buffer for the whole session, resized only when
