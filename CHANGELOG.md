@@ -41,6 +41,28 @@ screen-capture dialog had been accepted.
 Also: prev/next mode buttons, chrome that hides on a tap over the picture, and
 a "made by zemo" footer.
 
+### New mode: Snow
+
+Rain's sibling, and deliberately its opposite in how it moves. A raindrop
+falls fast enough that its own motion is the shape, which is why Rain draws
+each drop as a streak. A snowflake has almost no terminal velocity and a great
+deal of air resistance, so it hangs, sways and arrives — drawn as a crystal
+that drifts on its own sine and is pushed around by a shared wind.
+
+Three depth planes: a five-dot crystal in front falling fastest and swaying
+widest, a diagonal speck in the middle, a single dim dot far back. Without
+that parallax a screen of white dots is noise; with it, it is depth.
+
+No bokeh behind the glass. Rain's blurred circles are lights seen through a
+wet window — a thing that happens indoors looking out — and snow is the
+weather itself.
+
+Snow also lies: flakes reaching the bottom add to a per-column depth that
+slumps sideways and melts back slowly, so a loud passage leaves drifts along
+the floor for a while after it has gone. Mid band sets how thickly it falls,
+energy how fast, and `ctx.drive` gusts the wind sideways, so percussive
+material blows the fall about rather than only thickening it.
+
 ### Fixed: the cell was the wrong shape, so nothing round was round
 
 Every mode in the engine assumes a terminal cell — about twice as tall as it

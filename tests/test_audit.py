@@ -64,11 +64,13 @@ SELF_ANIMATING = {
     # so it self-animates for the same reason and belongs here too)
     # animating on its own even in silence by design: a record keeps spinning
     # after the needle drops (Vinyl), rain keeps falling at a small base rate
-    # so the loop never looks paused (Rain), and embers keep drifting and
-    # cooling on their own timers once spawned (Ember)
+    # so the loop never looks paused (Rain), snow does the same and also keeps
+    # swaying on its own sine and melting the drifts it has already laid down
+    # (Snow), and embers keep drifting and cooling on their own timers once
+    # spawned (Ember)
     "Readout", "Helix", "Chladni Flow", "Chladni Extreme", "Orbit", "Keys",
     "Maelstrom", "Maelstrom Fine", "Dune", "Fireworks", "Boot", "Murmuration",
-    "Vinyl", "Rain", "Ember",
+    "Vinyl", "Rain", "Snow", "Ember",
     # continuous spin (Kaleidoscope rotates its mirror array; the
     # scrollwork curls turn on their anchors even at a frozen spectrum)
     "Kaleidoscope", "Kaleidoscope Fine", "Kaleidoscope Ultra",

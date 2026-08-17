@@ -107,7 +107,7 @@ Listed in the order the picker cycles them.
 | **Stereo** | per-band L/R meters, mirrored from centre | **Chladni** | vibrating-plate figure that snaps between real resonances |
 | **Matrix** | digital rain, falling faster when it's loud | **Helix** | two strands rotating, split by true L/R phase |
 | **Wave** | smoothed waveform | **Chladni Flow** | the same plate, melting continuously from one figure to the next |
-| **Spectro** | scrolling waterfall — frequency up, time across | | |
+| **Spectro** | scrolling waterfall — frequency up, time across | **Snow** | snowfall in three planes, gusting and lying in drifts |
 | **Scope** | trigger-synced oscilloscope — the trace holds still | **Maelstrom** | a real fluid sim, stirred by the music |
 | **Plasma** | solid colour field, warped by the spectrum | **Vinyl** | a record whose grooves light up as a radial spectrum |
 | **ECG** | scrolling trace, like a heart monitor | **Rain** | rain on the glass, falling harder when it's loud |
@@ -118,7 +118,7 @@ Listed in the order the picker cycles them.
 | **Valentine** | a heart that beats with the track, trailing smaller ones upward | **Tunnel In** | rings thrown out of the centre on the beat, rushing past you |
 | **Locket** | an outlined heart, pulsing rings of hearts outward on the beat | | |
 
-Vinyl, Rain and Ember are the lofi group — a
+Vinyl, Rain, Snow and Ember are the lofi group — a
 shared *look* (warm objects, soft edges, nothing strobing) rather than a
 shared reactivity budget. Each one maps real band data into its geometry,
 so what the music changes is what the object is doing, not just how bright
