@@ -511,20 +511,33 @@ def snow(ctx: Ctx):
             (0.22 + plane * 0.34) * st["shine"][live] * twinkle * (0.70 + ctx.energy * 0.9),
             0.06, 1.0,
         )
-        for p in range(3):
-            sel = plane == p
-            if not sel.any():
-                continue
-            vals = centre[sel]
-            for oy, ox in _SNOW_ARMS[p]:
-                yy = py[sel] + oy
-                xx = (px[sel] + ox) % dc
-                ok = (yy >= 0) & (yy < dr)
-                if ok.any():
-                    # Arms dimmer than the centre, so a crystal reads as a
-                    # crystal rather than as a solid block of five dots.
-                    arm = 1.0 if (oy == 0 and ox == 0) else 0.55
-                    np.maximum.at(field, (yy[ok], xx[ok]), vals[ok] * arm)
+        # Plain indexed assignment rather than np.maximum.at, and ordered so
+        # that the brighter thing is written last.
+        #
+        # ``maximum.at`` is the unbuffered path: it cannot vectorise, because
+        # it has to handle two flakes landing on one dot. Snow is sparse
+        # enough that those collisions are rare and invisible, and the order
+        # below makes the rare one come out right anyway — every arm of every
+        # plane is drawn first, then every centre, far plane before near. So
+        # a centre always beats an arm and a near flake always beats a far
+        # one, which is what the maximum was for.
+        for arm_pass in (False, True):
+            for p in range(3):
+                sel = plane == p
+                if not sel.any():
+                    continue
+                vals = centre[sel]
+                for oy, ox in _SNOW_ARMS[p]:
+                    is_centre = oy == 0 and ox == 0
+                    if is_centre != arm_pass:
+                        continue
+                    yy = py[sel] + oy
+                    xx = (px[sel] + ox) % dc
+                    ok = (yy >= 0) & (yy < dr)
+                    if ok.any():
+                        # Arms dimmer than the centre, so a crystal reads as a
+                        # crystal rather than as a solid block of five dots.
+                        field[yy[ok], xx[ok]] = vals[ok] * (1.0 if is_centre else 0.55)
 
     lying = st["settle"]
     if lying.max() > 0.02:
