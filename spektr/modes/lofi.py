@@ -424,7 +424,19 @@ def snow(ctx: Ctx):
     gust = math.sin(ctx.t * 0.23) * 0.35 + (ctx.drive - 0.5) * 1.6
     st["wind"] += (gust - st["wind"]) * min(1.0, ctx.dt * 1.8)
 
-    st["acc"] += (22.0 + mid * 90.0) * ctx.dt
+    # Flakes per second, scaled down on a small window.
+    #
+    # The rate is otherwise absolute, and a flake's lifetime is roughly
+    # constant — fall speed scales with the height it has to cross — so the
+    # same rate fills a small terminal to the same *count* as a large one and
+    # therefore to a far greater density. Measured at 40x12 it lit 48% of the
+    # cells, which is not snowfall, it is static.
+    #
+    # Only ever scaled down. Growing it on a large terminal would be the
+    # honest completion of the idea, but it costs a scatter per flake per
+    # frame and the tablet is already the slowest thing that runs this.
+    area = min(1.0, max(0.3, (dr * dc) / (120.0 * 240.0)))
+    st["acc"] += (22.0 + mid * 90.0) * area * ctx.dt
     want = int(st["acc"])
     if want:
         st["acc"] -= want
@@ -490,24 +502,42 @@ def snow(ctx: Ctx):
         # A flake catches the light as it turns. Slow, and never all the way
         # off, so it reads as tumbling rather than as flickering.
         twinkle = 0.82 + 0.18 * np.sin(ctx.t * st["freq"][live] * 1.7 + st["phase"][live])
+        # The planes are spread nearly the whole ramp rather than sitting in
+        # the middle third of it. A snowfield is one of the few pictures where
+        # almost every cell is at its own depth, so the depth *is* the
+        # gradient — bunching the three planes close together threw that away
+        # and left the theme showing as a single colour with texture.
         centre = np.clip(
-            (0.30 + plane * 0.20) * st["shine"][live] * twinkle * (0.75 + ctx.energy * 0.5),
+            (0.22 + plane * 0.34) * st["shine"][live] * twinkle * (0.70 + ctx.energy * 0.9),
             0.06, 1.0,
         )
-        for p in range(3):
-            sel = plane == p
-            if not sel.any():
-                continue
-            vals = centre[sel]
-            for oy, ox in _SNOW_ARMS[p]:
-                yy = py[sel] + oy
-                xx = (px[sel] + ox) % dc
-                ok = (yy >= 0) & (yy < dr)
-                if ok.any():
-                    # Arms dimmer than the centre, so a crystal reads as a
-                    # crystal rather than as a solid block of five dots.
-                    arm = 1.0 if (oy == 0 and ox == 0) else 0.55
-                    np.maximum.at(field, (yy[ok], xx[ok]), vals[ok] * arm)
+        # Plain indexed assignment rather than np.maximum.at, and ordered so
+        # that the brighter thing is written last.
+        #
+        # ``maximum.at`` is the unbuffered path: it cannot vectorise, because
+        # it has to handle two flakes landing on one dot. Snow is sparse
+        # enough that those collisions are rare and invisible, and the order
+        # below makes the rare one come out right anyway — every arm of every
+        # plane is drawn first, then every centre, far plane before near. So
+        # a centre always beats an arm and a near flake always beats a far
+        # one, which is what the maximum was for.
+        for arm_pass in (False, True):
+            for p in range(3):
+                sel = plane == p
+                if not sel.any():
+                    continue
+                vals = centre[sel]
+                for oy, ox in _SNOW_ARMS[p]:
+                    is_centre = oy == 0 and ox == 0
+                    if is_centre != arm_pass:
+                        continue
+                    yy = py[sel] + oy
+                    xx = (px[sel] + ox) % dc
+                    ok = (yy >= 0) & (yy < dr)
+                    if ok.any():
+                        # Arms dimmer than the centre, so a crystal reads as a
+                        # crystal rather than as a solid block of five dots.
+                        field[yy[ok], xx[ok]] = vals[ok] * (1.0 if is_centre else 0.55)
 
     lying = st["settle"]
     if lying.max() > 0.02:

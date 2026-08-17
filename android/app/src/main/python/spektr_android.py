@@ -123,6 +123,10 @@ class Engine:
         self._stats_render = 0.0
         self._stats_render_max = 0.0
 
+        #: When audio last arrived. Capture can stop without anyone telling
+        #: the engine — see _feed_silence.
+        self._last_push = self._t0
+
         # The motion layer, which is not in the analyser and not in the modes.
         #
         # ``Analyser`` publishes a raw ``Frame``: bands as measured, and no
@@ -183,6 +187,41 @@ class Engine:
         self._stats_render_max = 0.0
         return [float(v) for v in out]
 
+    #: How long the engine waits before deciding the audio has stopped. Long
+    #: enough to ride out a scheduler hiccup between AudioRecord buffers —
+    #: those arrive about every 43 ms — and short enough that a stopped
+    #: capture stops the picture rather than freezing it.
+    _SILENCE_AFTER = 0.25
+
+    def _feed_silence(self, now: float) -> None:
+        """Write silence when nothing is arriving, so the picture can settle.
+
+        The analyser pulls: it reads the most recent window out of the ring
+        whenever it likes. If capture stops, nothing overwrites that window,
+        so it keeps reading the same audio and publishing the same bands —
+        and every mode goes on drawing whatever level was playing at the
+        moment the audio stopped, indefinitely. Switching mode does not help,
+        because the new mode is handed the same frozen numbers.
+
+        That is what happens on Android whenever the projection ends: the
+        service tears down the AudioRecord and simply stops pushing. Nothing
+        in the pull model can distinguish "no new audio" from "the same audio
+        again", so the engine has to say so itself.
+
+        Silence rather than a reset, because silence is the truth — the
+        speakers are not playing — and it lets the springs and peak-holds
+        decay the way they do at the end of any quiet passage, instead of
+        snapping to zero.
+        """
+        gap = now - self._last_push
+        if gap < self._SILENCE_AFTER:
+            return
+        # One frame's worth, so the ring is refreshed at the rate it is being
+        # read rather than all at once.
+        n = max(1, int(self._sr * min(gap, 0.05)))
+        self._last_push = now
+        self._ring.push(np.zeros((n, 2), dtype=np.float32))
+
     # ── audio in ──
     def push(self, pcm: bytes, channels: int = 2) -> None:
         """Hand one AudioRecord buffer to the analyser.
@@ -201,6 +240,7 @@ class Engine:
             self._stats_sample_peak = max(
                 self._stats_sample_peak, float(np.abs(buf).max())
             )
+        self._last_push = time.monotonic()
         self._ring.push(buf)
 
     # ── configuration ──
@@ -338,6 +378,7 @@ class Engine:
         rotation is just a different pair of numbers.
         """
         began = time.monotonic()
+        self._feed_silence(began)
         mode = self._modes.get(name)
         if mode is None:
             raise KeyError(f"no mode named {name!r}")
