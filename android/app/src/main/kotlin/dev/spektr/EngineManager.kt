@@ -108,6 +108,7 @@ object EngineManager {
         if (renderJob?.isActive == true) return
         renderJob = scope.launch {
             while (isActive) {
+                val began = System.nanoTime()
                 val e = engine
                 if (e != null && gridW > 0 && gridH > 0) {
                     try {
@@ -116,7 +117,12 @@ object EngineManager {
                         Log.w("spektr", "render failed", t)
                     }
                 }
-                delay(FRAME_MS)
+                // Sleep the remainder of the frame, not a whole frame on top of
+                // it. Waiting FRAME_MS *after* the work makes the period
+                // render + 33 ms — measured on the tablet at 20 ms a render,
+                // that is 53 ms and 19 fps out of a loop asking for 30.
+                val spent = (System.nanoTime() - began) / 1_000_000
+                delay((FRAME_MS - spent).coerceAtLeast(1L))
             }
         }
     }

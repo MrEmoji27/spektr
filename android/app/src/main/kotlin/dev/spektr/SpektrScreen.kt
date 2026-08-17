@@ -25,7 +25,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
@@ -35,6 +38,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.res.ResourcesCompat
 
 /**
  * The v1 screen: loading, idle (start button), or the grid.
@@ -161,6 +165,26 @@ fun GridView(engine: PyEngine) {
         }
     }
 
+    // One Paint for the whole grid, not a TextStyle per run.
+    //
+    // The first version called Compose's drawText once per run with a freshly
+    // built TextStyle. Every one of those is a full text layout — measure and
+    // shape — and the new style object each time meant nothing could be cached
+    // between them. On the tablet that was 93 ms a frame at the 50th
+    // percentile against a 33 ms target, with the GPU idle at 5 ms: all of it
+    // was text layout on the CPU.
+    //
+    // A grid renderer does not need layout. Every cell is one glyph in a known
+    // box, so this is a direct Skia draw with a reusable Paint — set the
+    // colour, draw the run, move on.
+    val context = LocalContext.current
+    val paint = remember(cell, fontFamily) {
+        android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            typeface = ResourcesCompat.getFont(context, R.font.dejavu_sans)
+            textSize = with(density) { (cell?.fontSizeSp ?: 12f).sp.toPx() }
+        }
+    }
+
     val gridW = if (cell != null) (viewW / cell.w).toInt().coerceIn(8, 400) else 0
     val gridH = if (cell != null) (viewH / cell.h).toInt().coerceIn(8, 200) else 0
 
@@ -176,7 +200,7 @@ fun GridView(engine: PyEngine) {
     ) {
         val frame = EngineManager.lastFrame ?: return@Canvas
         val c = cell ?: return@Canvas
-        drawGrid(frame, engine, c, fontFamily, textMeasurer)
+        drawGrid(frame, engine, c, paint)
     }
 }
 
@@ -184,8 +208,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawGrid(
     frame: FrameBuf,
     engine: PyEngine,
     cell: CellMetrics,
-    fontFamily: FontFamily,
-    textMeasurer: androidx.compose.ui.text.TextMeasurer,
+    paint: android.graphics.Paint,
 ) {
     val cols = frame.w
     val rows = frame.h
@@ -193,6 +216,9 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawGrid(
     val ramp = engine.ramp
     val rampColor = { idx: Int -> if (idx < ramp.size) Color(ramp[idx]) else Color(0xFF000000) }
     val bgIndex = { i: Int -> if (frame.planes == 3) frame.bidx!![i].toInt() and 0xFF else -1 }
+    // Skia draws text from the baseline; the wire format positions cells by
+    // their top edge. `-top` is the ascent above the baseline for this font.
+    val baseline = -paint.fontMetrics.top
 
     // Background plane first, run-length over same-coloured cells per row.
     var i = 0
@@ -227,16 +253,15 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawGrid(
             // run is built with appendCodePoint, never Char.toChar.
             val sb = StringBuilder((j - i) * 2)
             for (k in 0 until (j - i)) sb.appendCodePoint(code)
-            drawText(
-                textMeasurer,
-                sb.toString(),
-                topLeft = Offset(col * cell.w, row * cell.h),
-                style = TextStyle(
-                    color = rampColor(fg),
-                    fontFamily = fontFamily,
-                    fontSize = cell.fontSizeSp.sp,
-                ),
-            )
+            paint.color = ramp.getOrElse(fg) { 0xFF000000.toInt() }
+            drawIntoCanvas { canvas ->
+                canvas.nativeCanvas.drawText(
+                    sb.toString(),
+                    col * cell.w,
+                    row * cell.h + baseline,
+                    paint,
+                )
+            }
         }
         i = j
     }
