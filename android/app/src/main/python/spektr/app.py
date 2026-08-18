@@ -55,14 +55,14 @@ class Spektr(App):
     Screen { layers: base overlay; background: #000000; }
     AudioVisualizer { layer: base; height: 1fr; }
 
-    Picker, SettingsPanel, NamePrompt {
+    Picker, SettingsPanel, NamePrompt, HelpPanel {
         layer: overlay;
         dock: right;
         width: auto;
         height: 100%;
         background: transparent;
     }
-    Picker > #panel, SettingsPanel > #panel, NamePrompt > #panel {
+    Picker > #panel, SettingsPanel > #panel, NamePrompt > #panel, HelpPanel > #panel {
         height: 100%;
         background: $surface;
         border-left: tall $accent;
@@ -83,7 +83,18 @@ class Spektr(App):
     SettingsPanel > #panel, NamePrompt > #panel {
         width: 42;
     }
-    Picker #title, SettingsPanel #title, NamePrompt #title {
+    /* The help panel is two columns — a key and what it does — where the
+       others are one, so it needs the room. It was in none of these rules
+       when it was added, which is not a panel that looks slightly wrong: with
+       no `layer: overlay` and no width it mounted into the screen's own
+       vertical layout at full size, pushed the Header and Footer off, and
+       drew nothing, because its background is transparent and only #panel
+       carries a surface. Pressing `h` looked exactly like a key that hides
+       the chrome. */
+    HelpPanel > #panel {
+        width: 58;
+    }
+    Picker #title, SettingsPanel #title, NamePrompt #title, HelpPanel #title {
         color: $accent;
         text-style: bold;
         padding: 1 0 0 0;
@@ -94,13 +105,13 @@ class Spektr(App):
         padding: 0;
         margin: 0 0 1 0;
     }
-    Picker OptionList, SettingsPanel OptionList {
+    Picker OptionList, SettingsPanel OptionList, HelpPanel OptionList {
         background: $surface;
         border: none;
         height: 1fr;
         scrollbar-size-vertical: 1;
     }
-    Picker #hint, SettingsPanel #hint, NamePrompt #hint {
+    Picker #hint, SettingsPanel #hint, NamePrompt #hint, HelpPanel #hint {
         color: $text-muted;
     }
     """

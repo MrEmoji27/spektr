@@ -165,24 +165,63 @@ def test_markup_safe_handles_what_escape_does_not():
     for raw in ("[", "]", "[b]", "[/dim]", "no brackets here", "a [ b ] c"):
         assert Content.from_markup(markup_safe(raw) + " [dim]x[/dim]").plain == raw + " x"
 
-def test_pressing_h_actually_opens_the_panel_in_a_running_app():
-    """The end-to-end version, because the failure was a crash on layout.
+def test_pressing_h_shows_the_panel_without_eating_the_chrome():
+    """The end-to-end version, because both failures were in layout, not content.
 
-    Parsing the rows catches the markup itself, but the way this bug arrived
-    was Textual raising out of ``Screen._refresh_layout`` while composing the
-    panel — a place no unit test reaches. Driving the real app with the real
-    key is the only check that covers mounting as well as content.
+    Twice now this panel has been broken in a way no unit test could see. The
+    first was markup that would not parse, which raised out of the
+    compositor. The second was worse to diagnose from a description: the
+    panel was in none of the app's CSS rules, so it had no ``layer: overlay``
+    and no width, mounted into the screen's own vertical layout at full size,
+    pushed the Header and Footer off the screen, and painted nothing — its
+    background is transparent and only ``#panel`` carries a surface. Pressing
+    ``h`` looked exactly like a key that hides the chrome.
+
+    So this checks the three things a mounted-and-populated assertion missed:
+    the chrome is still there, the panel is docked on the overlay layer rather
+    than sitting in the layout, and the rows are actually painted.
     """
     import asyncio
 
+    from textual.geometry import Region
+    from textual.widgets import Footer, Header
+
     async def drive():
         app = Spektr(settings=Settings(mode="Bars", theme="gruvbox"))
-        async with app.run_test(size=(188, 50)) as pilot:
+        async with app.run_test(size=(120, 40)) as pilot:
+            header, footer = app.query(Header).first(), app.query(Footer).first()
+            before = (header.region, footer.region)
+
             await pilot.press("h")
             await pilot.pause()
+
             panels = [w for w in app.screen.walk_children() if isinstance(w, HelpPanel)]
             assert panels, "h did not open the help panel"
-            assert app.query("#rows").first()._options, "the panel opened empty"
+            panel = panels[0]
+
+            assert (header.region, footer.region) == before, (
+                "the help panel displaced the header/footer instead of overlaying them"
+            )
+            assert panel.styles.layer == "overlay", (
+                f"the panel is on layer {panel.styles.layer!r}, so it is in the layout"
+            )
+            assert 0 < panel.region.width < app.screen.region.width, (
+                f"the panel spans {panel.region.width} of "
+                f"{app.screen.region.width} columns — it is not docked"
+            )
+
+            rows = app.query_one("#rows")
+            assert rows.size.width > 0 and rows.size.height > 0, "the rows have no room"
+            painted = []
+            for strip in rows.render_lines(
+                Region(0, 0, rows.size.width, rows.size.height)
+            ):
+                painted.append("".join(seg.text for seg in strip))
+            screen_text = " ".join(painted)
+            assert "Mode" in screen_text, "the panel is mounted but paints nothing"
+            # The two rows whose labels are brackets — the markup bug.
+            assert "Sens" in screen_text, "the sensitivity rows are missing"
+
             await pilot.press("escape")
             await pilot.pause()
             assert app.is_running
