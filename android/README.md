@@ -13,6 +13,21 @@ coming from your PC.
 
 ## What it looks like
 
+<table>
+<tr>
+<td width="50%"><img src="https://raw.githubusercontent.com/MrEmoji27/spektr/main/assets/android-home.jpg"
+     alt="the home screen, with the mode and theme pickers" width="100%"></td>
+<td width="50%"><img src="https://raw.githubusercontent.com/MrEmoji27/spektr/main/assets/android-tablet.jpg"
+     alt="spektr running on a tablet" width="100%"></td>
+</tr>
+<tr>
+<td><sub>Retro on <code>hot-pink</code>. The picture behind the buttons is the
+engine running, not a still.</sub></td>
+<td><sub>Chladni Extreme on <code>ice</code>, on the kind of screen this is
+for.</sub></td>
+</tr>
+</table>
+
 The home screen renders a live preview of the selected mode before capture
 consent, so choosing a mode does not require going through Android's permission
 dialog first. The mode picker offers 53 of the engine's 65 modes, and the theme
