@@ -53,35 +53,23 @@ def test_the_version_is_a_plain_three_part_number():
     )
 
 
-def test_the_tag_for_this_version_is_not_pointing_somewhere_else():
-    """A tag is immutable in practice once pushed, and the workflows key on it.
-
-    The thing to catch is a version that has already shipped: bump it, or the
-    next tag push builds over a release that is already out.
-
-    "Already taken" is the wrong test for that, and it failed the first
-    release it ran on. The three build workflows are triggered *by* the tag
-    and check out the tag, so the tag they are building always exists — a test
-    that objects to it existing objects to every release build there will ever
-    be. What matters is whether it points at this commit or at a different
-    one.
-    """
-    wanted = f"v{spektr.__version__}"
-    at = subprocess.run(
-        ["git", "-C", str(ROOT), "rev-list", "-n", "1", wanted],
-        capture_output=True, text=True,
-    )
-    if at.returncode:
-        return                                    # no such tag yet: nothing to say
-    head = subprocess.run(
-        ["git", "-C", str(ROOT), "rev-parse", "HEAD"],
-        capture_output=True, text=True, check=True,
-    ).stdout.strip()
-    assert at.stdout.strip() == head, (
-        f"{wanted} already exists and points at {at.stdout.strip()[:12]}, not at "
-        f"HEAD {head[:12]} — bump the version, or a tag push here would build "
-        f"over a release that is already out"
-    )
+# There was a test here that tried to police the release tag, twice, and both
+# versions were wrong in the same way: a tag's relationship to HEAD is not a
+# property of the code.
+#
+# The first asserted the tag did not exist yet. That is true before cutting a
+# release and false during one — the build workflows are triggered by the tag
+# and check it out — so it failed all three jobs on the first tag it ever saw.
+#
+# The second asserted the tag did not point somewhere other than HEAD. That
+# holds for exactly one commit. The moment anything lands after the release,
+# which is immediately and forever, the tag correctly stays behind and the test
+# is red on a clean tree until the next version bump.
+#
+# Nothing replaced it, because git already refuses to move a tag that exists
+# without --force, which is the actual protection. What is worth testing is
+# below: the two declarations agree, the version is shaped the way the Windows
+# build needs, and the changelog has a section for it.
 
 
 def test_the_changelog_has_a_section_for_this_version():
