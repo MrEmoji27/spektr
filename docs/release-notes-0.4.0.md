@@ -8,8 +8,11 @@ and never write the notes themselves.
     gh release create v0.4.0 --draft --title "spektr 0.4.0"       --notes-file docs/release-notes-0.4.0.md
 -->
 
-44 modes → 65. 49 themes → 55. There is an Android build now, and the APK is
-attached below.
+**Windows, Linux and Android**, all prebuilt and attached below — no Python
+needed on any of them. That is the first release where every platform ships a
+binary; macOS still runs from source.
+
+44 modes → 65. 49 themes → 55.
 
 ### Onset detection
 

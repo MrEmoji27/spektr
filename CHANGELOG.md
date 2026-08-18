@@ -11,10 +11,13 @@ port version that is.
 
 ## spektr 0.4.0
 
+First release with a prebuilt binary for every platform: Windows exe and
+installer, Linux binary, Android APK. macOS still runs from source.
+
 44 modes → 65. 49 themes → 55. Two things underneath the app are new — onset
 detection and subcell rendering — and most of the rest follows from them. The
-Android port also lives here now; it has its own version line and its own
-section below.
+Android port lives here too; it has its own version line and its own section
+below.
 
 ### Onset detection
 
