@@ -92,12 +92,16 @@ jobs:
           chmod +x gradlew
           # arm64-v8a only. CPython and numpy ship per ABI, so a second
           # architecture roughly doubles a 55 MB APK to serve emulators.
-          ./gradlew :app:assembleRelease --no-daemon \
-            -Pabi=arm64-v8a \
-            -PversionName=${{ steps.version.outputs.name }} \
-            -PversionCode=${{ steps.version.outputs.code }}
-          mv app/build/outputs/apk/release/app-release*.apk \
-             "$GITHUB_WORKSPACE/spektr-${{ steps.version.outputs.name }}-arm64-v8a.apk"
+          # The version is not passed in. build.gradle.kts reads
+          # spektrAndroidVersion out of gradle.properties and derives the
+          # versionCode from it, so a -P flag gradle never reads only looks
+          # like it is doing something. There were two here, set from step
+          # outputs that do not exist, and the rename below used the same
+          # empty value — so the file the next two steps verify was never
+          # the file this step produced.
+          ./gradlew :app:assembleRelease --no-daemon -Pabi=arm64-v8a
+          APK="spektr-android-${{ steps.version.outputs.app }}-arm64-v8a.apk"
+          mv app/build/outputs/apk/release/app-release*.apk "$GITHUB_WORKSPACE/$APK"
 
       - name: Check what actually came out
         # Reading the built APK rather than the files that went into it. Both

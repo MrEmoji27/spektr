@@ -9,6 +9,230 @@ line because it moves at its own pace, and ships inside a spektr release: the
 APK carries the release's version number, and the heading below says which
 port version that is.
 
+## spektr 0.4.0 — the rhythm release
+
+Two things are new at the bottom of the app, and everything else in this
+release is something one of them made possible.
+
+The first is an onset detector: spektr now knows when a beat lands, rather
+than inferring something beat-shaped from how loud the low end is. The second
+is sub-cell rendering: a terminal cell can hold eight independently lit
+regions in two colours instead of being one coloured block, so a mode can draw
+a curve as a stroke rather than as a staircase.
+
+Also: the Android port, which lives in this repository and ships an APK
+alongside the desktop builds. It has [its own version line](#android-v020--ships-in-spektr-040)
+and its own section below.
+
+**44 modes → 65. 49 themes → 55.**
+
+### New: spektr knows where the beat is
+
+Every mode that reacted to rhythm before this release was really reacting to
+bass energy, because that is what was available. A kick and a loud sustained
+low note look the same to a level meter, and modes built on one were driven by
+the other about as often.
+
+`spektr/analysis.py` now carries a real detector: half-wave rectified spectral
+flux, log compression, adaptive median-plus-MAD thresholding, peak picking per
+sub-band, a refractory period, adaptive whitening, two region gates, and a
+rescue arm for hits masked by the drum before them.
+
+It is scored, not asserted. `tests/onset_eval.py` is an 11-scenario
+MIREX-style corpus with ±50 ms one-to-one matching, written against the
+problem rather than against the implementation, and `tests/onset_score.py`
+fails the build if the score drops:
+
+```
+scenario               P       R       F
+click              1.000   0.875   0.933
+four_on_floor      1.000   0.938   0.968
+kick_snare         1.000   0.938   0.968
+breakbeat          1.000   0.938   0.968
+pad_under_kick     1.000   0.938   0.968
+swing              1.000   0.938   0.968
+tempo_ramp         1.000   0.974   0.987
+quiet              1.000   0.938   0.968
+silence            1.000   1.000   1.000
+noise              1.000   1.000   1.000
+note_stream        1.000   1.000   1.000
+total              1.000   0.940   0.969
+```
+
+Precision is 1.000 everywhere, which is the number that matters most here: a
+visualiser that flashes on a beat that did not happen is worse than one that
+misses a quiet one. Most remaining misses are the first event of a track,
+where there is no history to compare against yet.
+
+Breakbeat took the longest and is worth the note. It sat at F 0.720 for a
+while, and every missed hit died in the flux peak test *below the track's own
+median flux* — the kick owned the single scalar that peak picking ran on, so
+tuning the threshold could never have found them. The fix was to peak-pick per
+sub-band and merge, which is a different program, not a constant.
+
+Modes read this through four fields on `Ctx`:
+
+* `onsets` — beats since this mode's previous frame. Differenced once, so a
+  mode that skips a frame does not miss a beat or see it twice.
+* `onset_strength` — how hard the hit was, which is a different question from
+  how loud the track is. They come apart exactly where it matters: a quiet
+  track with a crisp snare.
+* `pulse` — a beat-locked swell, 1.0 on the beat and decaying through the
+  bar. Onsets are discrete and only exist on the frames the peak picker
+  committed on, so a mode driven only by them coasts in between; on a slow
+  track that reads as a still picture jerking four times a bar. This fills the
+  gaps, and returns 0.0 rather than a permanent full swell when there is no
+  tempo — which is the trap the raw beat phase sets.
+* `drive` — how percussive the signal is right now, per hop, safe to read at
+  any frame rate. Answers "how much attack is in the signal" rather than "was
+  there a hit this frame", so it is the one to drive rates with.
+
+### New: sub-cell rendering
+
+A terminal cell is one character in one colour. Everything spektr draws has
+had to fit that, and the usual escape is braille — 4×2 dots in a cell, but all
+eight the same colour.
+
+The octant block (U+1CD00–1CDE5) gives 2×4 lit regions with a foreground and a
+background colour, so a cell can hold two colours and eight sub-regions at
+once. Twelve modes now have an `(o)` variant that uses it: the same mode,
+drawn as a surface instead of as a lattice.
+
+* `Scope (o)`, `ECG (o)` — the trace as a continuous stroke rather than a
+  column of dots.
+* `Radial (o)`, `Sonar (o)`, `Maelstrom (o)`, `Plasma (o)` — solid fields.
+* `Chladni (o)`, `Chladni Extreme (o)`, `Chladni Flow (o)` — the plate figures
+  at dot-grid resolution.
+* `Kaleidoscope (o)`, `Kaleidoscope Ultra (o)` — the latter antialiases the
+  seams between facets.
+* `Valentine (o)`.
+
+Fonts are the catch, and the reason this is opt-in rather than automatic. The
+octant block is new enough that most fonts have part of it or none of it, and
+a missing glyph draws as a tofu box, which is worse than the staircase it
+replaced. So:
+
+* spektr never emits the eight octant patterns fonts most often lack. Each
+  is widened to the nearest shape that is a Block Element or a safer octant —
+  an isolated subcell grows to its quadrant, three-quarters fills. Growing
+  rather than dropping, because at a 4x4-pixel subcell the difference is
+  invisible where a hole in an outline is not.
+* `Quadrant` cells (2×2, from a much older Unicode block) are the fallback for
+  fonts without octants at all.
+* `spektr --glyph-test` prints every glyph the app can emit, so you can see
+  what your font has before choosing.
+* The variants are off the menu by default. Turn them on in settings.
+
+The base modes are unchanged and still the default. `(o)` and `(q)` name the
+geometry — octant and quadrant — rather than claiming to be "Fine", which the
+earlier naming did and could not always deliver.
+
+### New modes
+
+Nine, plus the twelve variants above.
+
+* **Shooting Star** — a night sky, mostly empty and mostly still, with meteors
+  thrown from a drifting radiant on the beat. Built on the opposite bargain
+  from every other mode here: the music arrives as events rather than as a
+  level being redrawn, which is only possible now that events are detected.
+* **Snow** — Rain's sibling and deliberately its opposite. Three depth planes
+  of crystals, no radiant, nothing in the background.
+* **Valentine** — a heart with a seamless interior depth built from a radius
+  table.
+* **Locket** — a heart-shaped tunnel that emits pulses from its outline, each
+  on a path of its own.
+* **Kaleidoscope** — a mirrored tube. `Kaleidoscope Ultra (o)` antialiases the
+  seams.
+* **Tunnel In** — Tunnel with the rings travelling the other way. Rings are
+  visible from the frame they spawn on.
+* **Dither** — a one-bit field with directional waves and absolute-tiled Bayer
+  ordering.
+* **Dither Storm** — the reactive one.
+* **Dither Storm Extreme** — the saturating variant, kept on purpose.
+
+**Removed: Flipbook.** It was a frame sequencer rather than a visualiser and
+never earned its slot.
+
+### New themes
+
+Six saturated single-hue ramps: `emerald`, `sapphire`, `amethyst`, `citrine`,
+`tangerine`, and `indigo`.
+
+They fill measured gaps rather than crowding the set. There was no saturated
+violet at all; the greens were muted or scientific; the blues were all
+atmospheric and cold where sapphire is jewel-bright; and no theme was a plain
+vivid orange, only heat ramps passing through it on the way to yellow.
+`indigo` was the last hole — bucketing every theme's mid anchor by hue leaves
+240–269° the only empty range, with sapphire stopping at 216 and amethyst
+starting at 271.
+
+The theme editor can now pick a colour rather than only nudge one.
+
+### Performance
+
+The frame budget is 16.7 ms at 60 fps and the whole app has to fit in it.
+
+* `make_strips` run-length encodes the whole grid in one pass instead of row
+  by row.
+* Ten modes were rewritten around what was actually costing rather than what
+  looked expensive: Radial, Dune, Ember, Vinyl, Arcs, Pulse, Auroras, Tunnel,
+  Scatter and Kaleidoscope. Most were rebuilding something every frame that
+  does not move.
+* Four modes moved to float32.
+* The colour block coarsens sooner, so a large terminal stays playable.
+* `tests/bench.py` can now fail. It ratchets each mode's cost against a
+  recorded multiple of the median mode, and it gates on the statistic that
+  survives a second run — the earlier one drifted with machine phase and was
+  red on a clean tree. It printed every number needed to catch a mode sitting
+  at 10.8 ms for the whole of the project's life. Nothing read them.
+
+### Fixed
+
+* **The analysis hop rate was tied to the capture block size.** Change the
+  device and the rhythm reading changed with it. Decoupled, and pinned by a
+  test.
+* **Non-finite samples reached the FFT.** Zeroed at the ring buffer instead.
+* **`d` leaked a settle thread on every press.** Reopening the device now
+  cleans up after itself.
+* **The status line's audio gate disagreed with the analyser's**, so the app
+  could report silence while drawing, or the reverse.
+* **The goniometer's geometry was wrong**, along with three claims in comments
+  around it that described what it was supposed to do.
+* **A 1-D stereo buffer crashed the scope and stereo modes.** Rendered as mono
+  now.
+* **`make_strips` divided by a zero-width grid**, and **Flame divided by a
+  zero flame width**.
+* Edge cells are cut rather than stippled, coloured by each side's mean rather
+  than by its extremes, and only dithered when there is actually an edge in
+  them.
+
+### The app
+
+* **`h` opens a help panel**, generated from the key bindings so it cannot go
+  stale. It shipped broken twice — first taking the app down on a `[` in a key
+  label, then opening an invisible panel because it appeared in no CSS rule —
+  and the tests now check that rows actually paint rather than that a widget
+  mounted.
+* The mode picker lists names rather than prose.
+* Each ramp index drifts as far as its own colours allow, rather than every
+  index sharing one limit.
+* The settings panel is held to the invariants that keep it openable.
+* `spektr --glyph-test`.
+
+### Under it
+
+* The engine/frontend boundary is written down, and the config directory is
+  handed in rather than reached for. This is what made the Android port
+  possible: the port supplies its own frontend and runs the same engine
+  unmodified.
+* Modes can declare which mode they belong behind, so the picker orders itself.
+* The shared polar geometry lives in `modes/__init__.py` rather than being
+  re-derived in each mode that needs it.
+* Tests run on every push and pull request, and the whole suite runs rather
+  than four files out of fifteen.
+* Tagging a release now builds and attaches the Windows exe, the Windows
+  installer, the Linux binary and the Android APK from one tag.
+
 ## Android v0.2.0 — ships in spektr 0.4.0
 
 ### The picker release

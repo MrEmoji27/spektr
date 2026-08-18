@@ -305,3 +305,50 @@ def test_no_stale_fine_naming_survives_anywhere_user_visible():
     assert "Fine" not in README.read_text(encoding="utf-8")
     assert "Fine" not in _USAGE
     assert not [m for m in M.MODES if m.name.endswith(" Fine")]
+
+
+#: The headline spells its numbers out, so the test has to as well or it
+#: checks nothing. Only the range the counts plausibly occupy is covered;
+#: past it the test fails loudly rather than passing quietly on a KeyError.
+_TENS = {20: "Twenty", 30: "Thirty", 40: "Forty", 50: "Fifty",
+         60: "Sixty", 70: "Seventy", 80: "Eighty", 90: "Ninety"}
+_UNITS = ("", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine")
+
+
+def _spelled(n: int) -> str:
+    assert 20 <= n < 100, f"no spelling for {n}; extend _spelled if the app grew"
+    tens, unit = divmod(n, 10)
+    return _TENS[tens * 10] + (f"-{_UNITS[unit]}" if unit else "")
+
+
+def test_the_readme_counts_agree_with_the_registry():
+    """The badges and the headline are the first numbers anyone reads.
+
+    They have drifted before and by a lot — the README claimed 49 themes while
+    the app shipped 54, and the mode badge said 53 against a headline of 52 in
+    the same block of eight lines. Nothing about adding a mode or a theme
+    touches this file, so the only thing that keeps it honest is a test.
+
+    "Render modes" excludes ``None``, which is offered by the picker but does
+    not render anything. Both places have to use the same convention or one of
+    them is wrong whichever number is chosen.
+    """
+    import spektr.modes as M
+    from spektr.palette import BUILTIN
+
+    text = README.read_text(encoding="utf-8")
+    modes = len([m for m in M.listed() if m.name != "None"])
+    themes = len(BUILTIN)
+
+    expected = {
+        f"render%20modes-{modes}-": "the mode badge",
+        f"themes-{themes}-": "the theme badge",
+        f"{_spelled(modes)} render modes": "the headline mode count",
+        f"{_spelled(themes)} themes": "the headline theme count",
+    }
+    missing = sorted(f"{what} ({needle!r})"
+                     for needle, what in expected.items() if needle not in text)
+    assert not missing, (
+        f"the app has {modes} render modes and {themes} themes; the README "
+        f"does not say so in: {missing}"
+    )

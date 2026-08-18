@@ -7,7 +7,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-00c853)](https://github.com/MrEmoji27/spektr/blob/main/LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20·%20Linux%20·%20macOS-546e7a)](#how-it-captures-audio)
-[![Modes](https://img.shields.io/badge/render%20modes-53-ff6d00)](#modes)
+[![Modes](https://img.shields.io/badge/render%20modes-52-ff6d00)](#modes)
 [![Themes](https://img.shields.io/badge/themes-55-7c4dff)](#themes)
 [![Built with Textual](https://img.shields.io/badge/built%20with-Textual-5e35b1)](https://textual.textualize.io/)
 
@@ -108,6 +108,18 @@ usual capture status — never an error.
 ---
 
 ## Modes
+
+<!-- ── MODE GALLERY ─────────────────────────────────────────────────────────
+     Optional second recording: `assets/modes.gif`, the picker being arrowed
+     through with the preview updating live. Shows the range in one shot in a
+     way a table of names cannot.
+
+        <img src="assets/modes.gif" alt="arrowing through the mode picker" width="900">
+
+     Same recording notes as the hero above. `v` opens the picker; hold the
+     down arrow rather than pressing it, so the preview has time to settle on
+     each mode.
+     ────────────────────────────────────────────────────────────────────── -->
 
 Press `v` for a filterable picker that previews each one live as you arrow through it.
 Listed in the order the picker cycles them.
@@ -382,6 +394,14 @@ devices for signal, and how to read `--diagnose`:
 modes, same themes — click to expand.</summary>
 
 <br>
+
+<!-- ── ANDROID ──────────────────────────────────────────────────────────────
+     Optional: `assets/android.gif`, filmed off the tablet rather than
+     captured, so the point lands — this is a screen on a desk, not a
+     screenshot. Landscape, propped up, music audibly playing from it.
+
+        <img src="assets/android.gif" alt="spektr running on a tablet" width="700">
+     ────────────────────────────────────────────────────────────────────── -->
 
 **What it is for.** A spare screen that draws your music. It is best on a big
 one — a tablet propped on the desk, an old phone in a stand, anything you are
