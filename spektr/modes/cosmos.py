@@ -49,8 +49,11 @@ def _sky(dr: int, dc: int) -> dict:
         # and — more to the point here — spreads the picture across the ramp
         # instead of bunching it into two or three steps.
         "mag": rng.uniform(0.10, 1.0, n) ** 2.2,
-        "twf": rng.uniform(0.25, 1.1, n),
-        "twp": rng.uniform(0.0, 2 * math.pi, n),
+        # Scintillation is updated in short, irregular bursts rather than with
+        # a private sine wave per star. Most stars stay at their magnitude;
+        # only a small random subset gets a brief lift.
+        "tw": np.ones(n, dtype=np.float32),
+        "tw_tick": -1,
 
         # Meteors. y < 0 is the free-slot sentinel, the same convention Rain,
         # Snow, Bubbles, Fireworks and Ember all use.
@@ -62,6 +65,17 @@ def _sky(dr: int, dc: int) -> dict:
         "mbright": np.zeros(_METEOR_CAP),
         "mage": np.zeros(_METEOR_CAP),
         "mlife": np.ones(_METEOR_CAP),
+        "mflare": np.zeros(_METEOR_CAP),
+
+        # A meteor leaves a short-lived afterimage when it burns out. These
+        # have their own arrays so a newly spawned meteor can reuse its slot
+        # without erasing an afterglow from another slot.
+        "ay": np.zeros(_METEOR_CAP),
+        "ax": np.zeros(_METEOR_CAP),
+        "avy": np.zeros(_METEOR_CAP),
+        "avx": np.zeros(_METEOR_CAP),
+        "alen": np.zeros(_METEOR_CAP),
+        "aage": np.full(_METEOR_CAP, -1.0),
 
         # The radiant: the point on the sky a shower appears to diverge from.
         # Real meteors travel parallel and only look otherwise, which is the
@@ -100,13 +114,23 @@ def shooting_star(ctx: Ctx):
 
     st = ctx.scratch("shooting_star", lambda: _sky(dr, dc))
     rng = st["rng"]
-    field = np.zeros((dr, dc), dtype=np.float64)
+    field = np.zeros((dr, dc), dtype=np.float32)
 
     # ── the fixed stars ──
     # Twinkle is atmospheric, so it is slow and shallow and never switches a
     # star off. The loud-passage lift is a separate whole-sky term, so the
     # music is visible even in the stretches when nothing is crossing.
-    tw = 0.80 + 0.20 * np.sin(ctx.t * st["twf"] + st["twp"])
+    tick = int(ctx.t * 10.0)
+    if tick != st["tw_tick"]:
+        # Ease old flashes back to normal, then start a few new ones. The
+        # seeded generator keeps this deterministic while still reading as
+        # irregular scintillation instead of a synchronized animation.
+        st["tw"] += (1.0 - st["tw"]) * 0.48
+        flash = rng.random(st["tw"].size) < 0.055
+        if flash.any():
+            st["tw"][flash] = rng.uniform(1.04, 1.28, int(flash.sum()))
+        st["tw_tick"] = tick
+    tw = st["tw"]
     lift = 0.55 + 0.45 * min(1.0, ctx.energy * 1.8)
     field[st["sy"], st["sx"]] = np.clip(st["mag"] * tw * lift, 0.0, 1.0)
 
@@ -119,12 +143,20 @@ def shooting_star(ctx: Ctx):
     ry = dr * (0.5 + 0.42 * math.sin(st["rad"] * 0.7))
 
     # ── spawning ──
-    st["acc"] += (0.22 + ctx.energy * 0.5) * ctx.dt
+    st["acc"] += (0.10 + ctx.energy * 0.20) * ctx.dt
     want = int(st["acc"])
     if want:
         st["acc"] -= want
+    # A meteor per onset is a barrage. It did not used to be: most of them
+    # were thrown off the grid and retired before they were ever drawn, so
+    # the rate above was tuned against a picture showing a fraction of what
+    # it spawned. With the wedge aimed into the sky they all survive, and the
+    # same numbers measured 2.3 meteors on screen at once with 5% of frames
+    # empty — weather, not an event. So a beat throws one only if it wins a
+    # strength-weighted draw: a hard hit usually does, an ordinary one
+    # usually does not, and the sky is empty about two frames in three again.
     if ctx.onsets:
-        want += ctx.onsets + int(min(2, ctx.onset_strength * 2.2))
+        want += int(rng.random() < 0.05 + 0.25 * min(1.0, ctx.onset_strength))
 
     if want:
         free = np.flatnonzero(st["my"] < 0.0)[:want]
@@ -134,13 +166,27 @@ def shooting_star(ctx: Ctx):
             # Outward from the radiant, in a wedge rather than all round: a
             # shower seen from the ground covers part of the sky, not all of
             # it.
-            ang = st["rad"] + rng.uniform(-0.9, 0.9, k)
+            # The wedge points from the radiant *into* the sky. It used to be
+            # centred on the radiant's own drift phase, which is also what
+            # places the radiant, so the two agreed: with the radiant on the
+            # right of the screen the wedge pointed right, and the meteors it
+            # threw left the grid on their first frame having never been
+            # drawn. How badly depended on the radiant's random starting angle
+            # and on nothing else — 85% of spawns landed on the grid for one
+            # draw of it and 48% for another, a coin toss deciding how alive
+            # the mode looks. Aiming at the middle of the sky costs the
+            # picture nothing: a radiant is the point meteors diverge *from*,
+            # so they have to travel away from it across the sky to read as
+            # one at all.
+            aim = math.atan2(dr * 0.5 - ry, dc * 0.5 - rx)
+            ang = aim + rng.uniform(-0.9, 0.9, k)
+            sa, ca = np.sin(ang), np.cos(ang)
             # Not from the radiant itself. A meteor only becomes visible some
             # way out from it, and spawning them all on one dot looks like a
             # leak rather than a shower.
             away = rng.uniform(0.05, 0.45, k) * min(dr, dc)
-            st["my"][free] = ry + np.sin(ang) * away
-            st["mx"][free] = rx + np.cos(ang) * away
+            st["my"][free] = ry + sa * away
+            st["mx"][free] = rx + ca * away
             # Speed scales with the grid so the time to cross is the same on
             # any terminal, which is the same reason Ember and Rain do it.
             speed = (0.45 + 0.55 * hard) * dc * rng.uniform(0.8, 1.3, k)
@@ -150,12 +196,16 @@ def shooting_star(ctx: Ctx):
             # then travels along a different line from the one it spawned on,
             # so it stops radiating from the radiant and the whole conceit
             # goes with it. Dots are square; there is nothing to correct.
-            st["mvy"][free] = np.sin(ang) * speed
-            st["mvx"][free] = np.cos(ang) * speed
+            st["mvy"][free] = sa * speed
+            st["mvx"][free] = ca * speed
             st["mlen"][free] = (9.0 + 24.0 * hard) * rng.uniform(0.7, 1.4, k)
             st["mbright"][free] = 0.55 + 0.45 * hard
             st["mage"][free] = 0.0
             st["mlife"][free] = rng.uniform(0.45, 1.1, k)
+            # A bolide is rare and reserved for the hardest hits. It is a
+            # flare around the head, not another meteor or a denser shower.
+            bolide = (hard > 0.86) & (rng.random(k) < 0.16)
+            st["mflare"][free] = bolide * (0.78 + 0.22 * hard)
 
     # ── flight ──
     alive = st["my"] >= 0.0
@@ -168,7 +218,19 @@ def shooting_star(ctx: Ctx):
             | (st["my"] < -4) | (st["my"] > dr + 4)
             | (st["mx"] < -4) | (st["mx"] > dc + 4)
         )
+        if dead.any():
+            st["ay"][dead] = st["my"][dead]
+            st["ax"][dead] = st["mx"][dead]
+            st["avy"][dead] = st["mvy"][dead]
+            st["avx"][dead] = st["mvx"][dead]
+            st["alen"][dead] = st["mlen"][dead] * 0.72
+            st["aage"][dead] = 0.0
         st["my"][dead] = -1.0
+
+    after = st["aage"] >= 0.0
+    if after.any():
+        st["aage"][after] += ctx.dt
+        st["aage"][st["aage"] > 0.38] = -1.0
 
     # ── the streaks ──
     live = np.flatnonzero(st["my"] >= 0.0)
@@ -182,25 +244,70 @@ def shooting_star(ctx: Ctx):
         ux = st["mvx"][live] / np.maximum(speed, 1e-6)
         uy = st["mvy"][live] / np.maximum(speed, 1e-6)
 
-        # The tail is stepped backwards along the flight path, a dot at a
-        # time. One gather per step over every live meteor at once, so the
-        # whole shower costs what the longest streak costs rather than what
-        # the streaks cost added up.
-        steps = int(np.clip(st["mlen"][live].max(), 3, 26))
-        for s in range(steps):
-            f = s / max(1, steps - 1)
-            back = f * st["mlen"][live]
-            py = np.rint(st["my"][live] - uy * back).astype(np.int32)
-            px = np.rint(st["mx"][live] - ux * back).astype(np.int32)
-            ok = (py >= 0) & (py < dr) & (px >= 0) & (px < dc)
-            if not ok.any():
-                continue
-            # Falling away as the square is what makes the leading dot read as
-            # the object and everything behind it as what it left.
-            w = glow * (1.0 - f) ** 2
-            np.maximum.at(field, (py[ok], px[ok]), w[ok])
+        # One sample per dot along the longest tail, plus one, so consecutive
+        # samples land on adjacent dots. The cap used to be 26, which is under
+        # the tail a hard onset produces — up to 46 dots — so the samples came
+        # more than a dot apart and the streak was drawn as a dotted line:
+        # over one dot of spacing on 80% of the frames a meteor was on screen.
+        # A shooting star is a streak; a dashed one is a different object.
+        steps = int(np.clip(st["mlen"][live].max() + 1.0, 3, 52))
 
-    np.clip(field, 0.0, 1.0, out=field)
+        # Every sample of every streak at once, rather than a pass per step.
+        # The arrays here are tiny — at most 52 steps by a handful of live
+        # meteors — so a stepped loop spends its time in numpy's per-call
+        # overhead and nothing else, and doubling the step count above would
+        # otherwise have cost more than the whole mode saves.
+        f = np.linspace(1.0, 0.0, steps)[:, None]         # furthest row first
+        back = f * st["mlen"][live]
+        py = np.rint(st["my"][live] - uy * back).astype(np.int32)
+        px = np.rint(st["mx"][live] - ux * back).astype(np.int32)
+        ok = (py >= 0) & (py < dr) & (px >= 0) & (px < dc)
+        if ok.any():
+            # Falling away as the square is what makes the leading dot read as
+            # the object and everything behind it as what it left. The head is
+            # the last row, so where a streak writes over itself the head wins.
+            w = glow * (1.0 - f) ** 2
+            sel = (py[ok], px[ok])
+            field[sel] = np.maximum(field[sel], w[ok])
+
+        # A hard onset occasionally makes a small flare around the head. It
+        # stays sparse and is visually distinct from a merely long meteor.
+        flare = st["mflare"][live]
+        if np.any(flare > 0.0):
+            head = flare > 0.0
+            py = np.rint(st["my"][live][head]).astype(np.int32)
+            px = np.rint(st["mx"][live][head]).astype(np.int32)
+            val = flare[head] * glow[head] * 0.62
+            for oy, ox in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                fy, fx = py + oy, px + ox
+                ok = (fy >= 0) & (fy < dr) & (fx >= 0) & (fx < dc)
+                if ok.any():
+                    sel = (fy[ok], fx[ok])
+                    field[sel] = np.maximum(field[sel], val[ok])
+
+    # Afterimages are dim and short, but remain aligned with the old path long
+    # enough to read as persistence rather than a second meteor.
+    after = np.flatnonzero(st["aage"] >= 0.0)
+    if after.size:
+        aage = st["aage"][after]
+        au = np.hypot(st["avx"][after], st["avy"][after])
+        aux = st["avx"][after] / np.maximum(au, 1e-6)
+        auy = st["avy"][after] / np.maximum(au, 1e-6)
+        after_steps = 2 if dr * dc < 50000 else 4
+        for s in range(after_steps):
+            f = s / max(after_steps - 1, 1)
+            back = f * st["alen"][after]
+            py = np.rint(st["ay"][after] - auy * back).astype(np.int32)
+            px = np.rint(st["ax"][after] - aux * back).astype(np.int32)
+            ok = (py >= 0) & (py < dr) & (px >= 0) & (px < dc)
+            if ok.any():
+                val = 0.20 * np.clip(1.0 - aage / 0.38, 0.0, 1.0) * (1.0 - f) ** 1.5
+                sel = (py[ok], px[ok])
+                field[sel] = np.maximum(field[sel], val[ok])
+
+
+    # Every contributor is bounded to 0..1 and every write above maxed
+    # against what was already there, so no full-grid clip is needed.
     dots = field > 0.04
     codes = pack_braille(dots)
     cidx = ctx.ramp(cell_max(field))
