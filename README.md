@@ -440,8 +440,7 @@ of something that has had two. `CHANGELOG.md` lists the Android versions
 separately, and the app shows that same file under **what's new**.
 
 Build it yourself with `cd android && ./gradlew :app:assembleDebug`; the
-design notes are in [docs/android-port.md](docs/android-port.md) and where it
-goes next is in [docs/android-3d.md](docs/android-3d.md).
+design notes are in [docs/android-port.md](docs/android-port.md).
 
 </details>
 

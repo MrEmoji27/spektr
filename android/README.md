@@ -104,9 +104,8 @@ than maintained as a second hand-edited number.
 ## Where it is going
 
 The current port already has a field renderer: every mode can provide a scalar
-field that Android draws as a bitmap when Smooth is enabled. The next technical
-direction described in [`docs/android-3d.md`](../docs/android-3d.md) is to move
-that existing field onto the GPU and displace a mesh as a height field. That
+field that Android draws as a bitmap when Smooth is enabled. The next technical direction is to move that existing field onto the GPU and
+displace a mesh as a height field. That
 would make the existing modes look three-dimensional without creating a
 second, Android-only mode system. It is an exploration of the next renderer,
 not a promise that the current APK is a 3D application.
