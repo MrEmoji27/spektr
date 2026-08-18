@@ -54,7 +54,14 @@ jobs:
         # Both can fail. See the Windows workflow for what they gate.
         run: |
           python tests/onset_score.py
-          python tests/bench.py
+          # --report-ratchet: the drift table is printed but does not fail
+          # the build. Its baseline is a set of ratios recorded on the dev
+          # box, and a ratio does not survive a change of machine — one
+          # commit measured 0 drifted there, 3 on a GitHub Windows runner
+          # and 9 on a Linux one, with disjoint offenders. The absolute
+          # frame-budget check still gates here, and it is the one that
+          # means something on someone else's hardware.
+          python tests/bench.py --report-ratchet
 
       - name: Build portable binary
         # No SPEKTR_ONEDIR here: a onefile ELF is the single "download and run"

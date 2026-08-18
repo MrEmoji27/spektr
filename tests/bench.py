@@ -50,26 +50,58 @@ TOLERANCE = 1.30
 #: day becomes an expensive one.
 MIN_RATIO_TO_GATE = 0.5
 
-#: Modes measured over the frame budget on purpose, with the figure that was
-#: measured. The gate reports these rather than failing on them, so a *new*
-#: mode going over still fails loudly.
+#: ``--report-ratchet`` prints the drift table without letting it fail the run.
+#: The release workflows pass it; a local run does not, and should not.
 #:
-#: A mode lands here only after the number has been checked on more than one
+#: :data:`BASELINE` is a table of ratios, and dividing by the median mode was
+#: supposed to cancel the machine out. It cancels *machine phase* — the same
+#: box being fast or slow this minute — and that is what it was built for and
+#: what it still does. It does not cancel a *different* machine, because a
+#: different CPU does not scale every mode by the same factor: a numpy-heavy
+#: field mode and a cheap bar mode want different amounts of memory bandwidth
+#: and vector width, so their ratio moves when the hardware does.
+#:
+#: One commit, three machines, in the same hour:
+#:
+#:     dev box            0 over budget,  0 drifted
+#:     GitHub Windows     0 over budget,  3 drifted   Sonar, Locket, Valentine
+#:     GitHub Linux       0 over budget,  9 drifted   Chladni, Kaleidoscope, ...
+#:
+#: Disjoint offender sets. Nine modes did not regress on Linux and recover on
+#: Windows. So the ratchet is a same-machine detector: run it where the
+#: baseline was recorded, and let CI print it rather than gate on it.
+#:
+#: The absolute :data:`BUDGET_MS` check keeps gating everywhere, because
+#: "does this drop frames" is a question about a real machine and any real
+#: machine's answer is worth having. It is what caught Chladni Extreme (o).
+REPORT_ONLY_FLAG = "--report-ratchet"
+
+#: Modes measured over the frame budget on purpose, mapped to the ceiling at
+#: which they start failing again. The gate reports these rather than failing
+#: on them, so a *new* mode going over still fails loudly, and so does one of
+#: these if it gets materially worse.
+#:
+#: A mode lands here only after the number has been seen on more than one
 #: machine, because the usual reason for a surprise over-budget reading is the
-#: machine rather than the mode. ``Chladni Extreme (o)`` is not that: it
-#: measured 16.58 ms on the dev box and 17.13 ms on a GitHub runner in the
-#: same hour — the same number twice, either side of a 16.7 ms line, which is
-#: what being genuinely at the limit looks like rather than being noisy.
+#: machine. ``Chladni Extreme (o)`` is not that: 16.58 ms on the dev box and
+#: 17.13 ms on a GitHub runner within the same hour — the same measurement
+#: twice, either side of a 16.7 ms line, which is what a mode genuinely at its
+#: limit looks like rather than a noisy one. Across three machines and several
+#: runs it reads 16.5-17.2 ms, crossing and re-crossing the line.
+#:
+#: So the ceiling is 18.0 and not the top of that spread: a ceiling at 17.2
+#: would fail on the next run that landed a hair above it, which is the flake
+#: this file exists to avoid. 18.0 clears the spread and still fails the mode
+#: if it gets 5% worse.
 #:
 #: It is the heaviest mode in the app and the README says so. It is an opt-in
-#: subcell variant, off the menu by default, and this is the largest size
-#: benched — a maximised window on a large screen. Below that it fits, and the
-#: widget starts reusing frames past 11 ms anyway, so the failure mode is a
-#: lower frame rate rather than a stall. That is a thing to fix in the mode,
-#: not a reason to hold a release; recording it here is what stops it being
-#: rediscovered from scratch on every tag.
+#: subcell variant, off the menu by default, and 400x100 is a maximised window
+#: on a large screen. Below that it fits, and the widget reuses frames past
+#: 11 ms, so the symptom is a lower frame rate rather than a stall. Worth
+#: fixing in the mode; recording it here is what stops it being rediscovered
+#: from scratch on every tag.
 OVER_BUDGET_BY_DESIGN = {
-    ("Chladni Extreme (o)", (400, 100)): 17.2,
+    ("Chladni Extreme (o)", (400, 100)): 18.0,
 }
 
 #: Ceiling for a mode with no recorded cost, in units of the median mode.
@@ -423,16 +455,18 @@ if __name__ == "__main__":
         print(f"over it, and recorded as being over it — {len(known)}:")
         for line in known:
             print("  ", line)
+    gated = REPORT_ONLY_FLAG not in sys.argv
     print(
         f"cost gate at {GATE_SIZE[0]}x{GATE_SIZE[1]}, "
         f"per-mode against a recorded multiple of the median mode, "
         f"+{(TOLERANCE - 1) * 100:.0f}% slack"
         f" — {len(problems)} over"
+        + ("" if gated else f"  (reported, not gated — {REPORT_ONLY_FLAG})")
     )
     for line in problems:
         print("  ", line)
 
-    if over or problems:
+    if over or (problems and gated):
         print(
             "\nIf a mode is meant to have got more expensive, re-record it with"
             "\n  python tests/bench.py --update-baseline"
@@ -440,4 +474,11 @@ if __name__ == "__main__":
             "\nmeant to move is how the last regression went unnoticed."
         )
         raise SystemExit(1)
-    print("no mode has drifted")
+    if problems and not gated:
+        print(
+            "\nRatios above were measured on a machine that did not record the"
+            "\nbaseline, so they say more about the machine than about the code."
+            "\nRun this file locally before believing any of them."
+        )
+    else:
+        print("no mode has drifted")
