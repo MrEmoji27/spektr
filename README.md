@@ -549,6 +549,27 @@ every decision. Used on those terms, these tools are genuinely useful. Used
 without them, they transfer risk into the codebase quietly, which is the worst
 place for it to arrive.
 
+### Credits
+
+**zemo** — author and maintainer. The direction, the decisions, and the review
+every change below had to get through.
+
+The models named above, and what they were actually used for:
+
+- **Opus 5** — most of the assisted work: the onset detector's sub-band
+  rewrite, the subcell renderer, the Android port, several of the mode
+  families, and much of the test suite that holds them to their claims.
+- **GPT-5.6 Luna** — dispatched on individual modes as a background worker;
+  the Kaleidoscope and Tunnel In rebuilds and the Shooting Star optimisation
+  pass came back from it.
+- **DeepSeek v4 Flash** — debugging and second opinions.
+
+None of them appear in this repository's commit authorship, and that is on
+purpose. GitHub's contributor list is read as a list of people, and a model is
+not one — a trailer there would say something less true than this section
+does, and it would credit whichever model happened to be at the keyboard
+rather than describing the split.
+
 ## License
 
 MIT © zemo — see [LICENSE](https://github.com/MrEmoji27/spektr/blob/main/LICENSE).
