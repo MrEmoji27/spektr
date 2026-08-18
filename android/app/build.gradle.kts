@@ -15,8 +15,13 @@ android {
         applicationId = "dev.spektr"
         minSdk = 29
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        // Both come from the tag when CI builds a release, and fall back to
+        // something harmless for a local build. versionCode has to increase
+        // monotonically forever — Android refuses an update whose code is not
+        // higher — so it is derived from the version rather than hand-bumped:
+        // 0.4.0 becomes 400, 1.2.3 becomes 10203.
+        versionCode = (project.findProperty("versionCode") as String?)?.toInt() ?: 1
+        versionName = (project.findProperty("versionName") as String?) ?: "0.0.0-dev"
         ndk {
             // Both by default: arm64-v8a is every real device, x86_64 is the
             // emulator, and a debug build that cannot run on the emulator is a
@@ -33,9 +38,31 @@ android {
         }
     }
 
+    // Signed only when the key is present.
+    //
+    // An unsigned release APK cannot be installed at all, so this is not a
+    // nicety — it is the difference between an artifact and a file. The key
+    // lives in GitHub secrets and reaches this build as a decoded file path
+    // in the environment; a checkout without it still builds, unsigned, which
+    // is what you want locally and what you must not publish.
+    signingConfigs {
+        create("release") {
+            val store = System.getenv("SPEKTR_KEYSTORE")
+            if (store != null) {
+                storeFile = file(store)
+                storePassword = System.getenv("SPEKTR_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("SPEKTR_KEY_ALIAS")
+                keyPassword = System.getenv("SPEKTR_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            if (System.getenv("SPEKTR_KEYSTORE") != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 
@@ -64,12 +91,13 @@ val copyChangelog by tasks.registering(Copy::class) {
     into(layout.buildDirectory.dir("generated/changelog/assets"))
 }
 
-android.sourceSets.getByName("main").assets.srcDir(
-    layout.buildDirectory.dir("generated/changelog/assets")
-)
-
-tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }
-    .configureEach { dependsOn(copyChangelog) }
+// The task itself, not the directory it writes to. Handing Gradle the
+// provider lets it infer the dependency for every consumer; naming the path
+// only wires up the ones you thought of, and a release build has more of them
+// than a debug build — `lintVitalAnalyzeRelease` reads the merged assets too,
+// and failed the build complaining it had no declared dependency on the task
+// that produces them.
+android.sourceSets.getByName("main").assets.srcDir(copyChangelog)
 
 chaquopy {
     defaultConfig {
