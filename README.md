@@ -422,10 +422,16 @@ to stand for each cell. Android has a canvas and no such constraint, so the
 mode is run finer and the field it actually computed is drawn — curves instead
 of staircases.
 
-**Getting it.** `spektr-*-arm64-v8a.apk` on the
+**Getting it.** `spektr-android-*-arm64-v8a.apk` on the
 [releases page](https://github.com/MrEmoji27/spektr/releases). Android 10 or
 newer, 64-bit ARM. Sideload it — you will need to allow installs from your
 browser or file manager the first time.
+
+The APK carries its own version number and it is not the one on the release.
+The port has had fewer versions than the desktop app, so the build inside
+spektr 0.4.0 reports **v0.2.0**; putting 0.4.0 on it would claim four versions
+of something that has had two. `CHANGELOG.md` lists the Android versions
+separately, and the app shows that same file under **what's new**.
 
 Build it yourself with `cd android && ./gradlew :app:assembleDebug`; the
 design notes are in [docs/android-port.md](docs/android-port.md) and where it

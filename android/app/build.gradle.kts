@@ -15,13 +15,19 @@ android {
         applicationId = "dev.spektr"
         minSdk = 29
         targetSdk = 35
-        // Both come from the tag when CI builds a release, and fall back to
-        // something harmless for a local build. versionCode has to increase
-        // monotonically forever — Android refuses an update whose code is not
-        // higher — so it is derived from the version rather than hand-bumped:
-        // 0.4.0 becomes 400, 1.2.3 becomes 10203.
-        versionCode = (project.findProperty("versionCode") as String?)?.toInt() ?: 1
-        versionName = (project.findProperty("versionName") as String?) ?: "0.0.0-dev"
+        // The port's version, from gradle.properties — not the desktop
+        // release's. spektr 0.4.0 is the release; this is the second version
+        // of the Android build that ships inside it.
+        //
+        // versionCode has to increase monotonically forever, because Android
+        // refuses an update whose code is not higher, so it is derived from
+        // the name rather than hand-bumped alongside it: 0.2.0 becomes 200,
+        // 1.2.3 becomes 10203.
+        versionName = (project.findProperty("spektrAndroidVersion") as String?)
+            ?: error("spektrAndroidVersion is missing from gradle.properties")
+        versionCode = versionName!!.split("-")[0].split(".").let { (a, b, c) ->
+            a.toInt() * 10000 + b.toInt() * 100 + c.toInt()
+        }
         ndk {
             // Both by default: arm64-v8a is every real device, x86_64 is the
             // emulator, and a debug build that cannot run on the emulator is a

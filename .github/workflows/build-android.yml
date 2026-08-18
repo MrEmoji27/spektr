@@ -48,17 +48,22 @@ jobs:
         # the font the APK actually ships.
         run: python -m pytest tests/test_android_bridge.py tests/test_android_font.py -q
 
-      - name: Work out the version from the tag
-        # versionCode has to increase monotonically forever, so it is derived
-        # rather than hand-bumped: 0.4.0 -> 400, 1.2.3 -> 10203.
+      - name: Work out the versions
+        # Two of them, and they are not the same number. The APK carries the
+        # port's own version from gradle.properties — spektr 0.4.0 is the
+        # release, and this is the second Android build that ships inside it,
+        # so putting 0.4.0 on the APK would claim four versions of a thing
+        # that has had two. The tag is only used to say which release it went
+        # out with. tests/test_android_version.py holds the APK's number to
+        # the changelog's so the two cannot drift.
         id: version
         run: |
-          REF="${GITHUB_REF#refs/tags/v}"
-          if [ "$REF" = "$GITHUB_REF" ]; then REF="0.0.0"; fi   # not a tag build
-          IFS=. read -r MAJOR MINOR PATCH <<< "$REF"
-          echo "name=$REF" >> "$GITHUB_OUTPUT"
-          echo "code=$((MAJOR * 10000 + MINOR * 100 + PATCH))" >> "$GITHUB_OUTPUT"
-          echo "building $REF as versionCode $((MAJOR * 10000 + MINOR * 100 + PATCH))"
+          APP=$(grep '^spektrAndroidVersion=' android/gradle.properties | cut -d= -f2)
+          REL="${GITHUB_REF#refs/tags/v}"
+          if [ "$REL" = "$GITHUB_REF" ]; then REL="dev"; fi     # not a tag build
+          echo "app=$APP" >> "$GITHUB_OUTPUT"
+          echo "release=$REL" >> "$GITHUB_OUTPUT"
+          echo "android $APP, shipping in spektr $REL"
 
       - name: Unpack the signing key
         # Absent on a fork or a dispatch without secrets: the build still runs
@@ -100,7 +105,7 @@ jobs:
         # was missing from the manifest, and the engine failed on the first
         # frame with the Python assets sitting right there in the package.
         run: |
-          APK="spektr-${{ steps.version.outputs.name }}-arm64-v8a.apk"
+          APK="spektr-android-${{ steps.version.outputs.app }}-arm64-v8a.apk"
           AAPT=$(ls "$ANDROID_HOME"/build-tools/*/aapt2 | tail -1)
           "$AAPT" dump badging "$APK" | grep -E "^package|uses-permission" || true
           "$AAPT" dump badging "$APK" | grep -q "name='android.permission.RECORD_AUDIO'" \
@@ -114,7 +119,7 @@ jobs:
         if: steps.keystore.outputs.signed == 'true'
         run: |
           APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | tail -1)
-          "$APKSIGNER" verify --verbose "spektr-${{ steps.version.outputs.name }}-arm64-v8a.apk"
+          "$APKSIGNER" verify --verbose "spektr-android-${{ steps.version.outputs.app }}-arm64-v8a.apk"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -136,8 +141,13 @@ jobs:
           body: |
             **Android — Android 10 or newer, 64-bit ARM.**
 
-            * `spektr-*-arm64-v8a.apk` — sideload it. You will need to allow
-              installs from your browser or file manager the first time.
+            The APK reports **v${{ steps.version.outputs.app }}**, which is the
+            Android build's own version — it ships inside this release rather
+            than sharing its number, because the port has had fewer versions
+            than the desktop app.
+
+            * `spektr-android-*-arm64-v8a.apk` — sideload it. You will need to
+              allow installs from your browser or file manager the first time.
 
             It captures what your device is playing, which needs the screen
             recording permission as well as the microphone one: Android has no
