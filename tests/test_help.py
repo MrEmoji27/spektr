@@ -106,3 +106,85 @@ def test_no_row_is_blank(monkeypatch):
     _, panel = _panel(monkeypatch)
     for left, right in _rows(panel):
         assert right, f"row {left!r} has nothing to say"
+
+
+# ── the markup the panel actually hands to Textual ───────────────────────────
+
+def test_every_help_row_is_markup_textual_can_parse(monkeypatch):
+    """Pressing `h` crashed the app, and no test noticed.
+
+    The rows are built as Textual markup, and two bindings are labelled with
+    the characters `[` and `]` — the sensitivity keys. Textual reads `[` as
+    the start of a tag, so the row came out as
+    `"  [           [dim]Sens -[/dim]"`: one unterminated tag, then a
+    `[/dim]` closing nothing. That raises MarkupError inside the compositor's
+    reflow, so it is not a row that looks wrong, it is the whole app going
+    down on layout.
+
+    Every other test here checks the *content* of the rows — which binding
+    appears, which section it is in — and content was never the problem. This
+    parses them, which is what the app actually does with them.
+    """
+    from textual.content import Content
+
+    _, panel = _panel(monkeypatch)
+    bad = []
+    for line in panel._lines():
+        try:
+            Content.from_markup(line)
+        except Exception as exc:                     # noqa: BLE001 — reporting
+            bad.append(f"{line!r}: {type(exc).__name__}: {exc}")
+    assert not bad, "help rows Textual cannot parse:\n" + "\n".join(bad)
+
+
+
+def test_the_bracket_keys_survive_being_put_in_markup():
+    """The two rows that broke it, named so a refactor cannot quietly drop them."""
+    from textual.content import Content
+
+    from spektr.pickers import key_label, markup_safe
+
+    for key in ("left_square_bracket", "right_square_bracket"):
+        label = key_label(key)
+        assert label in "[]", f"{key} should read as a bracket, got {label!r}"
+        row = f"  {markup_safe(label)}    [dim]Sens[/dim]"
+        assert Content.from_markup(row).plain == f"  {label}    Sens"
+
+
+def test_markup_safe_handles_what_escape_does_not():
+    """`textual.markup.escape` only escapes tag-shaped text.
+
+    `escape("[b]")` is escaped and `escape("[")` is returned unchanged, which
+    is precisely the case that crashed. Pinned because reaching for the
+    library helper is the obvious fix and it is not sufficient.
+    """
+    from textual.content import Content
+
+    from spektr.pickers import markup_safe
+
+    for raw in ("[", "]", "[b]", "[/dim]", "no brackets here", "a [ b ] c"):
+        assert Content.from_markup(markup_safe(raw) + " [dim]x[/dim]").plain == raw + " x"
+
+def test_pressing_h_actually_opens_the_panel_in_a_running_app():
+    """The end-to-end version, because the failure was a crash on layout.
+
+    Parsing the rows catches the markup itself, but the way this bug arrived
+    was Textual raising out of ``Screen._refresh_layout`` while composing the
+    panel — a place no unit test reaches. Driving the real app with the real
+    key is the only check that covers mounting as well as content.
+    """
+    import asyncio
+
+    async def drive():
+        app = Spektr(settings=Settings(mode="Bars", theme="gruvbox"))
+        async with app.run_test(size=(188, 50)) as pilot:
+            await pilot.press("h")
+            await pilot.pause()
+            panels = [w for w in app.screen.walk_children() if isinstance(w, HelpPanel)]
+            assert panels, "h did not open the help panel"
+            assert app.query("#rows").first()._options, "the panel opened empty"
+            await pilot.press("escape")
+            await pilot.pause()
+            assert app.is_running
+
+    asyncio.run(drive())

@@ -742,6 +742,17 @@ class Spektr(App):
         because it has room for eight, not because they are secret — and the
         ones you cannot see are the ones a help screen is for.
         """
+        self._open_overlay(HelpPanel(self._help_sections()), lambda *a: None)
+
+    def _help_sections(self) -> list[tuple[str, list[tuple[str, str]]]]:
+        """The help panel's contents, split out so a test can parse them.
+
+        These are Textual markup strings by the time the panel is done with
+        them, and markup that does not parse takes the app down from inside
+        the compositor rather than merely looking wrong — see
+        ``pickers.markup_safe``. A test can only catch that if it can get at
+        the rows without mounting an app, which is what this is for.
+        """
         viz = self.viz
         listed = len(mode_registry.listed())
         opt_in = len([m for m in mode_registry.MODES if m.hidden])
@@ -776,7 +787,7 @@ class Spektr(App):
                 ("", "spektr --glyph-test checks this terminal for octants"),
             ]),
         ]
-        self._open_overlay(HelpPanel(sections), lambda *a: None)
+        return sections
 
     def action_settings(self) -> None:
         """The live settings panel.

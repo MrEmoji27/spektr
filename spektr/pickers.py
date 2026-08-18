@@ -115,8 +115,8 @@ class Picker(Widget):
         """
         extra = self._labels.get(name)
         mark = "▸ " if name == self._current else "  "
-        line = f"{mark}{self._display.get(name, name)}"
-        return f"{line}\n    [dim]{extra}[/dim]" if extra else line
+        line = f"{mark}{markup_safe(self._display.get(name, name))}"
+        return f"{line}\n    [dim]{markup_safe(extra)}[/dim]" if extra else line
 
     def _match(self, query: str, item: str) -> bool:
         """Whether an item survives the filter. ColourPicker overrides this
@@ -314,8 +314,8 @@ class SettingsPanel(Widget):
     def _row_text(self, s: Setting) -> str:
         value = s.render(s.live() if s.live is not None else self._values[s.key])
         pad = " " * max(1, 14 - len(s.label))
-        line = f"  {s.label}{pad}{value}"
-        return f"{line}\n    [dim]{s.note}[/dim]" if s.note else line
+        line = f"  {markup_safe(s.label)}{pad}{markup_safe(value)}"
+        return f"{line}\n    [dim]{markup_safe(s.note)}[/dim]" if s.note else line
 
     def _repaint(self) -> None:
         rows = self.query_one("#rows", OptionList)
@@ -455,6 +455,30 @@ class HexPrompt(NamePrompt):
         return colour
 
 
+def markup_safe(text: str) -> str:
+    """Make ``text`` safe to drop into a Textual markup string.
+
+    Textual reads ``[`` as the start of a tag, so any text that reaches a
+    markup string has to say when it means a literal bracket. This is not
+    hypothetical politeness: the ``[`` and ``]`` sensitivity keys are labelled
+    with the characters themselves, and the help panel built a row reading
+    ``"  [           [dim]Sens -[/dim]"``. Textual took ``[           [dim]``
+    for one tag, found ``[/dim]`` closing nothing, and raised MarkupError out
+    of the compositor — which is a crash on layout, not a wrong-looking row,
+    so pressing ``h`` took the whole app down.
+
+    ``textual.markup.escape`` is not enough on its own: it only escapes text
+    shaped like a tag, so ``escape("[b]")`` is escaped and ``escape("[")`` is
+    returned unchanged — which is exactly the case that breaks. A backslash
+    before every bracket is what Textual's parser actually wants.
+
+    Applied to every value interpolated into markup here, not only to key
+    labels: mode names come from plugins and theme names come from a config
+    file, and either could contain a bracket the same way.
+    """
+    return text.replace("[", r"\[")
+
+
 #: How a Textual key name reads on a keyboard.
 _KEY_LABEL = {
     "left_square_bracket": "[",
@@ -509,19 +533,33 @@ class HelpPanel(Widget):
 
     def on_mount(self) -> None:
         rows = self.query_one("#rows", OptionList)
+        rows.add_options(self._lines())
+        rows.focus()
+
+    def _lines(self) -> list[str]:
+        """The rows as Textual markup, split out so a test can parse them.
+
+        This is the string that took the app down: markup that does not parse
+        raises out of the compositor's reflow, so it is a crash on layout
+        rather than a row that looks wrong. A test that checks the *content*
+        of the sections — as every other test here does — cannot see it.
+        """
         lines: list[str] = []
         for i, (heading, entries) in enumerate(self._sections):
             if i:
                 lines.append("")
-            lines.append(f"[b]{heading}[/b]")
+            lines.append(f"[b]{markup_safe(heading)}[/b]")
             for left, right in entries:
                 if not left:
-                    lines.append(f"  [dim]{right}[/dim]")
+                    lines.append(f"  [dim]{markup_safe(right)}[/dim]")
                     continue
+                # Padding is measured on the real label, not the escaped one:
+                # a backslash is a character the parser eats, so counting it
+                # would shorten the column by one for exactly the two rows
+                # that need escaping.
                 pad = " " * max(1, 12 - len(left))
-                lines.append(f"  {left}{pad}[dim]{right}[/dim]")
-        rows.add_options(lines)
-        rows.focus()
+                lines.append(f"  {markup_safe(left)}{pad}[dim]{markup_safe(right)}[/dim]")
+        return lines
 
     def action_scroll(self, delta: int) -> None:
         rows = self.query_one("#rows", OptionList)
