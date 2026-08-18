@@ -9,36 +9,26 @@ line because it moves at its own pace, and ships inside a spektr release: the
 APK carries the release's version number, and the heading below says which
 port version that is.
 
-## spektr 0.4.0 — the rhythm release
+## spektr 0.4.0
 
-Two things are new at the bottom of the app, and everything else in this
-release is something one of them made possible.
+44 modes → 65. 49 themes → 55. Two things underneath the app are new — onset
+detection and subcell rendering — and most of the rest follows from them. The
+Android port also lives here now; it has its own version line and its own
+section below.
 
-The first is an onset detector: spektr now knows when a beat lands, rather
-than inferring something beat-shaped from how loud the low end is. The second
-is sub-cell rendering: a terminal cell can hold eight independently lit
-regions in two colours instead of being one coloured block, so a mode can draw
-a curve as a stroke rather than as a staircase.
+### Onset detection
 
-Also: the Android port, which lives in this repository and ships an APK
-alongside the desktop builds. It has [its own version line](#android-v020--ships-in-spektr-040)
-and its own section below.
-
-**44 modes → 65. 49 themes → 55.**
-
-### New: spektr knows where the beat is
-
-Every mode that reacted to rhythm before this release was really reacting to
-bass energy, because that is what was available. A kick and a loud sustained
-low note look the same to a level meter, and modes built on one were driven by
-the other about as often.
+Anything that reacted to a beat before this release was reacting to bass
+energy, because that was the only thing available. A kick and a sustained low
+note look the same to a level meter, and modes built on one were driven by the
+other about as often.
 
 `spektr/analysis.py` now carries a real detector: half-wave rectified spectral
 flux, log compression, adaptive median-plus-MAD thresholding, peak picking per
 sub-band, a refractory period, adaptive whitening, two region gates, and a
 rescue arm for hits masked by the drum before them.
 
-It is scored, not asserted. `tests/onset_eval.py` is an 11-scenario
+`tests/onset_eval.py` is an 11-scenario
 MIREX-style corpus with ±50 ms one-to-one matching, written against the
 problem rather than against the implementation, and `tests/onset_score.py`
 fails the build if the score drops:
@@ -59,16 +49,15 @@ note_stream        1.000   1.000   1.000
 total              1.000   0.940   0.969
 ```
 
-Precision is 1.000 everywhere, which is the number that matters most here: a
-visualiser that flashes on a beat that did not happen is worse than one that
-misses a quiet one. Most remaining misses are the first event of a track,
-where there is no history to compare against yet.
+Precision is 1.000 everywhere, which matters more than recall here: flashing
+on a beat that did not happen is worse than missing a quiet one. Most
+remaining misses are the first event of a track, where there is no history to
+compare against yet.
 
-Breakbeat took the longest and is worth the note. It sat at F 0.720 for a
-while, and every missed hit died in the flux peak test *below the track's own
-median flux* — the kick owned the single scalar that peak picking ran on, so
-tuning the threshold could never have found them. The fix was to peak-pick per
-sub-band and merge, which is a different program, not a constant.
+Breakbeat took the longest. It sat at F 0.720, and every missed hit died in
+the flux peak test below the track's own median flux — the kick owned the
+single scalar peak picking ran on, so no threshold could have found them. The
+fix was to peak-pick per sub-band and merge.
 
 Modes read this through four fields on `Ctx`:
 
