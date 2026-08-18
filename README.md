@@ -41,6 +41,10 @@ four times the vertical resolution of a text cell.
 
 **Fifty-one render modes. Fifty-four themes. 60 fps, or your display's.**
 
+There is an **Android build** too — the same engine, on a tablet, as an ambient
+display for the desk. It is a second screen, not a second product: see
+[spektr on Android](#spektr-on-android).
+
 ## Install
 
 > [!TIP]
@@ -364,6 +368,70 @@ candidate in turn and prints the measured RMS and peak for each, which settles i
 Why loopback needs `soundcard` rather than `sounddevice`, why the tap doesn't audition
 devices for signal, and how to read `--diagnose`:
 **[docs/audio-capture.md](docs/audio-capture.md)**.
+
+## spektr on Android
+
+<details>
+<summary><b>An ambient display for a tablet you already own.</b> Same engine, same
+modes, same themes — click to expand.</summary>
+
+<br>
+
+**What it is for.** A spare screen that draws your music. It is best on a big
+one — a tablet propped on the desk, an old phone in a stand, anything you are
+going to *look at* rather than hold. This is decoration, and it is meant to be:
+there is nothing here you cannot do better on the desktop, and no reason to run
+it on the device you are actually using. Where it earns its place is a
+multi-device setup — laptop for the work, tablet beside it doing nothing else.
+
+**What it captures.** Whatever *that device* is playing. Android has no way for
+one device to read another's audio, so the tablet visualises the tablet: put
+the music on it and let the desktop get on with the work. It cannot draw what
+your PC is playing, and no Android app can.
+
+The permission prompt asks to record the screen. That is Android's doing, not
+ours — `AudioPlaybackCapture` is part of the screen-recording API and there is
+no audio-only consent to ask for. Nothing is recorded and nothing leaves the
+device; the capture is read straight into the analyser and thrown away.
+
+**How it works.** The engine is the same Python you are reading about above,
+running unmodified on the device through
+[Chaquopy](https://chaquo.com/chaquopy/): CPython and numpy load in about half
+a second, and one call per frame crosses into Kotlin carrying a packed grid of
+codepoints and colour indices. Kotlin owns the audio and the screen; everything
+between them is this repository.
+
+That means a mode written for the terminal works on the phone the day it is
+written, and a theme is the same fifty-four colours in both places. It also
+means the port inherits the terminal's shape — a grid of character cells —
+which is why the settings sheet has a **detail** row: how many rows of cells
+fit on the screen is the one number that decides how coarse everything looks.
+
+**Where it differs.**
+
+| | desktop | Android |
+|---|---|---|
+| modes | 64 | 52 — the twelve `(o)` variants need Unicode 16 octants, which no font on Android has yet |
+| themes | 54 | 54 |
+| frame rate | 60 | 30, and the panel is watched from across a room |
+| rendering | terminal cells | cells, or **smooth** — the field blitted as a picture instead of typeset as glyphs |
+
+**Smooth** is the one thing the phone can do that a terminal cannot. A cell is
+not a pixel: Chladni computes a continuous field and then picks one half-block
+to stand for each cell. Android has a canvas and no such constraint, so the
+mode is run finer and the field it actually computed is drawn — curves instead
+of staircases.
+
+**Getting it.** `spektr-*-arm64-v8a.apk` on the
+[releases page](https://github.com/MrEmoji27/spektr/releases). Android 10 or
+newer, 64-bit ARM. Sideload it — you will need to allow installs from your
+browser or file manager the first time.
+
+Build it yourself with `cd android && ./gradlew :app:assembleDebug`; the
+design notes are in [docs/android-port.md](docs/android-port.md) and where it
+goes next is in [docs/android-3d.md](docs/android-3d.md).
+
+</details>
 
 ## How it works
 

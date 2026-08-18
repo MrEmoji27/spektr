@@ -86,18 +86,43 @@ kotlin {
 // changelog. Copying it in at build time rather than keeping a second copy
 // under assets/ means the shipped one cannot quietly fall behind the real
 // one, which is the only failure mode a changelog really has.
-val copyChangelog by tasks.registering(Copy::class) {
-    from(rootProject.file("../CHANGELOG.md"))
-    into(layout.buildDirectory.dir("generated/changelog/assets"))
+//
+// Wired through AGP's generated-source API rather than by hand. Hand-wiring
+// was wrong twice: naming the merge tasks let a clean release build ship an
+// APK with no changelog in it, because the merge ran before the copy; adding
+// the lint tasks then hit `generateReleaseLintVitalReportModel`, which reads
+// the same directory and is not called anything you would guess. Every one of
+// those is the same missing edge, and `addGeneratedSourceDirectory` is the
+// mechanism that draws it for every consumer, present and future.
+//
+// A Copy task cannot be used here — the API wires to a DirectoryProperty and
+// Copy exposes a plain File — so this is the same job with a typed output.
+abstract class CopyChangelog : DefaultTask() {
+    @get:InputFile
+    abstract val source: RegularFileProperty
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @TaskAction
+    fun copy() {
+        val dir = outputDir.get().asFile
+        dir.mkdirs()
+        source.get().asFile.copyTo(dir.resolve("CHANGELOG.md"), overwrite = true)
+    }
 }
 
-// The task itself, not the directory it writes to. Handing Gradle the
-// provider lets it infer the dependency for every consumer; naming the path
-// only wires up the ones you thought of, and a release build has more of them
-// than a debug build — `lintVitalAnalyzeRelease` reads the merged assets too,
-// and failed the build complaining it had no declared dependency on the task
-// that produces them.
-android.sourceSets.getByName("main").assets.srcDir(copyChangelog)
+val copyChangelog = tasks.register<CopyChangelog>("copyChangelog") {
+    source.set(rootProject.layout.projectDirectory.file("../CHANGELOG.md"))
+}
+
+androidComponents {
+    onVariants { variant ->
+        variant.sources.assets?.addGeneratedSourceDirectory(
+            copyChangelog, CopyChangelog::outputDir
+        )
+    }
+}
 
 chaquopy {
     defaultConfig {

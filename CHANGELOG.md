@@ -4,10 +4,12 @@ What changed, and why — kept in the same spirit as the commit log: the reason
 matters more than the list, because the reason is what tells you whether a
 change applies to you.
 
-Dates are the day the work landed. Versions follow the desktop app; the
-Android port carries its own `android-vN` tags until it merges.
+Dates are the day the work landed. The Android port keeps its own version
+line because it moves at its own pace, and ships inside a spektr release: the
+APK carries the release's version number, and the heading below says which
+port version that is.
 
-## Unreleased — Android v2
+## Android v0.2.0 — ships in spektr 0.4.0
 
 ### The picker release
 
@@ -214,7 +216,7 @@ Debug builds log fps, frame time, energy, onsets/s, peak band and raw sample
 peak once a second. A port has no window onto itself, and every number that
 decides how a mode behaves lives on the Python side of the boundary.
 
-## Earlier — Android v1
+## Android v0.1.0 — the first build that ran on hardware
 
 First build that ran on hardware. Chaquopy hosting CPython and numpy
 (~0.5 s to import the whole engine), `AudioPlaybackCapture` feeding the
