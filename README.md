@@ -491,6 +491,51 @@ good ideas get cited here, where they belong.
   in a folder, vetted by hash before it runs — is the same idea in a different
   language.
 
+## Use of AI in this project
+
+Parts of spektr were developed with the assistance of AI. **Opus 5**,
+**GPT-5.6 Luna** and **DeepSeek v4 Flash** contributed to building, debugging
+and fixing the project. This is stated openly rather than left to be inferred
+from the commit history.
+
+They were used under human direction and within deliberate limits. No model
+had authority over the project's direction, and no output was accepted merely
+because it appeared complete. Contributions were reviewed, and — more
+importantly — held to the same standards as anything else here: a change was
+adopted once it had been measured, rendered, or otherwise demonstrated to do
+what it claimed.
+
+That requirement is not ceremony. Generated code fails in a particular way:
+it is fluent, internally consistent, and confidently documented, and it can be
+all of those things while being wrong. A visualiser mode can return arrays of
+the correct shape, carry an articulate docstring, and still draw the wrong
+picture. Reviewing such code by reading it is not sufficient, because reading
+is precisely the check it is best at passing.
+
+This is why the test suite here is shaped as it is. It verifies behaviour
+rather than structure: that a mode responds when the audio changes and holds
+still when it does not; that it uses the colour ramp it is given instead of
+collapsing into a few shades; that a comment still describes the code beside
+it; that the Android build's vendored copy of the engine matches the original;
+that every glyph a mode emits exists in the font that ships with it. Most of
+those checks were added after something had already passed a weaker one and
+proved wrong regardless.
+
+### A note for anyone doing the same
+
+If you use AI while building software, the risk worth planning for is not poor
+quality output — it is plausible output. Code that has not been read, executed
+and tested is a liability regardless of its author, and adopting a model's
+work because it looks reasonable is a reliable way to ship a defect that
+cannot later be explained.
+
+Treat generated code as a proposal rather than a result. Establish how a
+change will be verified before accepting it, prefer checks that observe
+behaviour over checks that inspect form, and keep a human accountable for
+every decision. Used on those terms, these tools are genuinely useful. Used
+without them, they transfer risk into the codebase quietly, which is the worst
+place for it to arrive.
+
 ## License
 
 MIT © zemo — see [LICENSE](https://github.com/MrEmoji27/spektr/blob/main/LICENSE).
