@@ -133,6 +133,14 @@ androidComponents {
 chaquopy {
     defaultConfig {
         version = "3.13"
+        // Chaquopy needs an interpreter of this same version on the *build*
+        // machine to resolve the wheels below, and it finds one by probing
+        // PATH for `python3.13`. That probe is silent until it fails, and it
+        // failed on a release tag with a single line an hour into the run.
+        // CI sets this to the interpreter it installed; unset locally, where
+        // the probe has always worked.
+        System.getenv("SPEKTR_BUILD_PYTHON")?.takeIf { it.isNotBlank() }
+            ?.let { buildPython(it) }
         pip {
             install("numpy")
             install("rich")

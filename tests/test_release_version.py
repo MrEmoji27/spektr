@@ -53,20 +53,34 @@ def test_the_version_is_a_plain_three_part_number():
     )
 
 
-def test_the_tag_this_release_would_cut_from_is_not_already_taken():
+def test_the_tag_for_this_version_is_not_pointing_somewhere_else():
     """A tag is immutable in practice once pushed, and the workflows key on it.
 
-    Re-tagging a version that already exists either fails the push or, if
-    forced, silently rebuilds a published release from different code.
+    The thing to catch is a version that has already shipped: bump it, or the
+    next tag push builds over a release that is already out.
+
+    "Already taken" is the wrong test for that, and it failed the first
+    release it ran on. The three build workflows are triggered *by* the tag
+    and check out the tag, so the tag they are building always exists — a test
+    that objects to it existing objects to every release build there will ever
+    be. What matters is whether it points at this commit or at a different
+    one.
     """
-    tags = subprocess.run(
-        ["git", "-C", str(ROOT), "tag", "--list"],
-        capture_output=True, text=True, check=True,
-    ).stdout.split()
     wanted = f"v{spektr.__version__}"
-    assert wanted not in tags, (
-        f"{wanted} already exists — bump the version before cutting a release, "
-        f"or the tag push will build over a release that is already out"
+    at = subprocess.run(
+        ["git", "-C", str(ROOT), "rev-list", "-n", "1", wanted],
+        capture_output=True, text=True,
+    )
+    if at.returncode:
+        return                                    # no such tag yet: nothing to say
+    head = subprocess.run(
+        ["git", "-C", str(ROOT), "rev-parse", "HEAD"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    assert at.stdout.strip() == head, (
+        f"{wanted} already exists and points at {at.stdout.strip()[:12]}, not at "
+        f"HEAD {head[:12]} — bump the version, or a tag push here would build "
+        f"over a release that is already out"
     )
 
 

@@ -29,10 +29,16 @@ jobs:
 
       # Chaquopy runs pip on the build machine to resolve numpy for the target,
       # so the runner needs a working Python even though none of it ends up
-      # running here.
+      # running here. It has to be the *same* version the APK ships — 3.13,
+      # from the chaquopy block in app/build.gradle.kts — and Chaquopy finds
+      # it by probing PATH for `python3.13` by name. A 3.12 here built
+      # everything else and then failed the release with one line, an hour in:
+      # "Couldn't find Python 3.13". The path is passed explicitly below
+      # rather than left to the probe.
       - uses: actions/setup-python@v5
+        id: py
         with:
-          python-version: "3.12"
+          python-version: "3.13"
           cache: pip
 
       - name: Install the Python side
@@ -88,6 +94,7 @@ jobs:
           SPEKTR_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           SPEKTR_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           SPEKTR_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          SPEKTR_BUILD_PYTHON: ${{ steps.py.outputs.python-path }}
         run: |
           chmod +x gradlew
           # arm64-v8a only. CPython and numpy ship per ABI, so a second
