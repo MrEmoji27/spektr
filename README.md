@@ -11,26 +11,8 @@
 [![Themes](https://img.shields.io/badge/themes-55-7c4dff)](#themes)
 [![Built with Textual](https://img.shields.io/badge/built%20with-Textual-5e35b1)](https://textual.textualize.io/)
 
-<!-- ── HERO ─────────────────────────────────────────────────────────────────
-     Drop the demo here. Both forms below render on GitHub; keep whichever
-     one you record and delete the other.
-
-     A) GIF committed to the repo (autoplays, no controls, no sound):
-        <img src="assets/demo.gif" alt="spektr cycling modes and themes" width="900">
-
-     B) MP4/WebM (plays with controls, keeps sound, no repo weight): open a
-        new issue on the repo, drag the file into the comment box, copy the
-        https://github.com/user-attachments/... URL it produces, close the
-        issue without posting, then paste that URL on its own line here.
-
-     Recording notes, so the hero reads well at README width:
-       · terminal ~100x28, one theme change every few seconds, `f` for
-         full-screen (no header/footer) and `s` for shuffle on `both`
-       · 12-15 fps is enough for a GIF and roughly halves the file next to 30
-       · keep it under ~8 MB and under ~20 s; GitHub will render more, but a
-         cold page load will not
-       · width="900" matches the README's content column
-     ────────────────────────────────────────────────────────────────────── -->
+<img src="https://raw.githubusercontent.com/MrEmoji27/spektr/main/assets/hero.gif"
+     alt="spektr cycling through render modes" width="900">
 
 </div>
 
@@ -109,17 +91,10 @@ usual capture status — never an error.
 
 ## Modes
 
-<!-- ── MODE GALLERY ─────────────────────────────────────────────────────────
-     Optional second recording: `assets/modes.gif`, the picker being arrowed
-     through with the preview updating live. Shows the range in one shot in a
-     way a table of names cannot.
+<img src="https://raw.githubusercontent.com/MrEmoji27/spektr/main/assets/modes.gif"
+     alt="Valentine and Auroras drawing to music" width="900">
 
-        <img src="assets/modes.gif" alt="arrowing through the mode picker" width="900">
-
-     Same recording notes as the hero above. `v` opens the picker; hold the
-     down arrow rather than pressing it, so the preview has time to settle on
-     each mode.
-     ────────────────────────────────────────────────────────────────────── -->
+<sub>Valentine and Auroras, on the `citrine` ramp.</sub>
 
 Press `v` for a filterable picker that previews each one live as you arrow through it.
 Listed in the order the picker cycles them.
@@ -172,6 +147,12 @@ the setting that offers them is on.
 
 ### Subcell variants: `(o)` and `(q)`
 
+<img src="https://raw.githubusercontent.com/MrEmoji27/spektr/main/assets/chladni.gif"
+     alt="the Chladni family, drawn with subcell glyphs" width="900">
+
+<sub>Chladni Extreme with the theme picker open. Nodal lines land inside a
+cell rather than on its boundary, which is the whole of the difference.</sub>
+
 Twelve modes have a second version that draws with **subcell glyphs** — one text
 cell split into eight or four addressable pieces instead of being a single
 block. A nodal line or a scope trace then lands *inside* a cell rather than on
@@ -210,6 +191,12 @@ Still frames of a few of them, straight from the render path: **[docs/gallery.md
 
 
 ## Themes
+
+<img src="https://raw.githubusercontent.com/MrEmoji27/spektr/main/assets/themes.gif"
+     alt="arrowing down the theme picker, the picture recolouring live" width="900">
+
+<sub>The `t` picker recolours the running picture as you arrow through it, so
+a theme is chosen by looking at it rather than by its name.</sub>
 
 Fifty-five built in, previewed live from the `t` picker: `classic`, `gruvbox`, `catppuccin`
 (+`-latte`), `dracula`, `nord`, `tokyo-night` (+`-day`), `rose-pine`, `everforest`,
@@ -395,13 +382,19 @@ modes, same themes — click to expand.</summary>
 
 <br>
 
-<!-- ── ANDROID ──────────────────────────────────────────────────────────────
-     Optional: `assets/android.gif`, filmed off the tablet rather than
-     captured, so the point lands — this is a screen on a desk, not a
-     screenshot. Landscape, propped up, music audibly playing from it.
-
-        <img src="assets/android.gif" alt="spektr running on a tablet" width="700">
-     ────────────────────────────────────────────────────────────────────── -->
+<table>
+<tr>
+<td width="50%"><img src="https://raw.githubusercontent.com/MrEmoji27/spektr/main/assets/android-home.jpg"
+     alt="the home screen, with the mode and theme pickers" width="100%"></td>
+<td width="50%"><img src="https://raw.githubusercontent.com/MrEmoji27/spektr/main/assets/android-tablet.jpg"
+     alt="spektr running on a tablet" width="100%"></td>
+</tr>
+<tr>
+<td><sub>The home screen. Mode and theme are pickable before capture starts, and
+the preview behind them is the real engine, not a mockup.</sub></td>
+<td><sub>On the tablet it is meant for — Chladni Extreme, <code>ice</code>.</sub></td>
+</tr>
+</table>
 
 **What it is for.** A spare screen that draws your music. It is best on a big
 one — a tablet propped on the desk, an old phone in a stand, anything you are
