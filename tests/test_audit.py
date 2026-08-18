@@ -71,6 +71,10 @@ SELF_ANIMATING = {
     "Readout", "Helix", "Chladni Flow", "Chladni Extreme", "Orbit", "Keys",
     "Maelstrom", "Maelstrom (o)", "Dune", "Fireworks", "Boot", "Murmuration",
     "Vinyl", "Rain", "Snow", "Ember",
+    # the sky turns whether or not anything is playing: the stars twinkle on
+    # their own timers, the radiant drifts, and a meteor already thrown goes
+    # on crossing after the beat that threw it (Shooting Star)
+    "Shooting Star",
     # continuous spin (Kaleidoscope rotates its mirror array; the
     # scrollwork curls turn on their anchors even at a frozen spectrum)
     "Kaleidoscope", "Kaleidoscope (o)", "Kaleidoscope Ultra (o)",

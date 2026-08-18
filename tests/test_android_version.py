@@ -72,3 +72,26 @@ def test_the_declared_version_parses_the_way_gradle_parses_it():
     assert len(core) == 3, f"{_declared()!r} is not major.minor.patch"
     assert all(p.isdigit() for p in core), f"{_declared()!r} has a non-numeric part"
     assert _version_code(*(int(p) for p in core)) > 0
+
+
+# ── the port's README ────────────────────────────────────────────────────────
+
+def test_the_android_readme_counts_the_modes_the_picker_offers():
+    """It went stale within minutes of being written, which is the argument.
+
+    `android/README.md` is the public face of the port and it states how many
+    modes the picker offers. That number changes every time a mode is added,
+    and nothing about adding a mode reminds you to open that file — the root
+    README has a test for exactly this reason, and this is the same guarantee
+    for the other one.
+    """
+    import sys
+
+    sys.path.insert(0, str(ROOT))
+    import spektr.modes as M
+
+    text = (ROOT / "android" / "README.md").read_text(encoding="utf-8")
+    offered, total = len(M.listed()), len(M.MODES)
+    assert f"offers {offered} of the engine's {total} modes" in text, (
+        f"the port's README does not say it offers {offered} of {total} modes"
+    )

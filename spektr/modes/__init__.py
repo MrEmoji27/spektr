@@ -569,6 +569,7 @@ from . import fields     # noqa: E402,F401
 from . import maelstrom  # noqa: E402,F401
 from . import lofi       # noqa: E402,F401
 from . import halftone   # noqa: E402,F401
+from . import cosmos     # noqa: E402,F401
 
 
 @mode("None", group="off", blurb="nothing at all")

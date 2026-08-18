@@ -43,6 +43,26 @@ screen-capture dialog had been accepted.
 Also: prev/next mode buttons, chrome that hides on a tap over the picture, and
 a "made by zemo" footer.
 
+### New mode: Shooting Star
+
+The first of a cosmology family, and built on a different bargain from
+everything else: the picture is mostly empty and mostly still, and the music
+arrives as events rather than as a level being redrawn. A mode that is 98%
+dark has to earn its reactivity from timing, so the onset detector *is* the
+mode here rather than a garnish on it.
+
+The meteors come from a **radiant** — the one point a real shower appears to
+diverge from, because meteors travel parallel and only look otherwise. It
+drifts, so a long session does not put every streak on the same diagonal. A
+harder onset throws a brighter, longer, faster one from further out; that is
+`onset_strength` rather than `energy`, because a fireball should answer to how
+sharp the hit was and not to how loud the bed under it is.
+
+The base spawn rate is deliberately low. There is one, so silence is not a
+still image, but a mode built on events is ruined by a steady supply of them.
+
+Written into `spektr/modes/cosmos.py`, which the family will share.
+
 ### New mode: Snow
 
 Rain's sibling, and deliberately its opposite in how it moves. A raindrop

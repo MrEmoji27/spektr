@@ -1,110 +1,133 @@
-# android/ — v1 Kotlin shell
+# spektr for Android
 
-**Status: v1 milestone built.** `gradlew assembleDebug` completes from a clean
-checkout. The v1 flow — consent → capture → grid — is written end to end, with
-one hardcoded mode (Kaleidoscope) and one hardcoded theme (gruvbox), exactly
-the design's build order. Nothing after this file's "unproven" section has been
-seen running: the only build machine has no device on adb.
+The Android port is part of spektr's main repository and is merged into `main`.
+It puts the same audio visualiser engine on a tablet or another spare Android
+screen. The APK carries its own version line: Android v0.2.0 ships inside the
+spektr 0.4.0 release, and its derived Android `versionCode` is 200.
 
-## What builds
+This is an ambient display for a big screen, not a tool. It is meant to sit on a
+desk or stand and be watched while another device does the work. It visualises
+the device it runs on: Android cannot read the audio playing on a different
+computer, so a tablet running spektr can show the tablet's audio, not the audio
+coming from your PC.
 
-- `app/src/main/kotlin/dev/spektr/` — the whole v1 Kotlin shell:
-  - `MainActivity` — the consent flow: start button → OS screen-capture prompt
-    → foreground service.
-  - `CaptureService` — `mediaProjection` foreground service doing
-    `AudioPlaybackCapture` (usages MEDIA/GAME/UNKNOWN) into the engine's ring
-    buffer as float32 stereo at 48 kHz.
-  - `EngineManager` — one Python thread owns every Chaquopy call: engine
-    construction, pushes from the capture thread, and a ~30 fps render loop
-    feeding the Compose grid.
-  - `PyEngine` + `FrameBuf` — the bridge: `Engine.render(w, h)` returns one
-    packed buffer; `FrameBuf` parses the header, honours the plane count and
-    refuses an unrecognised magic/version/length.
-  - `GridView` — a Compose `Canvas` that measures its own cell metrics from
-    the grid font, reports the cell count to the engine each frame, and draws
-    run-length-encoded: one rect per background run, one `drawText` per
-    foreground run. Ramp colours come from Python (`Palette.hexes`) — nothing
-    is hardcoded in Kotlin.
-- `app/src/main/python/spektr/` — a vendored copy of the engine package, and
-  `spektr_android.py` next to it. See "Why vendored" below.
-- The grid font is DejaVu Sans, bundled under `res/font/` (license in
-  `font-license/`). DejaVu Sans Mono was checked and **does not** contain
-  braille; DejaVu Sans does, and so do all block elements the half-block modes
-  draw.
+## What it looks like
 
-## What this machine can and cannot do
+The home screen renders a live preview of the selected mode before capture
+consent, so choosing a mode does not require going through Android's permission
+dialog first. The mode picker offers 53 of the engine's 65 modes, and the theme
+picker contains all 54 themes. The twelve `(o)` mode variants are not offered:
+they use Unicode 16 octants, which no Android font currently provides. They
+remain available by name to the underlying engine, but the picker does not list
+them because they would render as missing glyphs.
 
-| | |
-|---|---|
-| Android SDK | `C:\Users\mremo\AppData\Local\Android\Sdk`, `ANDROID_HOME` set |
-| Platforms | android-30, 31, 33, 34, 35, 36 |
-| Build tools | 34.0.0, 35.0.0, 36.0.0, 36.1.0 |
-| NDK | 27.0.12077973, 27.1.12297006 (not needed — v1 is Kotlin + numpy) |
-| JDK | 17 (Adoptium), `JAVA_HOME` set |
-| `gradle` on PATH | **no** — use `gradlew` |
-| Device on adb | **none attached** |
+The settings sheet contains four display controls. **True black** changes the
+background to `#000000` and fades the bottom of the ramp into it, which lets an
+OLED pixel switch off. **Smooth** draws the mode's field as a picture instead of
+typesetting its glyphs. **Detail** chooses how many rows of cells fit on the
+screen, which is the main control over how coarse a cell-based mode looks.
+**Sensitivity** applies the same analyser trim as the desktop build.
 
-Stack pinned in the build files: Gradle 8.9 (wrapper), AGP 8.7.2, Kotlin 2.0.21
-+ Compose BOM 2024.12.01, Chaquopy 17.0.0 hosting CPython 3.13 with numpy
-1.26.2, rich and textual from Chaquopy's pip. minSdk 29, targetSdk/compileSdk
-35.
+The normal renderer draws a grid of cells using the mode's Unicode codepoints
+and the theme's colour ramp. Smooth mode removes the terminal-cell constraint
+and blits the field as a bitmap, so continuous shapes such as Chladni lines can
+be drawn as curves rather than staircases. Rendering is paced at about 30 fps
+by design: the screen is watched from a distance and every frame crosses the
+Python/Kotlin boundary.
 
-## What is proven here
+The home screen also has a `what's new` view backed by the repository's
+`CHANGELOG.md`, so the changelog shown in the app is the same one shipped with
+the release.
 
-- **`gradlew assembleDebug` passes from a clean checkout.** `app-debug.apk`
-  (~79 MB) contains, verified by inspection: CPython 3.13 native libs for
-  arm64-v8a and x86_64, numpy 1.26.2 + OpenBLAS, rich, textual and their pure
-  Python dependency trees, and the whole `spektr` package (every mode)
-  compiled to bytecode. **The risky JNI thing — Chaquopy hosting numpy in an
-  APK — is proven to the extent a build can prove it.**
-- **The bridge tests still pass** — `python -m pytest tests/` (229 tests,
-  including `test_android_bridge.py`). They import the exact vendored copy the
-  APK ships, so the Python in the APK is the Python that was tested.
-- **The wire format is parsed as written** — plane counts, sizes, magic and
-  version are all checked; a wrong buffer is refused, not misread.
-- **spektr runs on numpy 1.26** — the Android wheel is 1.26.2, and the source
-  uses nothing numpy 2.0 removed (checked statically; the suite itself runs on
-  a newer numpy).
+## Install
 
-## What still needs the tablet
+Download `spektr-android-*-arm64-v8a.apk` from the
+[spektr releases page](https://github.com/MrEmoji27/spektr/releases) and
+sideload it. The release APK is about 52 MB, targets 64-bit ARM only, and needs
+Android 10 or newer (`minSdk 29`). The first install may require allowing the
+browser or file manager to install an APK.
 
-All of it, until adb has a device:
+The APK reports `v0.2.0`, even when downloaded from the spektr 0.4.0 release.
+Those numbers are intentionally separate: the desktop release and the Android
+port do not move at the same pace.
 
-- **Capture** — `AudioPlaybackCapture` is the one part of the design with real
-  risk, and it cannot be exercised off-device. The service, the consent token
-  plumbing and the FGS rules are written to the API surface but none of it has
-  run.
-- **Frame rate** — the render loop is paced at ~30 fps, but whether a tablet
-  SoC can hold that (the design's main risk, the per-frame JNI crossing) is
-  unmeasured. The code is built so a slower result just shows fewer frames,
-  not a wrong picture.
-- **The Compose renderer** — compiled, not seen. Cell metrics, run-length
-  drawing and the astral-codepoint path (some modes emit past U+FFFF; the run
-  builder uses `appendCodePoint`, never `Char.toChar`) are all unrun code.
-- **Blocked-source copy** — silence renders as a flat grid in v1; naming the
-  blocking app is v3's notification-listener grant.
-- **The tablet's API level** — still unknown; the manifest targets the
-  Android 14+ FGS rules and is written to run down to API 29.
+## How it works
 
-## Decisions the design left open
+Android owns audio capture and drawing; the Python visualiser remains the
+engine. Chaquopy hosts CPython and numpy in the APK and runs the desktop engine
+package unmodified. Importing CPython and numpy takes about 0.5 seconds. After
+startup, Kotlin feeds captured audio to the Python analyser, and one JNI call
+per frame carries a packed grid of Unicode codepoints and colour indices back
+to the Compose renderer. The packed frame keeps the bridge from passing one
+object per cell.
 
-- **The `RingBuffer` question** — resolved in favour of shipping `capture.py`
-  unchanged: it is pure numpy with no audio device in it, so the whole package
-  goes in the APK and Kotlin feeds its `RingBuffer` via `Engine.push`. No
-  file moves on `main`.
-- **Font** — DejaVu Sans (see above). Noto Sans Symbols 2 was checked and has
-  braille but **no** block elements, so it cannot serve half-block modes.
-- **Why spektr is vendored, not pip-installed** — pip-installing the package
-  would resolve its desktop-only dependencies (sounddevice, soundcard, winrt,
-  dbus-next), none of which have Android wheels, and Chaquopy cannot scope
-  `--no-deps` to a single requirement (one pip invocation per build, options
-  apply to all). So `scripts/sync-python.ps1` copies the package from the
-  checkout root; run it when the engine moves on `main`, commit the result.
+Capture runs in a foreground service using `AudioPlaybackCapture`. The audio is
+read as the device's playback stream, sent to the engine's ring buffer, and
+discarded after analysis. The Kotlin renderer then draws either the packed cell
+grid or the field frame produced by the Android adapter. This keeps mode logic,
+analysis, and palette data shared with the desktop build while the Android side
+handles the platform-specific audio and screen.
 
-## Still true of the design
+## Permissions and privacy
 
-`docs/android-port.md` remains the architecture. v1 changed nothing about it:
-consent → capture → grid, one mode, one theme; pickers, settings, media
-controls and ambient behaviour stay v2/v3, and nothing in v1's code precludes
-them. The one thing v1 cannot claim is that it proves the three risky things —
-that is the tablet's job, and the tablet is not attached.
+Starting a session requires both Android's screen-capture consent and the
+`RECORD_AUDIO` permission. This is not a request to record the display: Android
+uses the screen-capture consent for `AudioPlaybackCapture`, and it has no
+separate audio-only consent. The foreground service also keeps an ongoing
+notification while capture is running; on Android 13 and newer, Android may ask
+for notification permission for that notification.
+
+The app captures only what the same device is playing. An app that opts out of
+playback capture produces silence rather than audio that spektr can inspect.
+The capture is consumed by the analyser; spektr does not save or upload the
+audio, and nothing leaves the device.
+
+## Build it
+
+From the repository root, build a debug APK with the Gradle wrapper:
+
+```text
+cd android && ./gradlew :app:assembleDebug
+```
+
+The Android module uses Gradle, Kotlin, Jetpack Compose, and Chaquopy. The
+Python package under `app/src/main/python/spektr/` is a vendored copy of the
+engine used by the APK. When the engine changes in the repository root, update
+that copy with `scripts/sync-python.ps1` before building so the Android bridge
+and the engine stay in step.
+
+Release builds are produced by the repository's Android workflow and attach an
+arm64-v8a APK to the matching spektr release. The Android version is read from
+`gradle.properties`; its `versionCode` is calculated from that version rather
+than maintained as a second hand-edited number.
+
+## Where it is going
+
+The current port already has a field renderer: every mode can provide a scalar
+field that Android draws as a bitmap when Smooth is enabled. The next technical
+direction described in [`docs/android-3d.md`](../docs/android-3d.md) is to move
+that existing field onto the GPU and displace a mesh as a height field. That
+would make the existing modes look three-dimensional without creating a
+second, Android-only mode system. It is an exploration of the next renderer,
+not a promise that the current APK is a 3D application.
+
+## Directory layout
+
+The Android project is intentionally a small platform shell around the shared
+engine:
+
+```text
+android/
+  app/src/main/kotlin/dev/spektr/  Capture service, engine bridge, and Compose UI
+  app/src/main/python/spektr/      Vendored Python engine package
+  app/src/main/python/spektr_android.py
+                                  Android entry point and packed-frame adapter
+  app/src/main/res/font/            Bundled DejaVu Sans grid fonts
+  scripts/sync-python.ps1           Refreshes the vendored engine copy
+  font-license/                     License for the bundled font
+  gradle.properties                 Android port version
+  gradlew                            Gradle wrapper used for builds
+```
+
+The design and implementation notes live in [`docs/android-port.md`](../docs/android-port.md). The release history, including the Android-specific
+version sections, is in [`CHANGELOG.md`](../CHANGELOG.md).
