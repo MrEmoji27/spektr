@@ -552,6 +552,20 @@ BUILTIN: dict[str, Theme] = dict(
         # Not a gemstone and deliberately so — the one warm hue the set never
         # held still. Every other orange here is a waypoint in a heat ramp.
         _t("tangerine", "#4a1c02", "#e2560d", "#ff9f45", "#150701", "#ffe2cc", "#ff6b1a"),
+        # The one hole left in the set, and it was found by measuring rather
+        # than by eye: sorting every theme's mid anchor into 30-degree hue
+        # buckets leaves 240-269 the only empty one, while 24 of the other 54
+        # crowd into 30-59. Sapphire stops at 216 and amethyst starts at 271,
+        # so the blue that is neither — the one dyers mean by the word — had
+        # no theme at all.
+        #
+        # Kept at about half saturation, which is what separates it from the
+        # two it sits between. Both of those are jewel-bright by design and
+        # a third of the same would read as a variant of them; this is dye in
+        # cloth, dense and slightly grey, and it lands 0.184 from amethyst
+        # where the median gap between neighbours in this set is 0.208 and the
+        # closest existing pair is 0.059.
+        _t("indigo", "#232258", "#554fc4", "#bcb6ec", "#080a16", "#d8ddff", "#6b7bff"),
         # red -> yellow -> green -> blue -> violet -> magenta, and back to red:
         # a closed loop around the colour wheel. Three anchors can't do this —
         # the red→green seam dries to olive and the green→violet one washes

@@ -253,7 +253,7 @@ and available under Chaquopy, so any pure-Python/numpy plugin runs unmodified.
 
 | Feature | Android |
 |---|---|
-| every offered mode, 54 themes | Unchanged — they are data and numpy. (Flipbook was the one mode cut here; it has since been removed from spektr entirely.) |
+| every offered mode, 55 themes | Unchanged — they are data and numpy. (Flipbook was the one mode cut here; it has since been removed from spektr entirely.) |
 | Settings, user themes | Unchanged once the config root is redirected — **done on `main`**, see *Interim work* |
 | Presets, plugins, theme editor | Possible by the same mechanism, but deliberately desktop-only — see *Scope* |
 

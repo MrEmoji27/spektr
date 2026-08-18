@@ -8,7 +8,7 @@
 [![License](https://img.shields.io/badge/license-MIT-00c853)](https://github.com/MrEmoji27/spektr/blob/main/LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20·%20Linux%20·%20macOS-546e7a)](#how-it-captures-audio)
 [![Modes](https://img.shields.io/badge/render%20modes-53-ff6d00)](#modes)
-[![Themes](https://img.shields.io/badge/themes-54-7c4dff)](#themes)
+[![Themes](https://img.shields.io/badge/themes-55-7c4dff)](#themes)
 [![Built with Textual](https://img.shields.io/badge/built%20with-Textual-5e35b1)](https://textual.textualize.io/)
 
 <!-- ── HERO ─────────────────────────────────────────────────────────────────
@@ -39,7 +39,7 @@ spektr draws it: overlapped FFTs across 32 log-spaced bands (settable) from 50 H
 out the way cava does it, rendered with braille sub-characters so the picture moves at
 four times the vertical resolution of a text cell.
 
-**Fifty-two render modes. Fifty-four themes. 60 fps, or your display's.**
+**Fifty-two render modes. Fifty-five themes. 60 fps, or your display's.**
 
 There is an **Android build** too — the same engine, on a tablet, as an ambient
 display for the desk. It is a second screen, not a second product: see
@@ -199,7 +199,7 @@ Still frames of a few of them, straight from the render path: **[docs/gallery.md
 
 ## Themes
 
-Fifty-four built in, previewed live from the `t` picker: `classic`, `gruvbox`, `catppuccin`
+Fifty-five built in, previewed live from the `t` picker: `classic`, `gruvbox`, `catppuccin`
 (+`-latte`), `dracula`, `nord`, `tokyo-night` (+`-day`), `rose-pine`, `everforest`,
 `kanagawa`, `ayu-mirage`, `monokai`, `solarized`, `nightfox`, `oxocarbon`, `miasma`,
 `osaka-jade`, `ristretto`, `flexoki-light`, `nightfly`, `material`, `gotham`, `oceanic`,
@@ -207,7 +207,7 @@ Fifty-four built in, previewed live from the `t` picker: `classic`, `gruvbox`, `
 `nostromo`, `plasma`, `viridis`, `ice`, `vaporwave`, `infrared`, `deep-sea`, `magma`,
 `matte-black`, `vantablack`, `rainbow`, `phosphor-amber`, `sakura`, `toxic`, `copper`,
 `polar`, `bubblegum`, `hot-pink`, `ruby`, `emerald`, `sapphire`, `amethyst`, `citrine`,
-`tangerine` — plus `auto`, which derives a ramp from whatever Textual theme your
+`tangerine`, `indigo` — plus `auto`, which derives a ramp from whatever Textual theme your
 terminal is wearing.
 
 `rainbow` is animated — its colour loop drifts continuously across the bands instead of
@@ -260,7 +260,7 @@ def nightrider(ctx):
 ```
 
 You return codepoints and *heat* — never colours — so every plugin works with all
-fifty-four themes for free.
+fifty-five themes for free.
 
 > [!WARNING]
 > **Plugins are Python and run with your privileges.** spektr can't sandbox them, and
@@ -408,7 +408,7 @@ codepoints and colour indices. Kotlin owns the audio and the screen; everything
 between them is this repository.
 
 That means a mode written for the terminal works on the phone the day it is
-written, and a theme is the same fifty-four colours in both places. It also
+written, and a theme is the same fifty-five colours in both places. It also
 means the port inherits the terminal's shape — a grid of character cells —
 which is why the settings sheet has a **detail** row: how many rows of cells
 fit on the screen is the one number that decides how coarse everything looks.
@@ -418,7 +418,7 @@ fit on the screen is the one number that decides how coarse everything looks.
 | | desktop | Android |
 |---|---|---|
 | modes | 64 | 52 — the twelve `(o)` variants need Unicode 16 octants, which no font on Android has yet |
-| themes | 54 | 54 |
+| themes | 55 | 55 |
 | frame rate | 60 | 30, and the panel is watched from across a room |
 | rendering | terminal cells | cells, or **smooth** — the field blitted as a picture instead of typeset as glyphs |
 

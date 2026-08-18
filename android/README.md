@@ -16,7 +16,7 @@ coming from your PC.
 The home screen renders a live preview of the selected mode before capture
 consent, so choosing a mode does not require going through Android's permission
 dialog first. The mode picker offers 53 of the engine's 65 modes, and the theme
-picker contains all 54 themes. The twelve `(o)` mode variants are not offered:
+picker contains all 55 themes. The twelve `(o)` mode variants are not offered:
 they use Unicode 16 octants, which no Android font currently provides. They
 remain available by name to the underlying engine, but the picker does not list
 them because they would render as missing glyphs.
