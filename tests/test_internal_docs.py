@@ -87,3 +87,21 @@ def test_no_public_doc_links_to_an_internal_one():
         if "docs/internal/" in text or "android-3d.md" in text:
             bad.append(rel)
     assert not bad, "public documents pointing at internal ones: " + ", ".join(bad)
+
+
+def test_no_key_material_is_tracked():
+    """A signing key in a public tree is unrecoverable, not merely embarrassing.
+
+    The Android keystore lives in the repository directory because that is
+    where it was generated, and `git add -A` is used constantly here. It is
+    ignored, but an ignore rule is silent when it fails and this is the one
+    file where silence is expensive: leaked, anyone can publish an update that
+    installs over yours, and it cannot be rotated once a release is signed
+    with it.
+    """
+    suspicious = [
+        p for p in _tracked()
+        if p.endswith((".jks", ".keystore", ".p12", ".pfx", ".pem", ".key"))
+        or p.endswith("key.properties")
+    ]
+    assert not suspicious, "key material is tracked: " + ", ".join(suspicious)

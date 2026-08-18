@@ -24,3 +24,15 @@ local.properties
 # for the latter.
 docs/next-session.md
 docs/mode-ideas.md
+
+# Signing keys and anything shaped like one. Never in the repository: this is
+# a public tree, `git add -A` is routine, and the Android signing key is the
+# app's identity — leaked, anyone can ship an update that installs over yours,
+# and it cannot be rotated once a release is signed with it.
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+*.key
+key.properties
