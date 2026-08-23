@@ -415,28 +415,75 @@ def unregister_plugin(plugin: str) -> list[str]:
 
 @lru_cache(maxsize=64)
 def band_columns(w: int, n: int) -> tuple:
-    """Map each terminal column to a band index, with 1-column gutters.
+    """Map each terminal column to a band index, with gutters that fit.
 
     Returns ``(col_band, active)`` where ``col_band`` is an int array of length
     w and ``active`` is False on gutter columns. Cached, because this only
     changes when the terminal is resized.
-    """
-    gaps = n - 1
-    usable = max(n, w - gaps)
-    base, extra = divmod(usable, n)
 
-    col_band = np.zeros(w, dtype=np.int32)
-    active = np.zeros(w, dtype=bool)
-    x = 0
-    for b in range(n):
-        width = base + (1 if b < extra else 0)
-        end = min(w, x + width)
-        col_band[x:end] = b
-        active[x:end] = True
-        x = end + 1          # leave a gutter
-        if x >= w:
-            break
-    return col_band, active
+    Gutters are what make neighbouring bars read as separate bars, and every
+    gutter column is a column of background. A hard one-column gutter between
+    each pair of bands therefore only works while the bands are wide enough to
+    pay for it: past roughly one band per four columns the bands shrink onto
+    single cells and the gutters grow into half the picture, which reads as
+    thin bright bars ruled apart by dark lines — exactly what a band-count
+    control set past what the screen affords produces. So the gutter count
+    scales with what the bands can spare, stepping down while any band would
+    get fewer than two columns:
+
+    * one column between every pair of bands — the classic look, and what
+      every default layout still gets;
+    * half of those (after every second band), which groups bars into pairs;
+    * none at all, which reads as the gapless wall :meth:`Columns` draws;
+    * and when even one column per band does not fit, a nearest-band
+      downsample that keeps every band on screen and never leaves a column
+      unassigned.
+    """
+    def layout(gutters_after: int) -> tuple | None:
+        """Spread n bands over w columns, gutters after every k-th band.
+
+        A gutter follows band ``b`` when ``(b + 1)`` is a multiple of
+        ``gutters_after`` — so 1 means between every pair of bands, 2 groups
+        bars into pairs, and anything ≥ n means none. Returns None when some
+        band would draw less than two columns wide, which is the signal to
+        step down to a sparser gutter plan rather than thin the bands out.
+        """
+        gaps = (n - 1) // gutters_after
+        usable = w - gaps
+        if usable < 2 * n:
+            return None
+        base, extra = divmod(usable, n)
+
+        col_band = np.zeros(w, dtype=np.int32)
+        active = np.zeros(w, dtype=bool)
+        x = 0
+        for b in range(n):
+            width = base + (1 if b < extra else 0)
+            end = min(w, x + width)
+            col_band[x:end] = b
+            active[x:end] = True
+            x = end
+            if b < n - 1 and (b + 1) % gutters_after == 0:
+                x += 1          # leave a gutter
+            if x >= w:
+                break
+        return col_band, active
+
+    # One gutter per gap first, then every other gap, then none: the classic
+    # layouts take the first branch and look exactly as they always did.
+    for step in (1, 2, n):
+        got = layout(step)
+        if got is not None:
+            return got
+
+    # More bands than columns. Every band still appears: column i shows the
+    # band nearest i's position across the count, so the spectrum's shape
+    # survives whole instead of losing its treble off the right edge.
+    if w > 1:
+        col_band = np.rint(np.arange(w) * ((n - 1) / (w - 1))).astype(np.int32)
+    else:
+        col_band = np.zeros(w, dtype=np.int32)
+    return col_band, np.ones(w, dtype=bool)
 
 
 @lru_cache(maxsize=64)
@@ -569,6 +616,7 @@ from . import fields     # noqa: E402,F401
 from . import maelstrom  # noqa: E402,F401
 from . import lofi       # noqa: E402,F401
 from . import halftone   # noqa: E402,F401
+from . import terrain    # noqa: E402,F401
 from . import cosmos     # noqa: E402,F401
 
 

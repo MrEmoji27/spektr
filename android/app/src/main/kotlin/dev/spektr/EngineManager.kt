@@ -34,6 +34,7 @@ object EngineManager {
     const val DEFAULT_MODE = "Kaleidoscope"
     const val DEFAULT_THEME = "gruvbox"
     private const val FRAME_MS = 33L
+    private const val DEFAULT_BANDS = 16
 
     private const val PREFS = "spektr"
     private const val KEY_MODE = "mode"
@@ -42,6 +43,7 @@ object EngineManager {
     private const val KEY_SENSITIVITY = "sensitivity"
     private const val KEY_SMOOTH = "smooth"
     private const val KEY_ROWS = "rows"
+    private const val KEY_BANDS = "bands"
 
     private val pyContext = newSingleThreadContext("spektr-py")
     private val scope = CoroutineScope(pyContext + SupervisorJob())
@@ -86,6 +88,16 @@ object EngineManager {
         private set
 
     /**
+     * How many spectrum bars the meter modes draw - desktop's band-count
+     * setting, with 0 meaning "fit the grid". The engine re-resolves its
+     * springs and drops mode scratch on a change, so applying one is a single
+     * frame of new geometry and nothing else.
+     */
+    val BAND_CHOICES = listOf(0, 12, 16, 24, 32, 48, 64)
+    var bands by mutableStateOf(DEFAULT_BANDS)
+        private set
+
+    /**
      * Draw the picture rather than the glyphs.
      *
      * A cell is not a pixel: Chladni computes a smooth nodal field and then
@@ -96,6 +108,15 @@ object EngineManager {
      */
     var smooth by mutableStateOf(false)
         private set
+
+    /**
+     * Modes built for the GLES view - the terrain family. Selecting one
+     * turns smooth on (they displace their own float fields), Python ships
+     * heights instead of indices for them, and the GL surface draws them.
+     * There is no separate view switch: being 3D is a property of these
+     * modes, not a lens over all of them.
+     */
+    val TERRAIN_MODES = setOf("Swell", "Terra")
 
     /**
      * How many rows of cells to fit on the screen — the app's resolution.
@@ -198,6 +219,7 @@ object EngineManager {
                 mode = store.getString(KEY_MODE, null)?.takeIf { it in e.modes } ?: DEFAULT_MODE
                 oled = store.getBoolean(KEY_OLED, false)
                 sensitivity = e.setSensitivity(store.getFloat(KEY_SENSITIVITY, 1.0f))
+                bands = e.setBands(store.getInt(KEY_BANDS, DEFAULT_BANDS))
                 smooth = store.getBoolean(KEY_SMOOTH, false)
                 targetRows = store.getInt(KEY_ROWS, 40).let { r ->
                     if (r in ROW_CHOICES) r else 40
@@ -265,6 +287,11 @@ object EngineManager {
         fieldScale = 2
         renderEma = 0.0
         prefs?.edit()?.putString(KEY_MODE, name)?.apply()
+        // The terrain family displaces its own float field, which only
+        // exists in smooth mode — selecting one turns smooth on with it.
+        if (name in TERRAIN_MODES && !smooth) {
+            useSmooth(true)
+        }
     }
 
     /**
@@ -364,6 +391,15 @@ object EngineManager {
             val settled = e.setSensitivity(value)
             sensitivity = settled
             prefs?.edit()?.putFloat(KEY_SENSITIVITY, settled)?.apply()
+        }
+    }
+
+    /** Sets the bar count and keeps the clamped result, exactly as sensitivity does. */
+    fun useBands(count: Int) {
+        val e = engine ?: return
+        scope.launch {
+            bands = e.setBands(count)
+            prefs?.edit()?.putInt(KEY_BANDS, bands)?.apply()
         }
     }
 

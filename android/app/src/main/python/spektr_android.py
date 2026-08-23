@@ -41,8 +41,10 @@ from spektr.motion import Peaks, Spring, Trace
 from spektr.palette import BUILTIN, Palette
 
 #: Wire format version. Kotlin refuses a buffer it does not recognise rather
-#: than reading a stale layout as though it were current.
-WIRE_VERSION = 1
+#: than reading a stale layout as though it were current. v2 adds the float
+#: field plane (``planes == 4``) for the port's terrain view; the glyph and
+#: index layouts are unchanged from v1.
+WIRE_VERSION = 2
 
 #: How much of the ramp's low end OLED mode fades into true black, as a
 #: fraction of the ramp. An OLED pixel showing #000000 is *off* — that is the
@@ -86,10 +88,139 @@ _HEADER = struct.Struct("<4sHHHH")   # magic, version, planes, w, h
 _MAGIC = b"SPKT"
 
 
+def _clamp_bars(n: int) -> int:
+    """The desktop widget's rule for a band-count setting: 0 fits, else 8..64."""
+    n = int(n)
+    return 0 if n <= 0 else max(8, min(64, n))
+
+
+class _RecordingPalette:
+    """A palette that remembers the floats modes hand it just before quantising.
+
+    Every mode ends its frame with ``ctx.ramp(field)`` — one call to
+    :meth:`Palette.indices` carrying the per-cell floats the whole picture is
+    shaded by. Immediately afterwards those floats are crushed to 64 ramp
+    indices, which is invisible in flat colour and fatal as terracing once
+    the terrain view lights the surface. This proxy sits between the modes
+    and the real palette (the engine hands its Ctx a palette either way), so
+    the terrain path can ship the *pre-quantisation* floats over the wire
+    without touching a single mode or any shared engine file — the port's
+    founding rule holds; this lives entirely on the Android side.
+
+    Only the last call's array is kept: nearly every mode shades through
+    exactly one ``ramp`` call per frame, and where one does not, the shape
+    check at pack time falls back to the quantised indices rather than
+    shipping a mis-mapped height map.
+    """
+
+    def __init__(self, inner: Palette) -> None:
+        self._inner = inner
+        self.last_norm: np.ndarray | None = None
+
+    def indices(self, norm) -> np.ndarray:
+        arr = np.asarray(norm, dtype=np.float64)
+        self.last_norm = arr
+        return self._inner.indices(arr)
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+def _field_float(codes, cidx, bidx, rec: _RecordingPalette):
+    """The picture those glyphs stood for, as float heights instead of indices.
+
+    Same geometry walk as :func:`_field` — braille gives 4x2 dots per cell,
+    half-blocks give two rows, everything else one — but each pixel carries a
+    normalised float for the GPU to displace and light, not a 64-step index.
+    Background pixels are 0.0.
+
+    The heights come from the recording palette, best source first:
+
+    1. A recording shaped exactly like this geometry's output plane — what
+       the half-block modes produce, since they ramp their smooth field at
+       full field resolution (Chladni measured at (2h, w)). Zero loss; the
+       quantiser never touched these numbers.
+    2. A recording shaped like the cell grid — the braille modes' shape,
+       whose dots then share their cell's height.
+    3. The quantised indices as floats. Still a valid height map, just with
+       the 64-step terracing this path exists to avoid; a mode that shades
+       through several ``ramp`` calls lands here rather than shipping a
+       mis-mapped surface.
+    """
+    h, w = codes.shape
+    hexmax = max(1, len(rec._inner.hexes) - 1)
+    idx_float = cidx.astype(np.float32) / hexmax
+
+    rec_norm = rec.last_norm
+
+    def clipped(a):
+        return np.clip(np.asarray(a, dtype=np.float32), 0.0, 1.0)
+
+    braille = (codes >= 0x2800) & (codes <= 0x28FF)
+    upper = codes == 0x2580
+    full = codes == 0x2588
+    lower = codes == 0x2584
+    blank = (codes == 0) | (codes == 0x20)
+
+    if braille.any():
+        sr, sc = 4, 2
+        out_h, out_w = h * sr, w * sc
+        if rec_norm is not None and tuple(rec_norm.shape) == (out_h, out_w):
+            out = clipped(rec_norm).copy()
+        else:
+            norm = None
+            if rec_norm is not None and tuple(rec_norm.shape) == (h, w):
+                norm = clipped(rec_norm)
+            out = np.zeros((out_h, out_w), dtype=np.float32)
+            if norm is None:
+                norm = idx_float
+            bits = np.where(braille, codes - 0x2800, 0)
+            for bit, (dy, dx) in enumerate(_BRAILLE_BITS):
+                on = ((bits >> bit) & 1).astype(bool)
+                sub = out[dy::sr, dx::sc]
+                np.copyto(sub, norm, where=on)
+            # Non-braille marks (peak ticks, box drawing) read as solid cells.
+            solid = ~braille & ~blank
+            if solid.any():
+                for dy in range(sr):
+                    for dx in range(sc):
+                        sub = out[dy::sr, dx::sc]
+                        np.copyto(sub, norm, where=solid)
+        return out, out_w, out_h
+
+    if upper.any() or full.any() or lower.any():
+        bg = bidx.astype(np.float32) / hexmax \
+            if bidx is not None else np.zeros((h, w), dtype=np.float32)
+        if rec_norm is not None and tuple(rec_norm.shape) == (h * 2, w):
+            # Full-resolution floats straight off the mode's own field.
+            base = clipped(rec_norm)
+            blank2 = np.repeat(blank, 2, axis=0)
+            return np.where(blank2, np.float32(0.0), base), w, h * 2
+        norm = None
+        if rec_norm is not None and tuple(rec_norm.shape) == (h, w):
+            norm = clipped(rec_norm)
+        if norm is None:
+            norm = idx_float
+        top = np.where(full | upper, norm, np.where(blank, 0.0, bg))
+        bot = np.where(full | lower, norm, np.where(blank, 0.0, bg))
+        other = ~(upper | full | lower | blank)
+        top = np.where(other, norm, top)
+        bot = np.where(other, norm, bot)
+        out = np.empty((h * 2, w), dtype=np.float32)
+        out[0::2] = top
+        out[1::2] = bot
+        return out, w, h * 2
+
+    solid = ~blank
+    if rec_norm is not None and tuple(rec_norm.shape) == (h, w):
+        return np.where(solid, clipped(rec_norm), np.float32(0.0)), w, h
+    return np.where(solid, idx_float, np.float32(0.0)), w, h
+
+
 class Engine:
     """One per app. Holds the ring, the analyser and the mode's scratch state."""
 
-    def __init__(self, samplerate: int = 48000, bars: int = N_BANDS) -> None:
+    def __init__(self, samplerate: int = 48000, bars: int = 16) -> None:
         # Two seconds of stereo headroom. The analyser only ever asks for the
         # most recent window, so this is slack against scheduler jitter rather
         # than a queue — if Android stalls us we drop old audio, which is the
@@ -97,7 +228,13 @@ class Engine:
         self._ring = RingBuffer(samplerate * 2)
         self._sr = samplerate
         self._analyser = Analyser(self._ring, lambda: self._sr)
-        self._analyser.set_bands(bars)
+        #: How many bars to draw: the user's setting, with ``0`` meaning "fit
+        #: the grid" — exactly what ``config.bands`` means on desktop. The
+        #: analyser is asked for the same number, so a count past its native
+        #: resolution resolves into real FFT-bin ranges rather than as
+        #: interpolated copies of neighbouring bands.
+        self._bars_wanted = _clamp_bars(bars)
+        resolved = self._analyser.set_bands(self._bars_wanted or N_BANDS)
         self._analyser.start()
 
         self._t0 = time.monotonic()
@@ -108,9 +245,16 @@ class Engine:
         self._modes = {m.name: m for m in MODES}
         self._theme = BUILTIN["gruvbox"]
         self._palette = Palette(self._theme)
+        self._rec = _RecordingPalette(self._palette)
         self._swatches: list[list[str]] | None = None
         self._oled = False
         self._field_mode = False
+
+        #: The terrain family — modes built for the GLES view. Selecting one
+        #: makes render() ship float heights instead of the index plane; no
+        #: separate switch exists, because "3D" is a property of the mode,
+        #: not a lens over all of them.
+        self._terrain_modes = {"Swell", "Terra"}
 
         # Debug counters; see stats().
         self._stats_t0 = self._t0
@@ -134,12 +278,13 @@ class Engine:
         # picture move like the desktop app lives between the two, in the
         # widget — and a port that skips it does not fail, it just renders a
         # jittery version of the same modes and looks subtly wrong forever.
-        # Same objects and same constants as ``AudioVisualizer.__init__``.
-        self._bars = bars
-        self._spring = Spring(bars)
-        self._peaks = Peaks(bars)
-        self._stereo_l = Spring(bars)
-        self._stereo_r = Spring(bars)
+        # Same objects and same constants as ``AudioVisualizer.__init__``,
+        # sized to the count the analyser actually resolved — the wanted
+        # setting and the resolved count only agree at or below N_BANDS.
+        self._spring = Spring(resolved)
+        self._peaks = Peaks(resolved)
+        self._stereo_l = Spring(resolved)
+        self._stereo_r = Spring(resolved)
         self._trace = Trace(tau=0.028)
         #: Last analyser sequence the trace was stepped for. The wave is only
         #: advanced on a genuinely new block, exactly as the widget does it.
@@ -250,6 +395,7 @@ class Engine:
             return False
         self._theme = spec
         self._palette = Palette(spec)
+        self._rec = _RecordingPalette(self._palette)
         return True
 
     # ── colours, as flat lists ──
@@ -310,6 +456,19 @@ class Engine:
         """Toggle true black and return the colours that follow from it."""
         self._oled = bool(on)
         return self.colours()
+
+    def set_bands(self, n: int) -> int:
+        """Change how many bars are drawn, live — desktop's band-count setting.
+
+        One control, two mechanisms, same as the widget: up to the analyser's
+        native resolution the modes simply draw fewer bars out of the same
+        analysis; past it, the analyser resolves more bands for real. ``0``
+        fits the grid. Returns what was taken, so Kotlin can show the clamped
+        value rather than the one it asked for.
+        """
+        self._bars_wanted = _clamp_bars(n)
+        self._analyser.set_bands(self._bars_wanted or N_BANDS)
+        return self._bars_wanted
 
     def set_sensitivity(self, value: float) -> float:
         """Manual trim on top of the analyser's autosens — desktop's ``[``/``]``.
@@ -402,13 +561,16 @@ class Engine:
         f = self._analyser.frame
         if len(f.bands) != len(self._spring.x):
             # The band count is settable at runtime, so the springs follow the
-            # analyser rather than a constant fixed at construction.
+            # analyser rather than a constant fixed at construction — and the
+            # mode's scratch goes with them: cached geometry can be sized to
+            # the old count. The desktop widget drops the same dict on this
+            # event (``_resize_bands``).
             n = len(f.bands)
-            self._bars = n
             self._spring = Spring(n)
             self._peaks = Peaks(n)
             self._stereo_l = Spring(n)
             self._stereo_r = Spring(n)
+            self._state = {}
 
         self._spring.step(f.bands, dt)
         self._peaks.step(self._spring.x, dt)
@@ -441,8 +603,8 @@ class Engine:
             t=now - self._t0,
             dt=dt,
             energy=energy, silent=f.silent,
-            palette=self._palette, state=self._state,
-            bars=self._bars,
+            palette=self._rec, state=self._state,
+            bars=self._bars_wanted,
             onset_seq=f.onset_seq, onsets=onsets,
             onset_strength=f.onset_strength,
             flux=f.flux, tempo_bpm=f.tempo_bpm, beat_phase=f.beat_phase,
@@ -451,12 +613,22 @@ class Engine:
         out = mode.fn(ctx)
         codes, cidx = out[0], out[1]
         bidx = out[2] if len(out) == 3 else None
-        if self._field_mode:
-            plane, fw, fh = _field(codes, cidx, bidx)
+        if self._field_mode and name in self._terrain_modes:
+            # The terrain family: float heights for the GLES displacement,
+            # pre-quantisation — these modes hand ctx.ramp their whole field
+            # in one call, so the recording is exact. planes == 4 says
+            # "w*h float32 little-endian".
+            plane, fw, fh = _field_float(codes, cidx, bidx, self._rec)
             out_bytes = b"".join((
-                _HEADER.pack(_MAGIC, WIRE_VERSION, 1, fw, fh),
-                np.ascontiguousarray(plane, dtype=np.uint8).tobytes(),
+                _HEADER.pack(_MAGIC, WIRE_VERSION, 4, fw, fh),
+                np.ascontiguousarray(plane, dtype="<f4").tobytes(),
             ))
+        elif self._field_mode:
+                plane, fw, fh = _field(codes, cidx, bidx)
+                out_bytes = b"".join((
+                    _HEADER.pack(_MAGIC, WIRE_VERSION, 1, fw, fh),
+                    np.ascontiguousarray(plane, dtype=np.uint8).tobytes(),
+                ))
         else:
             out_bytes = _pack(codes, cidx, bidx)
         spent = time.monotonic() - began

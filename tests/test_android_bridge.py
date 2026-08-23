@@ -368,6 +368,71 @@ def test_the_field_says_where_there_is_nothing():
         assert field[row, 2] == spektr_android.FIELD_EMPTY, "codepoint 0 is nothing at all"
 
 
+def _recording_palette():
+    from spektr.palette import BUILTIN, Palette
+
+    return spektr_android._RecordingPalette(Palette(BUILTIN["gruvbox"]))
+
+
+def test_field_float_falls_back_to_indices_as_heights():
+    """Without a matching recording, quantised indices stand in as heights."""
+    codes = np.array([[0x20, 0x2588, 0x00]], dtype=np.int32)
+    cidx = np.array([[7, 41, 7]], dtype=np.uint8)
+    field, fw, fh = spektr_android._field_float(codes, cidx, None, _recording_palette())
+    assert (fw, fh) == (3, 2)
+    expect = 41 / 63.0
+    for row in (0, 1):
+        assert field[row, 0] == 0.0, "a space is zero height"
+        assert abs(field[row, 1] - expect) < 1e-6, "a full block's height is its index"
+        assert field[row, 2] == 0.0, "codepoint 0 is nothing at all"
+
+
+def test_field_float_prefers_the_recorded_pre_quantisation_field():
+    """A full-resolution recording crosses untouched by any 64-step ramp."""
+    codes = np.array([[0x2588]], dtype=np.int32)
+    cidx = np.array([[63]], dtype=np.uint8)          # index says "brightest"
+    rec = _recording_palette()
+    rec.last_norm = np.array([[0.5], [0.25]])        # recording disagrees
+    field, fw, fh = spektr_android._field_float(codes, cidx, None, rec)
+    assert (fw, fh) == (1, 2)
+    assert abs(field[0, 0] - 0.5) < 1e-6, "the recording wins over the indices"
+    assert abs(field[1, 0] - 0.25) < 1e-6
+
+
+def test_the_terrain_family_ships_float_heights(engine):
+    """Terrain-family frames are planes == 4: w*h float32 heights in 0..1.
+
+    Being three-dimensional is a property of the modes Swell and Terra, not
+    a lens over every mode — so the family ships floats while everything
+    else keeps the flat index plane, and the GLES renderer can trust the
+    format blindly because only these two modes ever produce it.
+    """
+    engine.set_field_mode(True)
+    engine.push(_pcm())
+    for name in ("Swell", "Terra"):
+        for _ in range(3):
+            buf = engine.render(name, 60, 20)
+        magic, ver, planes, fw, fh = spektr_android._HEADER.unpack_from(buf, 0)
+        assert magic == spektr_android._MAGIC
+        assert ver == spektr_android.WIRE_VERSION
+        assert planes == 4, f"{name}: terrain frames carry floats"
+        assert len(buf) == spektr_android._HEADER.size + fw * fh * 4
+        assert fw >= 60 and fh >= 20, f"{name}: field {fw}x{fh} coarser than grid"
+        heights = np.frombuffer(buf, "<f4", fw * fh, spektr_android._HEADER.size)
+        assert np.isfinite(heights).all(), f"{name}: a non-finite height"
+        assert heights.min() >= 0.0, f"{name}: height below the floor"
+        assert heights.max() <= 1.0, f"{name}: height above the ceiling"
+        # These modes ramp their whole field in one call, so the heights are
+        # genuinely continuous — the anti-terracing point of wire v2.
+        assert len(np.unique(np.round(heights, 4))) > 64, (
+            f"{name}: heights collapsed to quantised levels"
+        )
+    buf = engine.render("Chladni", 60, 20)
+    assert spektr_android._HEADER.unpack_from(buf, 0)[2] == 1, (
+        "a non-family mode must keep the flat index plane"
+    )
+
+
 def test_a_mode_that_fills_the_screen_fills_the_field(engine):
     field = _field_of(engine, "Chladni", 80, 24)
     lit = field[field != spektr_android.FIELD_EMPTY]
@@ -385,8 +450,12 @@ def test_every_mode_survives_the_field_path(engine):
             for _ in range(3):
                 buf = engine.render(name, 60, 20)
             _, _, planes, fw, fh = spektr_android._HEADER.unpack_from(buf, 0)
-            assert planes == 1
-            assert len(buf) == spektr_android._HEADER.size + fw * fh
+            if planes == 4:
+                # The terrain family ships float heights instead of indices.
+                assert len(buf) == spektr_android._HEADER.size + fw * fh * 4
+            else:
+                assert planes == 1
+                assert len(buf) == spektr_android._HEADER.size + fw * fh
             assert fw >= 60 and fh >= 20, f"{name}: field {fw}x{fh} is coarser than the grid"
         except Exception as exc:                     # noqa: BLE001 — reporting
             bad.append(f"{name}: {type(exc).__name__}: {exc}")

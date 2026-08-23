@@ -16,23 +16,32 @@ import java.nio.ByteOrder
  * indices, one per picture pixel, with [FIELD_EMPTY] for "paint the
  * background". The grid is the terminal's constraint, not the mode's, and
  * this is the same frame with that constraint taken off.
+ *
+ * `planes == 4` (wire v2) is the terrain format: w*h float32 heights in
+ * 0..1, straight from before the ramp quantises them. No codes, no colour —
+ * the GLES renderer colours through the same 64-entry ramp and displaces by
+ * height. This is the Android-exclusive view; nothing else consumes it.
  */
 class FrameBuf(
     val w: Int,
     val h: Int,
     val planes: Int,
     val codes: IntArray,
-    val cidx: ByteArray,
+    val cidx: ByteArray?,
     val bidx: ByteArray?,
+    val fvals: FloatArray? = null,
 ) {
     val size: Int get() = w * h
 
     /** True when this is a picture to blit rather than a grid to typeset. */
     val isField: Boolean get() = planes == 1
 
+    /** True when this frame carries float heights for the terrain renderer. */
+    val isFloatField: Boolean get() = planes == 4 && fvals != null
+
     companion object {
         const val MAGIC = "SPKT"
-        const val VERSION = 1
+        const val VERSION = 2
         const val HEADER_SIZE = 12
 
         /** Ramp indices are 0..63, so 255 is free to mean "background here". */
@@ -50,7 +59,7 @@ class FrameBuf(
             val w = bb.short.toInt() and 0xFFFF
             val h = bb.short.toInt() and 0xFFFF
             if (version != VERSION) return null
-            if (planes < 1 || planes > 3) return null
+            if (planes < 1 || planes > 4) return null
             if (w == 0 || h == 0) return null
             val cells = w * h
             if (planes == 1) {
@@ -58,6 +67,13 @@ class FrameBuf(
                 val field = ByteArray(cells)
                 bb.get(field)
                 return FrameBuf(w, h, 1, IntArray(0), field, null)
+            }
+            if (planes == 4) {
+                if (data.size != HEADER_SIZE + cells * 4) return null
+                val fb = bb.asFloatBuffer()
+                val floats = FloatArray(cells)
+                fb.get(floats)
+                return FrameBuf(w, h, 4, IntArray(0), null, null, floats)
             }
             val expected = HEADER_SIZE + cells * 4 + cells + if (planes == 3) cells else 0
             if (data.size != expected) return null

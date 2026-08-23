@@ -7,7 +7,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-00c853)](https://github.com/MrEmoji27/spektr/blob/main/LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20·%20Linux%20·%20macOS-546e7a)](#how-it-captures-audio)
-[![Modes](https://img.shields.io/badge/render%20modes-52-ff6d00)](#modes)
+[![Modes](https://img.shields.io/badge/render%20modes-57-ff6d00)](#modes)
 [![Themes](https://img.shields.io/badge/themes-55-7c4dff)](#themes)
 [![Built with Textual](https://img.shields.io/badge/built%20with-Textual-5e35b1)](https://textual.textualize.io/)
 
@@ -21,7 +21,7 @@ spektr draws it: overlapped FFTs across 32 log-spaced bands (settable) from 50 H
 out the way cava does it, rendered with braille sub-characters so the picture moves at
 four times the vertical resolution of a text cell.
 
-**Fifty-two render modes. Fifty-five themes. 60 fps, or your display's.**
+**Fifty-seven render modes. Fifty-five themes. 60 fps, or your display's.**
 
 There is an **Android build** too — the same engine, on a tablet, as an ambient
 display for the desk. It is a second screen, not a second product: see
@@ -122,6 +122,9 @@ Listed in the order the picker cycles them.
 | **Radial** | the spectrum wrapped into a circle | **Valentine** | a heart that beats with the track, trailing smaller ones upward |
 | **Sonar** | one sweep, not the whole spectrum — returns fade like a scope | **Locket** | an outlined heart, pulsing rings of hearts outward on the beat |
 | **Orbit** | bodies on real elliptical orbits; loud bands swing out | **Shooting Star** | a night sky, with meteors thrown from a drifting radiant on the beat |
+| **Constellations** | beats draw lines between fixed stars; the figures fade like film | **Star Trails** | a long exposure: the sky turns and leaves its arcs behind |
+| **Supernova** | a mostly dark sky, waiting for the one hit worth a catastrophe | | |
+| **Swell** | an open sea — bass drives the swell, hits land ripples | **Terra** | a bass-lifted mountain range; every hit raises a hill |
 | **Fireworks** | beat-triggered launches, bursts, and fall | **Maelstrom** | a real fluid sim, stirred by the music |
 | **Dune** | sand piles up by band, avalanching past a threshold | **Vinyl** | a record whose grooves light up as a radial spectrum |
 | **Murmuration** | a flock wheeling and scattering with the beat | **Rain** | rain on the glass, falling harder when it's loud |
@@ -133,6 +136,10 @@ bargain from everything above it: the picture is mostly empty and mostly
 still, and the music arrives as events rather than as a level being redrawn.
 The meteors come from a drifting **radiant**, the point a real shower appears
 to diverge from, and a harder onset throws a brighter, longer, faster one.
+It has company now: **Constellations** grows figures by drawing one line per
+beat, **Star Trails** spins up with percussion while arcs accumulate around a
+fixed pole, and **Supernova** spends its whole budget on rare, hard hits —
+a shell that expands for five seconds and a core that glows for twenty.
 
 Vinyl, Rain, Snow and Ember are the lofi group — a
 shared *look* (warm objects, soft edges, nothing strobing) rather than a
@@ -140,8 +147,8 @@ shared reactivity budget. Each one maps real band data into its geometry,
 so what the music changes is what the object is doing, not just how bright
 the picture is.
 
-A fifty-third entry, **None**, is registered as the off switch — it draws nothing.
-That is why the test output counts 53 against the fifty-two listed here — and 65
+A fifty-eighth entry, **None**, is registered as the off switch — it draws nothing.
+That is why the test output counts 58 against the fifty-seven listed here — and 70
 in total, because the twelve subcell variants below are registered whether or not
 the setting that offers them is on.
 

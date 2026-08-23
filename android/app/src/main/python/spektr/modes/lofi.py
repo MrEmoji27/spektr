@@ -34,7 +34,7 @@ import math
 
 import numpy as np
 
-from ..render import cell_max, frac, noise, pack_braille
+from ..render import cell_max, noise, pack_braille
 from . import Ctx, empty, mode, spread
 from . import polar_grid as _polar
 
@@ -392,12 +392,16 @@ def snow(ctx: Ctx):
     the weather itself, and putting glass in front of it makes it someone
     else's snow.
 
-    What the music does: the mid band sets how thickly it falls, energy sets
-    how fast, and ``ctx.drive`` gusts the wind sideways — percussive material
-    blows the fall about rather than merely thickening it. Snow also lies:
-    flakes that reach the bottom add to a per-column depth that melts back
-    slowly, so a loud passage leaves drifts along the floor for a while after
-    it has passed.
+    What the music does, on the same channels Rain answers to: the mid band
+    sets how thickly it falls and energy how fast, ``ctx.drive`` gusts the
+    wind sideways and now pushes the fall speed too — percussive material is
+    visibly faster and busier weather, not merely thicker. The bass brightens
+    what is falling, as Rain's drops carry it. A beat does two things at once:
+    it lurches the whole wind field (which eases back, so a hit reads as one
+    shove and a recovery) and shakes a small flurry loose from the top, sized
+    by onset strength. Snow also lies: flakes that reach the bottom add to a
+    per-column depth that melts back slowly, so a loud passage leaves drifts
+    along the floor for a while after it has passed.
     """
     dr, dc = ctx.dot_rows, ctx.dot_cols
     if dr < 16 or dc < 20:
@@ -409,14 +413,29 @@ def snow(ctx: Ctx):
         st["settle"] = np.zeros(dc, dtype=np.float64)
 
     mid = ctx.range(0.15, 0.7)
+    bass = ctx.range(0.0, 0.2)
     # Slower than Rain's 0.55 + energy*2 — snow that falls at rain speed is
     # rain drawn with the wrong glyph — but not *much* slower. The first
     # version took between eleven and thirty-seven seconds to cross the
     # screen, so the bottom half was permanently empty and the picture read
     # as a few specks near the ceiling rather than as weather. The near plane
     # now crosses in about three seconds and the far plane in about eight,
-    # which is the parallax doing the work instead of the clock.
-    fall = 0.7 + ctx.energy * 1.1
+    # which is the parallax doing the work instead of the clock. Drive rides
+    # on top the way it does for Rain: percussive material visibly speeds the
+    # whole field up, just from a lower base.
+    fall = 0.7 + ctx.energy * 1.1 + ctx.drive * 0.5
+
+    # A beat lurches the wind. It eases back toward the target through the
+    # same relaxation below, so the hit reads as one shove and a recovery
+    # rather than as the wind changing its mind — measured against Rain,
+    # whose bottom edge carries every landing drop, this is Snow's answer to
+    # the question "what did that hit do to the picture". The side is drawn,
+    # not fixed: every shove landing on the same side made a beat-heavy
+    # passage drift steadily across the screen, which reads as a draught
+    # through a window rather than as gusts.
+    if ctx.onsets:
+        side = 1.0 if rng.random() < 0.5 else -1.0
+        st["wind"] += side * float(np.clip(ctx.onset_strength, 0.0, 1.0)) * 1.1
 
     # One wind for the whole field, easing toward a target rather than
     # jumping: a gust that arrives in a single frame teleports every flake
@@ -440,6 +459,13 @@ def snow(ctx: Ctx):
     want = int(st["acc"])
     if want:
         st["acc"] -= want
+    # A beat shakes a few extra flakes loose right away — the density
+    # equivalent of Rain's splashes, so hits are visible in the fall itself
+    # and not only in the wind they shove.
+    if ctx.onsets:
+        want += int(1 + round(float(np.clip(ctx.onset_strength, 0.0, 1.0)) * 4.0))
+
+    if want:
         free = np.flatnonzero(st["y"] < 0.0)[:want]
         if free.size:
             k = free.size
@@ -506,9 +532,14 @@ def snow(ctx: Ctx):
         # the middle third of it. A snowfield is one of the few pictures where
         # almost every cell is at its own depth, so the depth *is* the
         # gradient — bunching the three planes close together threw that away
-        # and left the theme showing as a single colour with texture.
+        # and left the theme showing as a single colour with texture. Bass
+        # brightens the flakes the way Rain's drops carry it: the low end
+        # makes what is falling read heavier. The coefficient stays short of
+        # full so a wall of bass pushes the near plane to the top of the ramp
+        # without pinning every plane there.
         centre = np.clip(
-            (0.22 + plane * 0.34) * st["shine"][live] * twinkle * (0.70 + ctx.energy * 0.9),
+            (0.22 + plane * 0.34) * st["shine"][live] * twinkle
+            * (0.60 + ctx.energy * 0.75 + bass * 0.32),
             0.06, 1.0,
         )
         # Plain indexed assignment rather than np.maximum.at, and ordered so

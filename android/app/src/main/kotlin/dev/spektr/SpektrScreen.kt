@@ -59,7 +59,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.res.ResourcesCompat
+import android.opengl.GLSurfaceView
 import kotlin.math.ln
 import kotlin.math.pow
 
@@ -465,11 +467,34 @@ private fun SettingsList(palette: Palette) {
             "smooth",
             "Draws the picture instead of the glyphs. A cell is not a pixel — Chladni " +
                 "computes a smooth field and then picks one half-block to stand for each " +
-                "cell. This runs the mode finer and blits what it actually computed.",
+                "cell. This runs the mode finer and blits what it actually computed. " +
+                "Selecting a terrain-family mode (Swell, Terra) turns this on by itself.",
             palette,
         ) {
             Chip(if (EngineManager.smooth) "on" else "off", palette, emphasis = EngineManager.smooth) {
                 EngineManager.useSmooth(!EngineManager.smooth)
+            }
+        }
+
+        // Bars keep their width and gutters only appear where there is room
+        // for them, so a high count thins the picture out instead of ruling
+        // dark lines between the bars — which is what a fixed one-column
+        // gutter per band did once counts could be pushed past the screen.
+        SettingRow(
+            "bars  " + (if (EngineManager.bands == 0) "auto" else EngineManager.bands),
+            "How many spectrum bars the meter modes draw — Bars, Bricks, Ladder, VU. \"auto\" " +
+                "fits the screen; a fixed number past the analyser's native resolution asks it " +
+                "for real extra bands rather than stretched copies of its neighbours.",
+            palette,
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (b in EngineManager.BAND_CHOICES) {
+                    Chip(
+                        if (b == 0) "auto" else "$b",
+                        palette,
+                        emphasis = b == EngineManager.bands,
+                    ) { EngineManager.useBands(b) }
+                }
             }
         }
 
@@ -792,19 +817,51 @@ fun GridView(palette: Palette) {
     // fps is 130k ints of garbage a frame, and the collector notices.
     val blitter = remember { FieldBlitter() }
 
-    Canvas(
+    // Held explicitly: GLSurfaceView exposes setRenderer but no getter, so
+    // the update path talks to this instance directly.
+    val terrainRenderer = remember { TerrainRenderer() }
+
+    // The terrain branch is the port's exclusive: when a terrain-family mode
+    // is selected, Python ships float heights and the picture goes to a GLES
+    // surface instead of the blitter. The frame itself is the switch — no
+    // separate view toggle exists.
+    Box(
         Modifier.fillMaxSize().onSizeChanged { size ->
             viewW = size.width
             viewH = size.height
         }
     ) {
-        val frame = EngineManager.lastFrame ?: return@Canvas
-        if (frame.isField) {
-            blitter.draw(this, frame, palette)
-            return@Canvas
+        val frame = EngineManager.lastFrame
+        if (frame?.isFloatField == true) {
+            AndroidView(
+                factory = { ctx ->
+                    GLSurfaceView(ctx).apply {
+                        setEGLContextClientVersion(3)
+                        preserveEGLContextOnPause = true
+                        setRenderer(terrainRenderer.also { it.submitPalette(palette) })
+                        renderMode = GLSurfaceView.RENDERMODE_CONTINUOUSLY
+                    }
+                },
+                update = {
+                    terrainRenderer.submitPalette(palette)
+                    terrainRenderer.submit(frame)
+                },
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else if (frame != null) {
+            // The captured frame, not a fresh read: the draw lambda runs after
+            // recomposition, and re-reading lastFrame there could hand the
+            // glyph path a planes == 4 frame whose codes array is empty —
+            // which is exactly the crash this once produced.
+            Canvas(Modifier.fillMaxSize()) {
+                if (frame.isField) {
+                    blitter.draw(this, frame, palette)
+                    return@Canvas
+                }
+                val c = cell ?: return@Canvas
+                drawGrid(frame, palette, c, paints)
+            }
         }
-        val c = cell ?: return@Canvas
-        drawGrid(frame, palette, c, paints)
     }
 }
 
@@ -847,7 +904,7 @@ private class FieldBlitter {
             for (i in palette.ramp.indices) lut[i] = palette.ramp[i]
             lutFor = palette
         }
-        val src = frame.cidx
+        val src = frame.cidx ?: return
         val dst = pixels
         val table = lut
         for (i in 0 until n) dst[i] = table[src[i].toInt() and 0xFF]
@@ -875,6 +932,10 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawGrid(
     val cols = frame.w
     val rows = frame.h
     if (cols <= 0 || rows <= 0) return
+    // A float-field frame carries no glyphs at all; it belongs to the GL
+    // branch. Guarded here too, so a stale hand-off can never index an
+    // empty codes array.
+    if (frame.planes == 4 || frame.codes.isEmpty()) return
     val ramp = palette.ramp
     val rampColor = { idx: Int -> if (idx < ramp.size) Color(ramp[idx]) else Color(0xFF000000) }
     val bgIndex = { i: Int -> if (frame.planes == 3) frame.bidx!![i].toInt() and 0xFF else -1 }
@@ -910,10 +971,10 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawGrid(
         val row = i / cols
         val col = i - row * cols
         val code = frame.codes[i]
-        val fg = frame.cidx[i].toInt() and 0xFF
+        val fg = frame.cidx!![i].toInt() and 0xFF
         var j = i + 1
         val rowEnd = (row + 1) * cols
-        while (j < rowEnd && frame.codes[j] == code && (frame.cidx[j].toInt() and 0xFF) == fg) j++
+        while (j < rowEnd && frame.codes[j] == code && (frame.cidx!![j].toInt() and 0xFF) == fg) j++
         if (code != 0) {
             val glyph = paints.glyphFor(code)
             val paint = glyph.paint

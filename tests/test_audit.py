@@ -75,6 +75,19 @@ SELF_ANIMATING = {
     # their own timers, the radiant drifts, and a meteor already thrown goes
     # on crossing after the beat that threw it (Shooting Star)
     "Shooting Star",
+    # beats draw lines between fixed stars and the figures fade on a clock of
+    # their own — a chain already drawn keeps fading after the music stopped
+    # (Constellations)
+    "Constellations",
+    # a long exposure: the sky turns at a sidereal floor whether or not
+    # anything plays, and the accumulated arcs are the picture (Star Trails);
+    # a shell keeps expanding for seconds after the hit that started it, and
+    # its variable stars twinkle on their own timers (Supernova)
+    "Star Trails", "Supernova",
+    # the terrain family: seas never freeze (Swell's wave trains travel on
+    # their own phase clocks) and geology drifts east on a slow clock nobody
+    # hears (Terra's noise origin slides whether or not anything plays)
+    "Swell", "Terra",
     # continuous spin (Kaleidoscope rotates its mirror array; the
     # scrollwork curls turn on their anchors even at a frozen spectrum)
     "Kaleidoscope", "Kaleidoscope (o)", "Kaleidoscope Ultra (o)",

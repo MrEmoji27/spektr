@@ -111,6 +111,13 @@ class PyEngine private constructor(
     fun setSensitivity(value: Float): Float =
         engine.callAttr("set_sensitivity", value).toDouble().toFloat()
 
+    /**
+     * How many bars the meter modes draw; 0 fits the grid. Python clamps and
+     * returns what it took, so the picker can show that instead of the ask.
+     */
+    fun setBands(count: Int): Int =
+        engine.callAttr("set_bands", count).toInt()
+
     private fun toPalette(hexes: List<PyObject>, what: String): Palette? {
         if (hexes.size < 3) {
             Log.w(TAG, "$what gave ${hexes.size} colours, expected bg + fg + ramp")
