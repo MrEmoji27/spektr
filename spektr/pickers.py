@@ -20,6 +20,7 @@ from typing import Callable, Sequence
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
+from textual.dom import NoScreen
 from textual.widget import Widget
 from textual.widgets import Input, Label, OptionList
 
@@ -173,6 +174,171 @@ class Picker(Widget):
         if cb is not None:
             self._on_done = None
             cb(value)
+
+
+class LoadoutPicker(Picker):
+    """A :class:`Picker` over the whole mode list, choosing a *set* of them.
+
+    Every other picker here answers "which one now"; this one answers "which
+    ones at all", and hands back a list rather than a string. Cancelling
+    returns None, which the caller reads as "leave the loadout alone" — an
+    empty list is a real answer meaning "no restriction", so the two cannot
+    share a value.
+
+    Two deliberate departures from the base picker, both forced by the same
+    thing — this panel needs a single-keystroke toggle:
+
+    * The **list** takes focus, not the filter box. ``Input`` consumes
+      printable keys, so with the filter focused (what :class:`Picker` does)
+      ``space`` would type a space instead of toggling, and ``a``/``n`` would
+      never reach a binding at all.
+    * The filter is therefore behind ``/``, the usual TUI idiom, and ``enter``
+      or ``escape`` inside it hands focus back to the list. Dropping the
+      filter entirely was the simpler option and the wrong one: the list is
+      the full mode roster, which is well past what anyone wants to arrow
+      through to find four names.
+
+    Toggling is tracked against the mode's own name, not the row index, so it
+    survives the list being re-filtered underneath it.
+    """
+
+    BINDINGS = [
+        *Picker.BINDINGS,
+        Binding("space", "toggle", "Toggle", show=False),
+        Binding("a", "all", "All", show=False),
+        Binding("n", "none", "None", show=False),
+        Binding("slash", "focus_filter", "Filter", show=False),
+    ]
+
+    def __init__(self, title: str, items, chosen=None, **kw):
+        super().__init__(title, items, **kw)
+        #: Names ticked right now. Seeded from the saved loadout, intersected
+        #: with what is actually on offer so a stale name cannot be silently
+        #: re-saved, and an empty saved loadout starts with everything ticked
+        #: — "no restriction" and "all of them ticked" are the same picture,
+        #: and starting blank would read as though the modes had been lost.
+        picked = set(chosen or ())
+        self._chosen: set[str] = {i for i in self._items if i in picked} or set(self._items)
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="panel"):
+            yield Label(self._title, id="title")
+            yield Input(placeholder="filter…", id="filter")
+            yield OptionList(id="list")
+            yield Label("space pick · a all · n none · ⏎ save · esc cancel",
+                        id="hint")
+
+    def on_mount(self) -> None:
+        self._repopulate()
+        ol = self.query_one("#list", OptionList)
+        if self._current in self._shown:
+            ol.highlighted = self._shown.index(self._current)
+        # After the refresh, not during it. Focusing here looks like it works
+        # and does not: the screen settles focus onto the first focusable
+        # child once the panel is mounted, which is the filter box, and every
+        # toggle key then went into it as text — pressing "n" filtered the
+        # list to modes matching "n" instead of clearing the ticks.
+        self.call_after_refresh(ol.focus)
+
+    def _label_for(self, name: str) -> str:
+        """The name behind a tickbox, with the blurb under it as usual."""
+        extra = self._labels.get(name)
+        # Through markup_safe like every other interpolated value, and for the
+        # same reason: "[x]" is a well-formed Textual tag, so the parser ate
+        # the whole box and a ticked row rendered as a bare name with nothing
+        # in front of it. "[ ]" survived only because the space makes it
+        # invalid markup, which is why half the list looked right and the bug
+        # read as a rendering quirk rather than as unescaped markup.
+        box = markup_safe("[x]" if name in self._chosen else "[ ]")
+        mark = "▸" if name == self._current else " "
+        line = f"{mark}{box} {markup_safe(self._display.get(name, name))}"
+        if not extra:
+            return line
+        return f"{line}\n     [dim]{markup_safe(extra)}[/dim]"
+
+    def _refresh_rows(self) -> None:
+        """Redraw the ticks, holding the cursor still.
+
+        ``OptionList`` has no way to restyle one row, so the whole list is
+        rebuilt; without restoring ``highlighted`` afterwards the cursor would
+        jump to the top on every single toggle.
+        """
+        ol = self.query_one("#list", OptionList)
+        at = ol.highlighted
+        ol.clear_options()
+        if self._shown:
+            ol.add_options([self._label_for(i) for i in self._shown])
+            ol.highlighted = min(at or 0, len(self._shown) - 1)
+
+    # ── actions ──
+    def action_toggle(self) -> None:
+        name = self._selected()
+        if name is None:
+            return
+        self._chosen.symmetric_difference_update({name})
+        self._refresh_rows()
+
+    def action_all(self) -> None:
+        self._chosen = set(self._items)
+        self._refresh_rows()
+
+    def action_none(self) -> None:
+        self._chosen = set()
+        self._refresh_rows()
+
+    def action_focus_filter(self) -> None:
+        self.query_one("#filter", Input).focus()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        # No preview from here: the base class previews whatever the filter
+        # lands on, which would change the running mode as you type.
+        self._repopulate(event.value)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        # Enter in the filter goes back to the list rather than saving, so
+        # narrowing and then ticking is one continuous motion.
+        self.query_one("#list", OptionList).focus()
+
+    def on_option_list_option_selected(self, event) -> None:
+        """Enter on the focused list means save.
+
+        Needed because the list is what holds focus here. ``OptionList`` binds
+        ``enter`` to its own ``select``, and a binding on the focused widget
+        wins over one on an ancestor, so this panel's ``enter`` never ran and
+        the modal could not be closed with it at all.
+        """
+        event.stop()
+        self.action_choose()
+
+    def action_choose(self) -> None:
+        """Save. Everything ticked is the same answer as nothing restricted.
+
+        Normalised to ``[]`` in that case so the config records the intent
+        rather than a frozen snapshot of today's mode list — otherwise adding
+        a mode later, or installing a plugin, would leave it silently excluded
+        by a loadout the user thinks says "all".
+        """
+        picked = [i for i in self._items if i in self._chosen]
+        self._finish([] if len(picked) == len(self._items) else picked)
+
+    def action_cancel(self) -> None:
+        self._finish(None)
+
+    def _finish(self, value) -> None:
+        """Hand focus back before the panel goes away.
+
+        This one focuses a child of its own — the base picker leaves focus on
+        the filter box, which the screen releases on removal, but a focused
+        ``OptionList`` survives as the focused node after its panel is gone,
+        and every subsequent keystroke is delivered to a widget that is no
+        longer in the tree. The symptom is the whole app going deaf: pressing
+        ``V`` a second time did nothing at all.
+        """
+        try:
+            self.screen.set_focus(None)
+        except NoScreen:
+            pass        # constructed without being mounted, as the tests do
+        super()._finish(value)
 
 
 class ColourPicker(Picker):

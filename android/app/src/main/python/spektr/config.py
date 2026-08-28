@@ -9,7 +9,7 @@ JSON and cannot write TOML.
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
 from . import palette
@@ -94,6 +94,23 @@ class Settings:
     #: They are registered and selectable by name whatever this says; it only
     #: decides whether the interface offers them.
     fine_modes: bool = False
+    #: The modes the interface offers, or empty for "all of them".
+    #:
+    #: Spektr ships far more modes than anyone wants to sit in a shuffle
+    #: rotation, and cycling past forty of them to reach the four you like is
+    #: the whole problem this solves. Picked in the loadout modal (``V``), and
+    #: it narrows the picker, the cycle keys and shuffle alike.
+    #:
+    #: Empty is the default and means no restriction, which is what makes this
+    #: safe to add: an existing config that has never seen the modal behaves
+    #: exactly as it did. It is a *filter over* the offered modes, never a
+    #: source of them — a name in here that is quarantined, hidden or simply
+    #: gone stays out, and a loadout that survives none of that falls back to
+    #: offering everything rather than leaving the interface with nothing.
+    #:
+    #: Like :attr:`fine_modes`, this is about what is *offered*: ``--mode`` and
+    #: a saved config still select any registered mode by name.
+    loadout: list[str] = field(default_factory=list)
 
     def clamp(self) -> "Settings":
         """Force every field back into range, replacing junk with the default.
@@ -128,6 +145,20 @@ class Settings:
         self.cells = self.cells if self.cells in ("octant", "quadrant") else "octant"
         self.fine_modes = bool(self.fine_modes)
         self.chrome = bool(self.chrome)
+        # A hand-edited config can carry a string, a number, or a list with
+        # junk in it. Keep the strings, drop everything else, and de-duplicate
+        # while preserving order — the list is a set with a stable reading
+        # order, and a name repeated twice would show up twice in the modal.
+        raw = self.loadout
+        if isinstance(raw, str):        # "Bars" rather than ["Bars"]
+            raw = [raw]
+        if not isinstance(raw, (list, tuple)):
+            raw = []
+        seen: set[str] = set()
+        self.loadout = [
+            n for n in raw
+            if isinstance(n, str) and n and not (n in seen or seen.add(n))
+        ]
         # `shuffle` has been a bool and, briefly, a four-state string. Accept
         # both: a string means the scope came from the interim form, where
         # "off" was one of the scopes.

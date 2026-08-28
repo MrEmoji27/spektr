@@ -17,6 +17,7 @@ from .pickers import (
     ColourPicker,
     HelpPanel,
     HexPrompt,
+    LoadoutPicker,
     NamePrompt,
     Picker,
     Setting,
@@ -135,6 +136,9 @@ class Spektr(App):
         Binding("m,space", "cycle_mode", "Mode"),
         Binding("M", "cycle_mode(-1)", "Prev mode", show=False),
         Binding("v", "pick_mode", "Modes"),
+        # Pairs with `v`: lower picks a mode, upper picks the set `v`
+        # offers. `l`/`L` were the obvious letters and are both presets.
+        Binding("V", "pick_loadout", "Loadout"),
         Binding("t", "pick_theme", "Themes"),
         Binding("c", "settings", "Settings"),
         Binding("T", "cycle_theme", "Next theme", show=False),
@@ -293,6 +297,54 @@ class Spektr(App):
                 viz.mode_names,
                 current=viz.mode_name,
                 on_preview=viz.preview_mode,
+                labels=labels,
+                display=shown,
+            ),
+            done,
+        )
+
+    def action_pick_loadout(self) -> None:
+        """Choose which modes the interface offers at all.
+
+        Deliberately built over the *unfiltered* roster rather than
+        ``viz.mode_names``: that property is already narrowed by the loadout,
+        so feeding it back in would make the modal show only what is currently
+        ticked and there would be no way to add a mode back. Quarantined modes
+        stay out — a mode that crashes is not something to hand someone a
+        tickbox for — and the subcell variants follow ``fine_modes`` exactly as
+        they do everywhere else.
+        """
+        viz = self.viz
+        pool = mode_registry.MODES if viz.show_fine else mode_registry.listed()
+        offer = [m.name for m in pool if not viz.quarantine.is_disabled(m.name)]
+        labels = {
+            m.name: (f"·{m.plugin}" if m.is_plugin else "") for m in pool
+        }
+        shown = {m.name: mode_registry.label(m.name) for m in pool}
+
+        def done(choice: list[str] | None) -> None:
+            # None is cancel; [] is a real answer meaning "no restriction".
+            if choice is None:
+                return
+            self.settings.loadout = choice
+            self._save_settings()
+            # The running mode is left alone even when it falls outside the
+            # new loadout: yanking the picture away is a worse surprise than
+            # a mode that stays until you next move. `cycle_mode` already
+            # handles the current name being absent from the list, so the
+            # next `m` steps into the loadout on its own.
+            n = len(viz.mode_names)
+            self.notify(
+                f"loadout: all {n} modes" if not choice else
+                f"loadout: {n} mode{'s' if n != 1 else ''}",
+                timeout=2)
+
+        self._open_overlay(
+            LoadoutPicker(
+                "loadout",
+                offer,
+                chosen=self.settings.loadout,
+                current=viz.mode_name,
                 labels=labels,
                 display=shown,
             ),
@@ -782,11 +834,26 @@ class Spektr(App):
                 ("enter", "keep it"),
                 ("esc", "cancel — the previous mode or theme comes back"),
             ]),
+            # The loadout panel is the one that does not follow the rules
+            # above: it picks a set rather than one thing, so the list holds
+            # the cursor instead of a filter box and typing does not filter.
+            ("in the loadout (V)", [
+                ("space", "pick this mode in or out"),
+                ("a  n", "all, or none"),
+                ("/", "filter the list, enter to come back to it"),
+                ("enter", "save — everything picked means no restriction"),
+            ]),
             ("now", [
                 ("mode", mode_registry.label(viz.mode_name)),
                 ("theme", viz.palette.name),
                 ("source", viz.status),
                 ("modes", f"{listed} offered, {opt_in} more with subcell modes on"),
+                # What the cycle keys and shuffle will actually move through,
+                # which is the question "why is `m` only giving me four modes"
+                # — and the loadout is the answer nobody would think to look
+                # for unless the help says it is there.
+                ("loadout", (f"{len(viz.mode_names)} of them"
+                             if self.settings.loadout else "off — all of them")),
                 ("subcells", f"{self.settings.cells} — shown as {cells}"),
             ]),
             ("files", [

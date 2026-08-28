@@ -182,16 +182,36 @@ class AudioVisualizer(Widget):
 
     @property
     def mode_names(self) -> list[str]:
-        """Every mode the picker and the cycle keys offer.
+        """Every mode the picker, the cycle keys and shuffle offer.
 
         Quarantined ones are left out so cycling cannot land you back on
         something broken, and hidden ones — the subcell variants — because
         they are opt-in. Both are still registered and both still render if
         something asks for them by name, which is what ``--mode`` and a saved
         config do.
+
+        The loadout narrows what is left. It is deliberately the *last* filter
+        and a purely subtractive one: a name it lists that is quarantined,
+        hidden or no longer registered does not come back, because the loadout
+        says which of the offered modes you want, not which modes exist. An
+        empty loadout means no restriction.
+
+        This is the one place the three surfaces agree on what "available"
+        means — the picker reads it, ``cycle_mode`` reads it, and shuffle
+        reads it — so the loadout could not narrow one and miss another.
         """
         pool = mode_registry.MODES if self.show_fine else mode_registry.listed()
-        return [m.name for m in pool if not self.quarantine.is_disabled(m.name)]
+        names = [m.name for m in pool if not self.quarantine.is_disabled(m.name)]
+        chosen = set(self.settings.loadout or ())
+        if not chosen:
+            return names
+        kept = [n for n in names if n in chosen]
+        # A loadout none of whose modes survived is a loadout that would leave
+        # the interface with nothing to offer — no cycling, an empty picker,
+        # a shuffle that cannot move. That is never what the user meant, and
+        # it is reachable without them doing anything wrong: quarantine can
+        # empty a small loadout on its own. Fall back to the full list.
+        return kept or names
 
     def redraw(self) -> None:
         """Throw away the cached frame and build the next one from scratch.
