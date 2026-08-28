@@ -73,6 +73,62 @@ def _sky_lift(ctx: Ctx) -> float:
     return min(1.0, 0.55 + 0.45 * min(1.0, ctx.energy * 1.8) + 0.10 * ctx.pulse)
 
 
+def _edge_entry(rx: float, ry: float, ca, sa, dr: int, dc: int):
+    """Where a meteor enters the display, given a direction of travel.
+
+    ``(ca, sa)`` is the unit direction the meteor moves in. Walking backward
+    from the radiant ``(rx, ry)`` along ``(-ca, -sa)`` until the boundary is
+    crossed gives the edge point the meteor enters from: spawn it there and it
+    crosses the whole screen instead of blinking into existence mid-sky. This
+    is what keeps a shooting star a *crossing*, never a sudden dot in the
+    middle of the frame. Vectorised over ``ca``/``sa``; ``rx``/``ry`` are the
+    shared radiant.
+    """
+    vx, vy = -ca, -sa
+    tx = np.full_like(vx, np.inf)
+    tx[vx > 0] = (dc - 1 - rx) / vx[vx > 0]
+    tx[vx < 0] = (0.0 - rx) / vx[vx < 0]
+    ty = np.full_like(vy, np.inf)
+    ty[vy > 0] = (dr - 1 - ry) / vy[vy > 0]
+    ty[vy < 0] = (0.0 - ry) / vy[vy < 0]
+    t = np.minimum(tx, ty)
+    return rx + vx * t, ry + vy * t
+
+
+def _blur_merge(acc: np.ndarray, amount: float) -> np.ndarray:
+    """Smear the accumulated field toward its neighbours, in place.
+
+    Motion blur for a spinning sky: blend each dot toward its four
+    neighbours so bright trails lighten, widen and flow into one another.
+    ``amount`` is 0..1; at 0 the field is left exactly as it is (a slow sky
+    stays a pin-sharp set of arcs), and at 1 it becomes the local average.
+    Done with strided slices rather than a convolution so it stays a handful
+    of vectorised adds on the dot grid. Writes back into ``acc`` (the field
+    is the long-lived exposure), so the smear accumulates from frame to frame.
+
+    The quarter is not a taste knob and must not be nudged: the field is
+    fed back into itself every frame, so the kernel has to conserve energy
+    exactly. Each of the four neighbours carries ``amount / 4`` and the
+    centre keeps ``1 - amount``, which sums to one. Give the neighbours a
+    half each and the weights sum to ``1 + amount`` — a compounding gain
+    that outruns the exposure's own fade, and a single lit dot floods the
+    whole screen to full white inside ten seconds with no stars stamped
+    at all.
+    """
+    if amount <= 0.0:
+        return acc
+    w = 0.25 * amount
+    s = acc * (1.0 - amount)
+    # horizontal smear
+    s[:, 1:] += acc[:, :-1] * w
+    s[:, :-1] += acc[:, 1:] * w
+    # vertical smear
+    s[1:, :] += acc[:-1, :] * w
+    s[:-1, :] += acc[1:, :] * w
+    acc[:] = s
+    return acc
+
+
 def _sky(dr: int, dc: int) -> dict:
     rng = np.random.default_rng(19)
     n = int(np.clip(dr * dc * _STAR_DENSITY, 40, 2200))
@@ -174,7 +230,12 @@ def shooting_star(ctx: Ctx):
     ry = dr * (0.5 + 0.42 * math.sin(st["rad"] * 0.7))
 
     # ── spawning ──
-    st["acc"] += (0.10 + ctx.energy * 0.20) * ctx.dt
+    # Base rate stays low and the energy term carries the loudness, but a
+    # percussive passage that isn't necessarily loud throws more too: at
+    # equal level a busy snare-and-hat groove should cross more sky than a
+    # held pad, which is the difference between energy (how much) and drive
+    # (how attacked).
+    st["acc"] += (0.10 + ctx.energy * 0.20 + ctx.drive * 0.18) * ctx.dt
     want = int(st["acc"])
     if want:
         st["acc"] -= want
@@ -187,7 +248,12 @@ def shooting_star(ctx: Ctx):
     # harder the hit, the more fragments come away (3..6).
     beat = False
     if ctx.onsets:
-        beat = bool(rng.random() < 0.05 + 0.25 * min(1.0, ctx.onset_strength))
+        # Harder hits are likelier to break a cluster loose at all. The floor
+        # stays low so a quiet crisp hit is still often just a stray, but a
+        # full-strength hit now wins admission almost half the time rather
+        # than less than a third — which is the difference between "often
+        # throws" and "might throw" on the material that should throw hardest.
+        beat = bool(rng.random() < 0.05 + 0.42 * min(1.0, ctx.onset_strength))
 
     if want:
         free = np.flatnonzero(st["my"] < 0.0)[:want]
@@ -215,12 +281,15 @@ def shooting_star(ctx: Ctx):
             # degrees of the radiant's axis, with a few strays for variety.
             ang = aim + rng.uniform(-0.66, 0.66, k)
             sa, ca = np.sin(ang), np.cos(ang)
-            # Not from the radiant itself. A meteor only becomes visible some
-            # way out from it, and spawning them all on one dot looks like a
-            # leak rather than a shower.
-            away = rng.uniform(0.05, 0.45, k) * min(dr, dc)
-            st["my"][free] = ry + sa * away
-            st["mx"][free] = rx + ca * away
+            # Not from the radiant itself, and never from the middle of the
+            # sky: a meteor enters where its line of flight crosses the edge
+            # of the display, then crosses the whole screen. Spawning any
+            # distance out from the radiant put a meteor on screen already
+            # partway through its run, which reads as something appearing
+            # mid-frame rather than as a crossing.
+            ex, ey = _edge_entry(rx, ry, ca, sa, dr, dc)
+            st["my"][free] = ey
+            st["mx"][free] = ex
             # One draw decides how *near* a meteor is, and speed, tail length
             # and brightness all follow it. They used to be three independent
             # rolls, which happily produced slow long bright meteors — a
@@ -269,13 +338,18 @@ def shooting_star(ctx: Ctx):
             # and the group fell apart visually exactly because of it.
             depth = rng.uniform(0.75, 1.35)
             speed = (0.45 + 0.55 * hard) * dc * depth * rng.uniform(0.94, 1.06, k)
-            # Staggered along the shared line, sorted so the train runs head
-            # to tail. Sideways scatter scales with the screen: fixed dots
-            # vanish on a tablet and swamp a phone.
+            # Staggered head to tail along a train that enters at the edge.
+            # Every member's own line of flight crosses the screen boundary,
+            # so it is anchored there; the head sits at the entry point and
+            # each fragment behind it trails a little further off-screen
+            # along the shared path, so the group crosses together rather
+            # than materialising across the middle of the frame. The per-
+            # member angle jitter above already gives the train its width.
             away = np.sort(rng.uniform(0.06, 0.40, k) * min(dr, dc))
-            jitter = rng.uniform(-1.0, 1.0, k) * min(dr, dc) * 0.02
-            st["my"][free] = ry + sa * away + ca * jitter
-            st["mx"][free] = rx + ca * away - sa * jitter
+            ex, ey = _edge_entry(rx, ry, ca, sa, dr, dc)
+            trail = away[-1] - away
+            st["my"][free] = ey - sa * trail
+            st["mx"][free] = ex - ca * trail
             st["mvy"][free] = sa * speed
             st["mvx"][free] = ca * speed
             st["mlen"][free] = (9.0 + 24.0 * hard) * depth * rng.uniform(0.85, 1.15, k)
@@ -438,8 +512,26 @@ def shooting_star(ctx: Ctx):
 _CHART_DENSITY = 1.0 / 200.0
 
 #: How long a drawn edge survives, seconds, and how many live at once.
+#: The cap is sized for a busy build racing ahead of the fade, since the
+#: whole point of the change is that music visibly outruns the sky.
 _EDGE_TAU = 12.0
-_EDGE_CAP = 26
+_EDGE_CAP = 36
+
+#: Edge-drawing rate, edges per second. The base keeps a constellation on
+#: screen even in silence — a chain is forever being built, just slowly —
+#: and the energy/drive terms are what make music *speed it up*: a loud,
+#: percussive passage draws several times as fast. An onset drops an extra
+#: edge on top the moment it lands, which is the hard-hit burst.
+_CHART_BASE = 0.55
+_CHART_ENERGY = 1.1
+_CHART_DRIVE = 1.6
+#: Whole edges dropped the moment an onset lands, on top of the accumulator.
+_CHART_ONSET = 2
+
+#: Seconds over which the first edge of a new figure fades in, so the
+#: handoff from one constellation to the next is a dissolve rather than a
+#: line popping into a far corner of the sky at full brightness.
+_CHART_RAMP = 0.8
 
 
 def _chart(dr: int, dc: int) -> dict:
@@ -451,14 +543,22 @@ def _chart(dr: int, dc: int) -> dict:
         "mag": rng.uniform(0.15, 1.0, n) ** 1.6,
         "tw": np.ones(n, dtype=np.float32),
         "tw_tick": -1,
-        # Edges as [x0, y0, x1, y1, born, strength]; oldest trimmed past the
-        # cap, dead ones dropped by age. A list because it holds a few dozen
-        # tiny rows, and array bookkeeping would outgrow the data.
+        # Edges as [x0, y0, x1, y1, born, strength, ramp]; oldest trimmed
+        # past the cap, dead ones dropped by age. ``ramp`` marks the first
+        # edge of a new figure so it can fade in. A list because it holds a
+        # few dozen tiny rows, and array bookkeeping would outgrow the data.
         "edges": [],
         #: Index of the star the next edge grows from. A constellation is a
         #: *chain* — each beat extends the last figure — not independent
-        #: pairs flashing at random across the sky.
-        "tail": None,
+        #: pairs flashing at random across the sky. Seeded at creation so
+        #: the very first accumulated mark draws a line immediately rather
+        #: than spending its turn choosing a starting star.
+        "tail": int(rng.integers(0, n)),
+        #: Fraction of an edge to draw per second, accumulated across frames
+        #: so a base rate can lay edges without waiting for an onset.
+        "acc": 0.0,
+        #: True when the next edge starts a brand-new figure, so it fades in.
+        "fresh": True,
         "rng": rng,
     }
 
@@ -468,18 +568,21 @@ def _chart(dr: int, dc: int) -> dict:
 def constellations(ctx: Ctx):
     """The music as a surveyor of the sky.
 
-    Every beat connects two stars with a thin line, growing outward from
-    wherever the previous beat stopped; the figures so drawn fade over about
-    twelve seconds, so a quiet passage dissolves back into bare stars and a
-    dense one builds a web. The stars themselves never move — the thing the
-    mode accumulates is *structure*, which is what separates it from every
-    other event mode here: Shooting Star answers a hit with motion, this one
-    answers it with a mark that stays.
+    A chain of lines grows between fixed stars, one edge at a time, always
+    in progress — there is always a constellation on screen, whether or not
+    anything plays. Music is the *speed*: energy and drive multiply how fast
+    the surveyor draws, so a quiet passage builds a figure slowly and a loud
+    percussive one races through it. A landed onset adds a burst of edges on
+    the beat. The figures fade over about twelve seconds, so a long silence
+    still dissolves back toward a sparse skeleton, but never to a bare sky.
+    When a chain runs out of neighbours it restarts elsewhere, and the first
+    edge of the new figure eases in — the subtle handoff between
+    constellations rather than a line popping into a far corner.
 
-    Onset strength sets how bright the new line burns in, not whether one is
-    drawn — admission is what the cap and the fade are for. A chain that runs
-    out of neighbours restarts elsewhere rather than drawing one long jump,
-    because a line across half the sky reads as an artifact, not a figure.
+    Onset strength sets how bright the new line burns in, on top of a floor
+    that keeps the always-on figure readable. A figure that runs out of
+    neighbours restarts rather than drawing one long jump, because a line
+    across half the sky reads as an artifact, not a figure.
     """
     dr, dc = ctx.dot_rows, ctx.dot_cols
     if dr < 12 or dc < 16:
@@ -492,39 +595,69 @@ def constellations(ctx: Ctx):
     lift = _sky_lift(ctx)
     field[st["sy"], st["sx"]] = np.clip(st["mag"] * tw * lift, 0.0, 1.0)
 
-    # ── growth, one edge per beat ──
+    # ── growth ──
+    # Drawn from a continuous accumulator, not only on onset. A base rate
+    # keeps a figure building even in silence (so the sky is never bare), and
+    # energy and drive multiply it — that is what makes music speed the
+    # surveyor up. A landed onset drops an extra edge straight away, a hard
+    # burst on top of an already-fast groove. The chain rules are unchanged:
+    # every edge extends the last, and a figure that runs out of neighbours
+    # restarts elsewhere.
+    rate = (_CHART_BASE + _CHART_ENERGY * ctx.energy
+            + _CHART_DRIVE * ctx.drive) * ctx.dt
+    st["acc"] += rate
+    marks = int(st["acc"])
+    st["acc"] -= marks
     if ctx.onsets:
+        marks += _CHART_ONSET
+    if marks:
         sy, sx = st["sy"], st["sx"]
         reach = min(dr, dc) * 0.30
-        if st["tail"] is None:
-            st["tail"] = int(st["rng"].integers(0, sy.size))
-        else:
-            t = st["tail"]
-            dx = sx.astype(np.int32) - sx[t]
-            dy = sy.astype(np.int32) - sy[t]
-            near = np.flatnonzero((dx * dx + dy * dy <= reach * reach))
-            near = near[near != t]
-            if near.size:
-                k = int(st["rng"].choice(near))
-                st["edges"].append([
-                    float(sx[t]), float(sy[t]), float(sx[k]), float(sy[k]),
-                    ctx.t, float(np.clip(ctx.onset_strength, 0.0, 1.0)),
-                ])
-                st["tail"] = k
-            else:
-                # Nowhere to grow from here. Restart the chain at a random
-                # star rather than leaping: the silence between the two marks
-                # is what makes the next line read as a new figure instead
-                # of a wire strung across the chart.
+        for stamp in range(marks):
+            if st["tail"] is None:
                 st["tail"] = int(st["rng"].integers(0, sy.size))
+            else:
+                t = st["tail"]
+                dx = sx.astype(np.int32) - sx[t]
+                dy = sy.astype(np.int32) - sy[t]
+                near = np.flatnonzero((dx * dx + dy * dy <= reach * reach))
+                near = near[near != t]
+                if near.size:
+                    k = int(st["rng"].choice(near))
+                    # Strength is the onset's own, but never below a floor: a
+                    # figure drawn by the silent base rate has to read, so
+                    # only a hard hit can push a line actually brighter than
+                    # the quiet state. This is what keeps the always-on
+                    # figure from being the dimmest thing on screen.
+                    s = max(0.55, float(np.clip(ctx.onset_strength, 0.0, 1.0)))
+                    st["edges"].append([
+                        float(sx[t]), float(sy[t]), float(sx[k]), float(sy[k]),
+                        ctx.t, s, float(st["fresh"]),
+                    ])
+                    st["tail"] = k
+                    st["fresh"] = False
+                else:
+                    # Nowhere to grow from here. Restart the chain at a random
+                    # star rather than leaping: the silence between the two
+                    # marks is what makes the next line read as a new figure
+                    # instead of a wire strung across the chart. The first
+                    # edge of the new figure fades in, the subtle handoff.
+                    st["tail"] = int(st["rng"].integers(0, sy.size))
+                    st["fresh"] = True
 
     # ── fade and draw ──
     if st["edges"]:
         st["edges"] = [e for e in st["edges"] if ctx.t - e[4] < _EDGE_TAU]
         del st["edges"][:-_EDGE_CAP]
-        for x0, y0, x1, y1, born, s in st["edges"]:
+        for x0, y0, x1, y1, born, s, ramp in st["edges"]:
             age = ctx.t - born
             w = s * (1.0 - age / _EDGE_TAU) ** 1.3 * 0.85
+            # The first line of a new constellation eases in rather than
+            # appearing: the transition between figures is a dissolve. The
+            # ramp is a per-edge flag, so only the figure's opening edge
+            # brightens slowly, and only for its first moment on screen.
+            if ramp and age < _CHART_RAMP:
+                w *= age / _CHART_RAMP
             steps = int(max(abs(x1 - x0), abs(y1 - y0))) + 1
             ts = np.linspace(0.0, 1.0, steps)
             px = np.rint(x0 + (x1 - x0) * ts).astype(np.int32)
@@ -546,20 +679,73 @@ def constellations(ctx: Ctx):
     return codes, cidx
 
 
-#: Exposure persistence, seconds. The accumulated buffer *is* the picture;
-#: this tau decides how long an arc's tail stays on the film after the star
-#: has moved on. It also decides whether the mode reads as arcs at all: the
-#: angle a star sweeps while its mark survives is ``omega * tau``, and when
-#: that exceeds the gap between neighbouring stars the arcs fuse into a
-#: filled annulus — measured, not hypothetical. Tau keeps the sweep just
-#: under typical spacing, so the trails stay lines.
+#: Exposure persistence, seconds — the *ceiling*, not the value used. The
+#: accumulated buffer *is* the picture, and this tau decides how long an
+#: arc's tail stays on the film after the star has moved on.
+#:
+#: It also decides whether the mode reads as arcs at all: the angle a star
+#: sweeps while its mark survives is ``omega * tau``, and when that exceeds
+#: the gap between neighbouring stars the arcs fuse into a filled annulus —
+#: measured, not hypothetical. A fixed tau cannot hold that line, because
+#: omega is not fixed: the sidereal floor is 0.055 rad/s but drive, pulse,
+#: kick and beat together carry it past 0.6 on ordinary material, which at
+#: this tau is a 110-degree arc per star and a screen of solid white. So tau
+#: is a ceiling that :func:`star_trails` shortens as the sky speeds up —
+#: which is what a photographer does anyway: a faster subject wants a
+#: shorter shutter. See ``_TRAIL_FILL``.
 _TRAIL_TAU = 3.2
+
+#: How much of the gap between neighbouring stars an arc may fill. This is
+#: the whole invariant: the exposure is cut short so ``omega * tau`` never
+#: exceeds ``_TRAIL_FILL * gap``, whatever the music does. At 1.0 an arc may
+#: reach the next star's trail and never pass it, which is exactly the line
+#: between a sky of arcs and a filled annulus. Measured across silence,
+#: pad, groove and loud beats at several sizes: the silent sky is unchanged,
+#: and a driven one goes from 85% of the screen lit to 39%, still reading as
+#: separate curves. Lower it for a sparser sky; above ~1.4 the arcs start to
+#: touch and the picture closes up again.
+_TRAIL_FILL = 1.0
+
+#: Most sub-steps the swept arc is sampled at in one frame. A star is stamped
+#: along the arc it travelled this frame rather than at the single point it
+#: ended on, because a point stamp draws a *dashed* arc the moment the star
+#: moves more than a dot between frames — which it does at any of the lower
+#: frame rates the app offers. The cap bounds the cost on a huge terminal
+#: spun hard; past it the arc dashes again, but only in a corner of the
+#: parameter space nothing reaches in practice.
+_TRAIL_SUBSTEPS = 8
 
 #: Sidereal rate plus what percussion adds, rad/s. The base is a real sky
 #: turning — slow enough that a still track still lives — and ``drive`` is
 #: the timelapse knob: percussive material visibly spins the heavens up.
+#: Bumped so a beat-heavy groove reads as an actual acceleration rather than
+#: a gentle drift.
 _TRAIL_OMEGA = 0.055
-_TRAIL_DRIVE = 0.16
+_TRAIL_DRIVE = 0.30
+
+#: Beat-locked and per-onset spin additions, rad/s. ``pulse`` keeps the whole
+#: exposure shivering on the tempo between onsets; ``kick`` is the lurch from
+#: a single hit. ``_TRAIL_BEAT`` is the per-onset spin the sky keeps building
+#: toward — each beat nudges it up, it coasts back down.
+_TRAIL_PULSE = 0.06
+_TRAIL_BEAT = 0.06
+
+#: Motion blur, as a rate *per second*, scaled by how fast the sky is
+#: turning. This is what makes a fast spin read as speed rather than as a
+#: crisp ring: the accumulated field is smeared toward its neighbours, so
+#: trails lighten, widen and merge into a smooth glow, and because the ramp
+#: is a function of brightness, a softened field reads as *blended* colours
+#: instead of separate hard arcs. Near zero on a slow sky, so a still night
+#: stays pin-sharp.
+#:
+#: Per second, not per frame, and the distinction is the whole point. The
+#: smear is fed back into the exposure every frame, so a per-frame amount
+#: compounds with the frame rate: the same music rendered at 240 fps came
+#: out twice as dense as at 24 fps, which made the picture a property of the
+#: terminal rather than of the track. Everything else here already scales by
+#: ``ctx.dt``; this now does too.
+_TRAIL_BLUR_BASE = 0.9        # the sidereal floor's own blur, per second
+_TRAIL_BLUR_GAIN = 7.0        # extra blur per second, per rad/s above the floor
 
 #: Star count scales with the *radius* available rather than the area: what
 #: separates arcs from each other is angular spacing, and spacing comes from
@@ -568,20 +754,59 @@ _TRAIL_DRIVE = 0.16
 _TRAIL_STAR_FROM_RADIUS = True
 
 
+def _angular_gap(r: np.ndarray, th: np.ndarray) -> float:
+    """Typical angular spacing between stars that share a radius, radians.
+
+    What decides whether a long exposure reads as separate arcs is how far a
+    star can sweep before it runs into the trail of its neighbour — and only
+    a neighbour at nearly the same radius counts, because arcs a couple of
+    dots apart in ``r`` are separate lines on the dot grid however long they
+    both get. So the spacing is measured inside a shell two dots deep, and
+    the median is taken: the odd tight pair fusing is what a real sky does,
+    a fused majority is the failure. Called once per layout, so the O(n^2)
+    pass costs nothing on the frame path.
+    """
+    dr_ = np.abs(r[:, None] - r[None, :])
+    dth = np.abs(th[:, None] - th[None, :])
+    dth = np.minimum(dth, 2 * math.pi - dth)
+    shell = (dr_ < 2.0) & (dth > 1e-9)
+    dth = np.where(shell, dth, np.inf)
+    near = dth.min(axis=1)
+    near = near[np.isfinite(near)]
+    # A layout so sparse that no star shares a shell with any other cannot
+    # fuse at all, so it gets no ceiling beyond a full turn.
+    return float(np.median(near)) if near.size else 2 * math.pi
+
+
 def _exposure(dr: int, dc: int) -> dict:
     rng = np.random.default_rng(73)
-    # The celestial pole sits off-centre on purpose: centred, the trails form
-    # concentric rings around mid-screen and the picture reads as a target.
-    px = dc * 0.57
-    py = dr * 0.36
-    r_max = max(2.0, min(px, dc - 1 - px, py, dr - 1 - py) * 0.98)
-    n = int(np.clip(2 * math.pi * r_max / 14.0, 18, 240))
+    # The pole sits close to centre so the rotation reads as a wheel rather
+    # than a target. r_max is the *circumscribed* radius — the distance to the
+    # nearest corner — so the outermost stars actually reach the edges of the
+    # terminal and the trails sweep the whole screen instead of stopping at
+    # an inscribed circle that leaves the corners dark.
+    px = dc * 0.5
+    py = dr * 0.5
+    r_max = max(2.0, math.hypot(max(px, dc - 1 - px), max(py, dr - 1 - py)) * 1.02)
+    # More stars than the inscribed layout needed: the arc length a star can
+    # sweep grows with its radius, so a bigger field wants roughly one star
+    # per ten dots of rim circumference rather than fifteen, to keep the
+    # separate trails from thinning into a handful of sparse curves.
+    n = int(np.clip(2 * math.pi * r_max / 10.0, 18, 420))
+    r = rng.uniform(0.14, 1.0, n) ** 0.85 * r_max
+    th = rng.uniform(0.0, 2 * math.pi, n)
     return {
         # Inner radius above zero: stars huddling on the pole draw circles so
         # small they stack into one bright blob beside Polaris, and the pole
         # star stops reading as the still point everything else rounds.
-        "r": rng.uniform(0.14, 1.0, n) ** 0.85 * r_max,
-        "th": rng.uniform(0.0, 2 * math.pi, n),
+        "r": r,
+        "th": th,
+        # The spacing the exposure length is held against. Measured within a
+        # shell rather than across the whole disc: two stars only fuse if
+        # they share a radius, since arcs a couple of dots apart in r sweep
+        # past each other without ever touching. Computed once here — it is
+        # a property of the layout, and the layout only changes on resize.
+        "gap": _angular_gap(r, th),
         # Skewed faint, harder than the other skies: a trail photo is a
         # handful of bright arcs over many barely-there ones, and every star
         # here becomes a line rather than a dot, so the dim end has to stay
@@ -589,9 +814,20 @@ def _exposure(dr: int, dc: int) -> dict:
         "mag": rng.uniform(0.30, 1.0, n) ** 2.5,
         "pole_x": px,
         "pole_y": py,
+        # The outermost star's radius, which is the one that moves furthest
+        # per frame and so decides how finely the sweep has to be sampled.
+        "r_max": float(r.max()),
         "acc": np.zeros((dr, dc), dtype=np.float32),
         "kick": 0.0,
         "flare": 0.0,
+        #: The exposure length actually used last frame, seconds. Written
+        #: every frame by :func:`star_trails` purely so the ceiling it
+        #: enforces can be read back and checked.
+        "tau": _TRAIL_TAU,
+        #: Spin accumulated over recent onsets, rad/s. Each beat nudges it up
+        #: and it decays, so a run of hits winds the sky up and a quiet passage
+        #: lets it settle back to the sidereal floor.
+        "beat": 0.0,
         "rng": rng,
     }
 
@@ -606,14 +842,23 @@ def star_trails(ctx: Ctx):
     leaves arcs behind it the way light burns film. Nothing here is drawn as
     a shape — the streaks are simply where things have been, which is why
     the picture keeps its composure however busy the music gets: more drive
-    means longer arcs, never more clutter.
+    means longer arcs, never more clutter. The pole sits near centre and the
+    star field reaches the corners, so the trails fill the whole screen.
 
-    The spin has three parts. A sidereal floor, so the sky turns whether or
+    The spin has several parts. A sidereal floor, so the sky turns whether or
     not anything plays (a frozen night sky is a poster); ``ctx.drive`` as
-    the timelapse term; and a kick per onset that decays in about a second,
-    so a drum hit visibly lurches the heavens and lets them coast back. One
-    star does not move: the pole sits still while everything wheels round
-    it, and is the anchor that makes the rotation read as rotation.
+    the timelapse term; a beat-locked pulse shiver on the tempo; a kick per
+    onset; and a ``beat`` term that builds while the hits keep coming, so a
+    busiest stretch genuinely winds the sky up and a quiet one lets it coast
+    back. One star does not move: the pole sits still while everything wheels
+    round it, and is the anchor that makes the rotation read as rotation.
+
+    As the sky spins faster it blurs: the accumulated exposure is smeared
+    toward its neighbours in proportion to how fast it is turning, so a fast
+    arc softens and merges into a smooth glow — and because the ramp is a
+    function of brightness, the softened field reads as *blended* colours
+    flowing together rather than as separate hard streaks. A slow sky turns
+    the blur off entirely, so it stays a pin-sharp set of arcs.
     """
     dr, dc = ctx.dot_rows, ctx.dot_cols
     if dr < 12 or dc < 16:
@@ -625,23 +870,67 @@ def star_trails(ctx: Ctx):
     if ctx.onsets:
         st["kick"] = min(0.5, st["kick"] + 0.35 * float(ctx.onset_strength))
         st["flare"] = min(1.0, st["flare"] + float(ctx.onset_strength))
+        # Each hit adds a little to the standing spin, so a run of beats
+        # winds the sky up rather than each one being a transient.
+        st["beat"] = min(0.5, st["beat"] + _TRAIL_BEAT * (0.5 + ctx.drive))
     st["flare"] *= math.exp(-ctx.dt / 0.30)
     st["kick"] *= math.exp(-ctx.dt / 1.10)
+    st["beat"] *= math.exp(-ctx.dt / 1.60)
 
-    omega = _TRAIL_OMEGA + _TRAIL_DRIVE * ctx.drive + st["kick"]
-    st["th"] -= omega * ctx.dt          # the sky turns; direction is taste
+    omega = (_TRAIL_OMEGA + _TRAIL_DRIVE * ctx.drive
+             + _TRAIL_PULSE * ctx.pulse + st["kick"] + st["beat"])
+    dth = omega * ctx.dt                # the sky turns; direction is taste
+    st["th"] -= dth
 
-    acc *= math.exp(-ctx.dt / _TRAIL_TAU)
+    # Blur scales with how far the spin has left the sidereal floor: a still
+    # sky stays sharp, a fast one smears. Applied to the accumulated field so
+    # the exposure itself softens and the colours merge. The rate is per
+    # second and ``dt`` turns it into this frame's share, so the amount of
+    # smear an arc collects over its life is the same at 24 fps and at 240.
+    blur = min(1.0, (_TRAIL_BLUR_BASE + _TRAIL_BLUR_GAIN
+                     * max(0.0, omega - _TRAIL_OMEGA)) * ctx.dt)
+    acc = _blur_merge(acc, blur)
+    # The exposure is cut short in proportion to the spin, so the arc a star
+    # sweeps before its mark fades stays just inside the gap to its
+    # neighbour however fast the sky turns. Without this the mode has no
+    # ceiling at all: omega rides past 0.6 rad/s on ordinary percussive
+    # material, every star draws a 110-degree arc, and the exposure fuses
+    # into the filled annulus the whole design exists to avoid.
+    tau = min(_TRAIL_TAU, _TRAIL_FILL * st["gap"] / max(omega, 1e-6))
+    st["tau"] = tau                     # kept so the ceiling is observable
+    acc *= math.exp(-ctx.dt / tau)
+    # The smear averages neighbours, so a bright dot can momentarily read
+    # above 1.0; clip it so the ramp always gets a well-defined 0..1 norm and
+    # no NaN/inf survives into the colour lookup.
+    np.clip(acc, 0.0, 1.0, out=acc)
     lift = _sky_lift(ctx)
-    cx = st["pole_x"] + st["r"] * np.cos(st["th"])
-    cy = st["pole_y"] + st["r"] * np.sin(st["th"])
-    px = np.rint(cx).astype(np.int32)
-    py = np.rint(cy).astype(np.int32)
+
+    # Stamp the arc the star swept this frame, not the point it stopped on.
+    # A single point per frame is only continuous while a star moves less
+    # than a dot between frames; at 24 fps the rim stars move two or three,
+    # and the exposure records a dotted line instead of a trail. Sampling
+    # the sweep finely enough that consecutive marks touch makes the picture
+    # a property of the music rather than of the frame rate — at 24 fps the
+    # sky was a third emptier than the same passage at 240.
+    nsub = int(np.clip(math.ceil(dth * st["r_max"]), 1, _TRAIL_SUBSTEPS))
+    # Each frame covers its own sweep down to, but not including, where the
+    # next frame starts, so the marks tile the arc without doubling up.
+    steps = 1.0 - np.arange(nsub, dtype=np.float32) / nsub
+    th = st["th"][None, :] + dth * steps[:, None]
+    cx = st["pole_x"] + st["r"][None, :] * np.cos(th)
+    cy = st["pole_y"] + st["r"][None, :] * np.sin(th)
+    px = np.rint(cx).astype(np.int32).ravel()
+    py = np.rint(cy).astype(np.int32).ravel()
+    val = np.broadcast_to(
+        st["mag"] * (0.60 + 0.40 * lift) + 0.25 * st["flare"] * st["mag"],
+        (nsub, st["mag"].size)).ravel()
     ok = (py >= 0) & (py < dr) & (px >= 0) & (px < dc)
     if ok.any():
-        val = st["mag"][ok] * (0.60 + 0.40 * lift) + 0.25 * st["flare"] * st["mag"][ok]
-        sel = (py[ok], px[ok])
-        acc[sel] = np.maximum(acc[sel], np.clip(val, 0.0, 1.0))
+        # ``maximum.at`` rather than ``acc[sel] = maximum(...)``: the sweep
+        # puts several marks on one dot routinely, and plain fancy-index
+        # assignment resolves a repeated index by last-write-wins, so a
+        # bright star could be overwritten by a faint one landing after it.
+        np.maximum.at(acc, (py[ok], px[ok]), np.clip(val[ok], 0.0, 1.0))
 
     # Polaris. Not subject to the fade: it is stamped onto the picture, not
     # exposed onto it, and its stillness is the reference everything else
@@ -672,8 +961,10 @@ _NOVA_LIFE_S = 18.0
 
 #: A nova fires on a hard onset — but only sometimes, and only when the sky
 #: is clear. Rarity is the entire effect: a supernova every bar is fireworks.
-_NOVA_STRENGTH = 0.72
-_NOVA_ODDS = 0.65
+#: The threshold and draw are tuned so the hardest hits land a catastrophe
+#: noticeably more often than the bare floor, without becoming predictable.
+_NOVA_STRENGTH = 0.66
+_NOVA_ODDS = 0.75
 
 
 def _night(dr: int, dc: int) -> dict:
@@ -772,7 +1063,13 @@ def supernova(ctx: Ctx):
                 "gate": noise((dr, dc), int(ctx.t * 1000.0) & 0xFFFF) < 0.72,
             }
             st["ev"] = ev
-            st["next"] = ctx.t + st["rng"].uniform(9.0, 20.0) * (1.25 - ctx.drive)
+            # A busy passage invites the next event sooner: drive (attack)
+            # shortens the idle, and a tempo-locked pulse does too, so a
+            # groove that keeps landing beats fires more often than a held
+            # drone without ever coming close to a fixed bar. Floor kept at
+            # 0.20 so even the busiest stretch stays a wait, not a metronome.
+            st["next"] = ctx.t + st["rng"].uniform(9.0, 20.0) \
+                * max(0.20, 1.35 - ctx.drive - 0.35 * ctx.pulse)
 
     # ── the event ──
     if ev is not None:

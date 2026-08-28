@@ -227,9 +227,17 @@ def _maelstrom(ctx: Ctx, octant: bool):
     # ── 5. project — enforce incompressibility ──
     vy, vx = _project(vy, vx, iters=16)
 
-    vy *= 0.995
-    vx *= 0.995
-    dye *= 0.997
+    # Dissipation is per *second* too, for the same reason the emission above
+    # is: a bare per-frame multiply is a rate in disguise, and this one was
+    # left behind when the forcing terms were converted. At 24 fps the dye
+    # kept 0.997**24 = 93% of itself each second where at 240 fps it kept
+    # 0.997**240 = 49%, so the smoke lingered nearly twice as long on a slow
+    # display — 82% of the screen lit at 24 fps against 40% at 240, on the
+    # same music. Raising to ``emit`` leaves the tuned 60 fps look untouched
+    # and makes every other rate match it.
+    vy *= 0.995 ** emit
+    vx *= 0.995 ** emit
+    dye *= 0.997 ** emit
     np.clip(dye, 0.0, 1.0, out=dye)
 
     st["vy"], st["vx"], st["dye"] = vy, vx, dye
