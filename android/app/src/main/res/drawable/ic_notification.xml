@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Equalizer bars, the same shape as the launcher icon. -->
+<!-- The same prompt mark as the launcher icon. A status-bar icon is tinted by
+     the system and drawn small, so it is the silhouette only — no gradients,
+     no field — and it fills its box rather than sitting in an adaptive icon's
+     safe circle. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
@@ -7,5 +10,5 @@
     android:viewportHeight="24">
     <path
         android:fillColor="#FFFFFFFF"
-        android:pathData="M3,8h2v8H3z M7,4h2v16H7z M11,6h2v12h-2z M15,10h2v4h-2z M19,5h2v14h-2z" />
+        android:pathData="M1.00,4.17h4.33v1.08h-4.33z M2.22,5.55h4.49v1.08h-4.49z M3.44,6.93h4.57v1.08h-4.57z M4.65,8.31h4.57v1.08h-4.57z M5.87,9.79h4.55v1.08h-4.55z M6.87,11.36h4.41v1.08h-4.41z M5.87,12.88h4.55v1.08h-4.55z M4.65,14.42h4.52v1.08h-4.52z M3.44,15.91h4.52v1.08h-4.52z M2.24,17.29h4.60v1.08h-4.60z M1.00,18.67h4.33v1.08h-4.33z M13.61,18.67h9.39v1.08h-9.39z" />
 </vector>

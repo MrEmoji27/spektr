@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The logo reduced to flat shapes: a prompt caret and its cursor, drawn as
+     the spectrum bars they are made of. Generated geometry, hand-kept — see
+     packaging/make_icon.py for where the numbers come from. The adaptive
+     icon's monochrome layer is tinted by the launcher, so this carries no
+     colour of its own and is laid out on the 108-unit adaptive canvas. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M27.00,34.77h10.63v2.66h-10.63z M29.99,38.16h11.03v2.66h-11.03z M32.98,41.55h11.23v2.66h-11.23z M35.97,44.93h11.23v2.66h-11.23z M38.96,48.59h11.16v2.66h-11.16z M41.41,52.44h10.83v2.66h-10.83z M38.96,56.16h11.16v2.66h-11.16z M35.97,59.94h11.09v2.66h-11.09z M32.98,63.60h11.09v2.66h-11.09z M30.06,66.99h11.29v2.66h-11.29z M27.00,70.37h10.63v2.66h-10.63z M57.95,70.37h23.05v2.66h-23.05z" />
+</vector>
