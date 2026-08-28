@@ -38,6 +38,29 @@ def _aspect(w: int, h: int) -> float:
     return w / max(1, h)
 
 
+def _soft(field: np.ndarray, knee: float = 0.18) -> np.ndarray:
+    """Fold a field into 0..1 without ever landing flat on either end.
+
+    ``np.clip`` was what these modes used, and on a flat picture it is
+    invisible. Under the terrain view it is not: a clipped region is a plateau
+    with a crease around it, and — worse — a trough clipped to exactly 0.0 is
+    indistinguishable from a pixel the mode never drew. Swell at any real
+    listening level spent most of its surface pinned at one end or the other,
+    and the sea came out with holes in it.
+
+    So the outer ``knee`` of the range is exponential instead of a wall. The
+    middle is untouched and keeps its contrast; past the knee the curve eases
+    over and approaches the limit without ever arriving, for any input however
+    far outside. It matches value and slope at the join, so no crease appears
+    where the two halves meet.
+    """
+    k = np.float32(knee)
+    out = np.asarray(field, dtype=np.float32)
+    out = np.where(out < k, k * np.exp((out - k) / k), out)
+    out = np.where(out > 1.0 - k, 1.0 - k * np.exp((1.0 - k - out) / k), out)
+    return out.astype(np.float32)
+
+
 # ── Swell ────────────────────────────────────────────────────────────────────
 #
 # An ocean surface: three travelling swells whose character comes from the
@@ -101,11 +124,15 @@ def swell(ctx: Ctx):
     # Wavelengths and speeds are fixed; amplitudes come from the music. The
     # phases drift at different rates so the interference pattern never
     # repeats visibly.
-    swell_long = (0.30 + bass * 0.55) * np.sin(
+    # The three amplitudes are a budget, not three free choices: they sum,
+    # and the sum is the excursion either side of the waterline. At the old
+    # figures three crests in phase reached 1.48 — three times the room there
+    # is — so the surface lived at its limits and the mode read as terraces.
+    swell_long = (0.16 + bass * 0.28) * np.sin(
         st["xs"] * 2.1 - st["ys"] * 1.1 + t * 0.9)
-    swell_mid = (0.10 + mid * 0.30) * np.sin(
+    swell_mid = (0.05 + mid * 0.15) * np.sin(
         st["xs"] * 4.7 + st["ys"] * 2.9 - t * 1.7 + 1.3)
-    chop = (0.05 + mid * 0.18) * np.sin(
+    chop = (0.025 + mid * 0.09) * np.sin(
         st["xs"] * 9.3 - st["ys"] * 5.1 + t * 2.9 + 0.5)
     field = 0.5 + swell_long + swell_mid + chop
 
@@ -116,7 +143,7 @@ def swell(ctx: Ctx):
         st["cx"][slot] = rng.uniform(-0.8, 0.8)
         st["cy"][slot] = rng.uniform(-0.7, 0.7)
         st["born"][slot] = t
-        st["power"][slot] = 0.35 + 0.55 * hard
+        st["power"][slot] = 0.16 + 0.26 * hard
 
     alive = (t - st["born"]) < _SWELL_RIPPLE_LIFE
     if alive.any():
@@ -130,7 +157,7 @@ def swell(ctx: Ctx):
         fade = np.exp(-age[:, None, None] * 1.6) * st["power"][alive][:, None, None]
         field += np.sum(band * ring * fade, axis=0)
 
-    np.clip(field, 0.0, 1.0, out=field)
+    field = _soft(field)
 
     # One ramp call over the whole field — the contract this family exists
     # for. Top and bottom halves take their colours from the same array.
@@ -254,7 +281,7 @@ def terra(ctx: Ctx):
         erode = np.exp(-np.maximum(age[:, None, None] - 1.2, 0.0) * 0.55)  # …erode slow
         field += np.sum(hill * grow * erode * st["power"][alive][:, None, None], axis=0)
 
-    np.clip(field, 0.0, 1.0, out=field)
+    field = _soft(field)
 
     ramped = ctx.ramp(field)
     codes = np.full((h, w), 0x2580, dtype=np.int32)

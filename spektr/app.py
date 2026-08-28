@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import atexit
 import random
 import sys
 
@@ -229,6 +230,17 @@ class Spektr(App):
     def on_unmount(self) -> None:
         config.save(self.settings, config_dir=self._config_dir)
 
+    def _save_settings(self) -> None:
+        """Persist the current settings immediately.
+
+        Called after a mode or theme is committed (and after the settings
+        panel closes), so a preference survives even an abrupt exit that never
+        reaches :meth:`on_unmount`. The unmount save and the atexit handler
+        remain as backstops; this is the one that makes the commit itself
+        durable rather than pending.
+        """
+        config.save(self.settings, config_dir=self._config_dir)
+
     # ── overlay panels ────────────────────────────────────────────────────────
     # The pickers/settings are docked overlay widgets on the *same* screen as
     # the visualiser (see layers in the CSS), so the bands stay visible and
@@ -265,6 +277,7 @@ class Spektr(App):
 
     def action_cycle_mode(self, step: int = 1) -> None:
         self.notify(f"mode — {self.viz.cycle_mode(step)}", timeout=1)
+        self._save_settings()
 
     def action_pick_mode(self) -> None:
         viz = self.viz
@@ -291,6 +304,7 @@ class Spektr(App):
             else:
                 viz.set_mode(choice)
                 viz.commit_mode()
+                self._save_settings()
 
         self._open_overlay(
             Picker(
@@ -315,6 +329,7 @@ class Spektr(App):
             else:
                 viz.apply_theme(choice)
                 viz.commit_theme()
+                self._save_settings()
                 self.notify(f"theme — {viz.palette.note}", timeout=2)
 
         self._open_overlay(
@@ -329,6 +344,7 @@ class Spektr(App):
 
     def action_cycle_theme(self) -> None:
         self.notify(f"theme — {self.viz.cycle_theme()}", timeout=2)
+        self._save_settings()
 
     def action_new_theme(self) -> None:
         """Live theme editor, starting from whatever is on screen.
@@ -534,9 +550,11 @@ class Spektr(App):
         """
         if scope in config.SHUFFLE_SCOPES:
             self.settings.shuffle_scope = scope
+            self._save_settings()
 
     def action_toggle_shuffle(self) -> None:
         self.settings.shuffle = not self.settings.shuffle
+        self._save_settings()
         if self.settings.shuffle:
             self._start_shuffle()
             self.notify(f"shuffle on — {self.settings.shuffle_scope}", timeout=2)
@@ -892,7 +910,7 @@ class Spektr(App):
         seeing the current value is half of knowing which way to nudge it.
         """
         rows, values = self._settings_rows(self.viz, self.settings)
-        self._open_overlay(SettingsPanel(rows, values), lambda *a: None)
+        self._open_overlay(SettingsPanel(rows, values), self._save_settings)
 
     def _settings_rows(self, viz, s) -> "tuple[list[Setting], dict]":
         """Build the panel's rows and the values they open on.
@@ -955,7 +973,15 @@ class Spektr(App):
                 config.BAND_CHOICES,
                 show_bands,
                 viz.set_bands,
-                "above 32 the analyser resolves more, below it modes draw fewer",
+                "more bars, more detail",
+            ),
+            Setting(
+                "motion",
+                "motion",
+                config.MOTION_CHOICES,
+                lambda v: v,
+                viz.set_motion,
+                "reactive or smooth movement",
             ),
             Setting(
                 "sensitivity",
@@ -963,7 +989,7 @@ class Spektr(App):
                 (0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0),
                 lambda v: f"x{v:g}",
                 viz.set_sensitivity,
-                "trim on top of the automatic gain",
+                "scales the input",
             ),
             Setting(
                 "gate",
@@ -971,7 +997,7 @@ class Spektr(App):
                 (1e-5, 3e-5, 8e-5, 2e-4, 5e-4, 1e-3),
                 lambda v: f"{v:.0e}",
                 viz.set_gate,
-                "below this, input counts as silence",
+                "quieter than this is silence",
             ),
             Setting(
                 "shuffle_scope",
@@ -979,8 +1005,7 @@ class Spektr(App):
                 config.SHUFFLE_SCOPES,
                 show_shuffle,
                 self._set_shuffle_scope,
-                f"press s to start it — a new pick every {int(SHUFFLE_MODE_SECONDS)}s; "
-                f"with both, the theme changes every {SHUFFLE_THEME_EVERY}rd one",
+                f"cycles modes/themes every {int(SHUFFLE_MODE_SECONDS)}s",
             ),
             Setting(
                 "chrome",
@@ -996,8 +1021,7 @@ class Spektr(App):
                 (False, True),
                 lambda v: "shown" if v else "hidden",
                 self._set_fine_modes,
-                "the (o)/(q) variants — a cell split into pieces, so an edge "
-                "lands inside it; (o) needs Unicode 16, (q) works anywhere",
+                "higher-resolution variants",
             ),
             Setting(
                 "cells",
@@ -1005,8 +1029,7 @@ class Spektr(App):
                 ("octant", "quadrant"),
                 lambda v: v,
                 self._set_cells,
-                "octants are 2x4 per cell and need Unicode 16; quadrants are "
-                "2x2 and work in any font — see spektr --glyph-test",
+                "rounder vs blockier edges",
             ),
             # An action row, not a value. It lives here because the editor is
             # otherwise only reachable from a keybinding nobody has been told
@@ -1023,7 +1046,7 @@ class Spektr(App):
                 step=lambda delta: (
                     self.call_after_refresh(self.action_new_theme) if delta > 0 else None
                 ),
-                note="four colours, applied live; unlock all six inside",
+                note="tweak four colours live",
             ),
             # No fixed choices to step through and nothing to read out of
             # values — the audio source is whatever the capture thread
@@ -1039,7 +1062,7 @@ class Spektr(App):
                 [],
                 live=lambda: viz.status,
                 step=lambda delta: viz.restart_capture() if delta > 0 else viz.reset_capture(),
-                note="→ next candidate · ← back to the system default",
+                note="→ next device · ← default",
             ),
         ]
         values = {
@@ -1052,6 +1075,7 @@ class Spektr(App):
             # for even while the pacer is throttling.
             "fps": s.fps,
             "bands": s.bands,
+            "motion": s.motion,
             "fine_modes": s.fine_modes,
             "cells": s.cells,
             "sensitivity": s.sensitivity,
@@ -1071,6 +1095,7 @@ class Spektr(App):
         for w in (self.query_one(Header), self.query_one(Footer)):
             w.display = visible
         self.settings.chrome = visible
+        self._save_settings()
 
     def action_toggle_chrome(self) -> None:
         self._set_chrome(not self.settings.chrome)
@@ -1089,6 +1114,7 @@ class Spektr(App):
         """
         self.settings.fine_modes = bool(on)
         self.viz.show_fine = bool(on)
+        self._save_settings()
 
     def _set_cells(self, shape: str) -> None:
         """Switch every subcell mode between octant and quadrant geometry."""
@@ -1097,6 +1123,7 @@ class Spektr(App):
         set_cell_mode(shape)
         self.settings.cells = shape
         self.viz.redraw()
+        self._save_settings()
 
 
 # ── cli ──────────────────────────────────────────────────────────────────────
@@ -1403,11 +1430,19 @@ def main() -> None:
                 raise SystemExit(2) from None
     settings.clamp()
 
-    Spektr(
+    app = Spektr(
         device=_arg(argv, "--device", int),
         settings=settings,
         allow_mic="--mic" in argv,
-    ).run()
+    )
+    # Flush the session's settings at interpreter exit as well as on a clean
+    # unmount. Closing the terminal or Ctrl+C can skip Textual's teardown on
+    # some platforms, and a preference that only commits on a well-behaved quit
+    # resets on every exit path people actually use. atexit fires on normal
+    # shutdown and on KeyboardInterrupt; it is registered here, not in the
+    # class, so a test constructing a Spektr never writes the real config.
+    atexit.register(config.save, app.settings, app._config_dir)
+    app.run()
 
 
 if __name__ == "__main__":

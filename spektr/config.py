@@ -18,6 +18,17 @@ from . import palette
 #: which is what every mode did unconditionally before this was settable.
 BAND_CHOICES = (0, 8, 12, 16, 24, 32, 48, 64)
 
+#: Motion profiles offered in the settings panel, as ``Spring`` parameter sets
+#: (see :data:`spektr.motion.PROFILES`). ``snappy`` is the default the easing
+#: was tuned for; ``glide`` is the slower, cava-like character — a lazy rise,
+#: a long fall, and energy leaning into neighbouring bars. The names are
+#: stored verbatim in the config file, so renaming one would silently reset
+#: everyone who picked it.
+MOTION_CHOICES = ("snappy", "glide")
+
+#: What an unknown or missing ``motion`` value falls back to.
+MOTION_DEFAULT = "snappy"
+
 #: ``fps`` value meaning "run as fast as the display can show". Stored as the
 #: sentinel rather than as a resolved number so the preference survives moving
 #: the terminal to a different monitor: what was saved is the *intent*.
@@ -59,6 +70,13 @@ class Settings:
     #: rather than interpolating, which is why it lives here and not in the
     #: widget.
     bands: int = 16
+    #: Which personality the bars move with — one of
+    #: :data:`MOTION_CHOICES`. Purely a display-feel switch: the analysis,
+    #: the band plan and the onset detector are untouched by it, so toggling
+    #: it can never change what is *measured*, only how the measurement is
+    #: animated. Applied live from the settings panel via
+    #: ``AudioVisualizer.set_motion``.
+    motion: str = MOTION_DEFAULT
     #: Screensaver-style auto-cycling of mode and theme. Remembered across
     #: restarts like everything else here — if you left it on, you wanted it
     #: on, not a surprise burst of quiet the next time you open a terminal.
@@ -143,6 +161,10 @@ class Settings:
         self.mode = self.mode if isinstance(self.mode, str) and self.mode else "Bars"
         self.theme = self.theme if isinstance(self.theme, str) and self.theme else "classic"
         self.cells = self.cells if self.cells in ("octant", "quadrant") else "octant"
+        # Not `in MOTION_CHOICES` alone: an old hand-edited config carrying a
+        # renamed profile should fall back rather than be rejected wholesale,
+        # same policy as mode/theme above.
+        self.motion = self.motion if self.motion in MOTION_CHOICES else MOTION_DEFAULT
         self.fine_modes = bool(self.fine_modes)
         self.chrome = bool(self.chrome)
         # A hand-edited config can carry a string, a number, or a list with

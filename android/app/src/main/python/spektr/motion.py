@@ -24,6 +24,39 @@ import numpy as np
 #: Integration step. Longer frames are split into several of these.
 _MAX_STEP = 1.0 / 90.0
 
+#: Motion personalities, as keyword arguments for :class:`Spring`.
+#:
+#: Both are expressed in seconds and damping ratios, so neither depends on
+#: the frame rate — deliberately *not* cava's gravity/integral filters, which
+#: are framerate-dependent by construction (``framerate_mod = 66/framerate``).
+#: The point of ``glide`` is to reproduce cava's *feel* — the lazy,
+#: centre-weighted look — without importing the bug that motivated this
+#: module in the first place.
+PROFILES = {
+    # The tuning everything else was calibrated against. Kept as written
+    # parameters rather than a bare constructor call so a profile is one
+    # table entry, not a branch somewhere in the widget.
+    "snappy": dict(attack=0.09, release=0.30, attack_zeta=0.85, release_zeta=1.0),
+    # Slower to rise (a kick swells rather than snaps), overdamped on the
+    # fall so bars sink without overshoot, and paired with the pre-blend and
+    # neighbour spread below — between them the transients get rounded off
+    # and the sustained middle of the spectrum accumulates height, which is
+    # exactly why cava reads as busier in the centre.
+    "glide": dict(attack=0.24, release=0.75, attack_zeta=0.95, release_zeta=1.05),
+}
+
+#: Temporal pre-blend applied to band targets in the ``glide`` profile, in
+#: seconds. This is cava's noise-reduction smoothing done dt-correctly: the
+#: raw spectrum is exponential-blended toward the spring's target before the
+#: spring sees it, so a one-frame transient arrives already softened.
+GLIDE_BLEND_TAU = 0.06
+
+#: Spatial neighbour decay for the ``glide`` profile — cava's monstercat
+#: filter. Each bar's level leaks to its neighbours multiplied by this per
+#: cell of distance, taken as a maximum, so a hot band fattens the ones
+#: beside it instead of standing alone.
+GLIDE_SPREAD_DECAY = 0.62
+
 
 class Spring:
     """A vector of critically-ish damped springs.
@@ -75,6 +108,24 @@ class Spring:
         self.v[(self.x >= 1.0) & (self.v > 0.0)] = 0.0
         return self.x
 
+    def retune(
+        self,
+        attack: float,
+        release: float,
+        attack_zeta: float = 0.85,
+        release_zeta: float = 1.0,
+    ) -> None:
+        """Swap the spring's constants live — how a motion profile is applied.
+
+        Position and velocity are kept: retuning mid-song eases from wherever
+        the bars are now rather than teleporting them, which is the difference
+        between changing character and resetting the picture.
+        """
+        self._wa = 5.0 / max(1e-3, attack)
+        self._wr = 5.0 / max(1e-3, release)
+        self._za = attack_zeta
+        self._zr = release_zeta
+
 
 class Peaks:
     """Peak markers with hold and fall measured in seconds."""
@@ -103,6 +154,33 @@ class Peaks:
             values[falling], self.value[falling] - self._fall * dt
         )
         return self.value
+
+
+def spread(values: np.ndarray, decay: float = GLIDE_SPREAD_DECAY) -> np.ndarray:
+    """Cava's monstercat filter: a hot bar fattens its neighbours.
+
+    Each level leaks outward multiplied by ``decay`` per cell of distance,
+    taken as a maximum with what was already there, so spreading can only
+    ever raise a bar and a flat field is unchanged. Two passes — one per
+    direction — because the leak has to carry through intermediate bars to
+    reach the far side of a group.
+
+    A plain Python loop over at most N_BANDS elements, deliberately: the two
+    passes are sequential by nature (each bar reads the already-updated one
+    beside it), and that is exactly the dependency a vectorised maximum would
+    silently get wrong at the boundary.
+    """
+    out = np.array(values, dtype=np.float64, copy=True)
+    n = out.shape[0]
+    for i in range(1, n):
+        leaked = out[i - 1] * decay
+        if leaked > out[i]:
+            out[i] = leaked
+    for i in range(n - 2, -1, -1):
+        leaked = out[i + 1] * decay
+        if leaked > out[i]:
+            out[i] = leaked
+    return out
 
 
 class Trace:

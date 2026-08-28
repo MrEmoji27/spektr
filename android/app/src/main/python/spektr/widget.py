@@ -22,9 +22,22 @@ from . import display as display_probe
 from . import modes as mode_registry
 from .analysis import ANALYSES_PER_SEC, N_BANDS, Analyser
 from .capture import Capture
-from .config import FPS_MAX, FPS_UNLIMITED, Settings
+from .config import (
+    FPS_MAX,
+    FPS_UNLIMITED,
+    MOTION_CHOICES,
+    MOTION_DEFAULT,
+    Settings,
+)
 from .modes import Ctx
-from .motion import Peaks, Spring, Trace
+from .motion import (
+    GLIDE_BLEND_TAU,
+    PROFILES,
+    Peaks,
+    Spring,
+    Trace,
+    spread,
+)
 from .palette import AUTO, RAMP_STEPS, Palette, all_themes, theme_from_textual
 from .plugins import BadModeOutput, Quarantine, validate
 from .render import SPACE, make_strips
@@ -85,11 +98,30 @@ class AudioVisualizer(Widget):
         self._themes = all_themes(self._config_dir)
         self._theme_name = self.settings.theme
 
-        self._spring = Spring(N_BANDS)
-        self._stereo_l = Spring(N_BANDS)
-        self._stereo_r = Spring(N_BANDS)
+        #: Which motion personality the bars move with — ``snappy`` (the
+        #: default tuning) or ``glide`` (the slower, cava-like feel). The
+        #: setting is validated here rather than trusted, because a config
+        #: written by a newer or older build may carry a profile this one
+        #: does not know; falling back keeps the widget constructible.
+        self._motion = (
+            self.settings.motion
+            if self.settings.motion in MOTION_CHOICES
+            else MOTION_DEFAULT
+        )
+        # Write the settled name back, so an unclamped Settings handed straight
+        # to the constructor still saves a value the next build will accept —
+        # the same write-back analyser.sensitivity gets two lines above.
+        self.settings.motion = self._motion
+        self._spring, self._stereo_l, self._stereo_r = self._new_springs(N_BANDS)
         self._peaks = Peaks(N_BANDS)
         self._trace = Trace(tau=0.028)
+        # Temporal pre-blends for the glide profile — cava's noise-reduction
+        # analogue, one per spring so stereo stays independent. Idle (value
+        # None) while snappy is selected, and re-seeded from live audio on
+        # the first glide frame, so switching profiles never replays history.
+        self._band_blend = Trace(tau=GLIDE_BLEND_TAU)
+        self._stereo_l_blend = Trace(tau=GLIDE_BLEND_TAU)
+        self._stereo_r_blend = Trace(tau=GLIDE_BLEND_TAU)
 
         self._mode_state: dict[str, dict] = {}
         self._strips: list[Strip] | None = None
@@ -401,6 +433,32 @@ class AudioVisualizer(Widget):
         self.settings.gate = v
         return v
 
+    def set_motion(self, name: str) -> str:
+        """Switch the motion profile, live — the settings panel's motion row.
+
+        Returns what was taken (the clamped name), so a row can show the
+        settled value rather than the ask. The springs are retuned in place
+        rather than replaced: position and velocity survive, so toggling
+        mid-song eases into the new character instead of resetting the bars.
+        The glide pre-blends are dropped, not carried — a blend accumulated
+        under one profile is history the other profile never saw.
+        """
+        name = str(name)
+        if name not in PROFILES:
+            return self._motion
+        self.settings.motion = name
+        if name != self._motion:
+            self._motion = name
+            for spring in (self._spring, self._stereo_l, self._stereo_r):
+                spring.retune(**PROFILES[name])
+            for blend in (self._band_blend, self._stereo_l_blend, self._stereo_r_blend):
+                blend.value = None
+            # The picture is about to move differently; a cached frame built
+            # under the old profile is stale by definition.
+            self._strips = None
+            self.refresh()
+        return name
+
     def restart_capture(self) -> None:
         self.capture.next_source()
 
@@ -409,16 +467,27 @@ class AudioVisualizer(Widget):
 
     # ── frame loop ───────────────────────────────────────────────────────────
 
+    def _new_springs(self, n: int) -> tuple[Spring, Spring, Spring]:
+        """Three springs tuned to the current motion profile.
+
+        One factory rather than three call sites, so a profile change can
+        never leave the main spring and the stereo pair disagreeing about
+        what character they are in.
+        """
+        params = PROFILES[self._motion]
+        return Spring(n, **params), Spring(n, **params), Spring(n, **params)
+
     def _resize_bands(self, n: int) -> None:
         """Rebuild the smoothing state for a new band count.
 
         Silent frames carry the same length as live ones, so this only runs
         when the setting actually changes — not every time the music pauses.
         """
-        self._spring = Spring(n)
-        self._stereo_l = Spring(n)
-        self._stereo_r = Spring(n)
+        self._spring, self._stereo_l, self._stereo_r = self._new_springs(n)
         self._peaks = Peaks(n)
+        # The blends re-seed themselves from live audio on their next step
+        # (Trace treats a shape change as a fresh start), which is the right
+        # behaviour here too: a resized blend has no honest past.
         self._mode_state.clear()  # cached geometry is sized for the old count
         self._strips = None
 
@@ -490,10 +559,23 @@ class AudioVisualizer(Widget):
         if len(frame.bands) != len(self._spring.x):
             self._resize_bands(len(frame.bands))
 
-        self._spring.step(frame.bands, dt)
+        # Motion profile: glide conditions the targets before the springs see
+        # them — temporal pre-blend first (cava's noise-reduction analogue),
+        # then the neighbour spread (its monstercat analogue) — so transients
+        # arrive softened and energy leans outward from hot bands. snappy,
+        # the default, feeds the raw spectrum straight through; the branch is
+        # per frame but costs one attribute compare.
+        if self._motion == "glide":
+            bands_t = spread(self._band_blend.step(frame.bands, dt))
+            bands_l_t = spread(self._stereo_l_blend.step(frame.bands_l, dt))
+            bands_r_t = spread(self._stereo_r_blend.step(frame.bands_r, dt))
+        else:
+            bands_t, bands_l_t, bands_r_t = frame.bands, frame.bands_l, frame.bands_r
+
+        self._spring.step(bands_t, dt)
         self._peaks.step(self._spring.x, dt)
-        self._stereo_l.step(frame.bands_l, dt)
-        self._stereo_r.step(frame.bands_r, dt)
+        self._stereo_l.step(bands_l_t, dt)
+        self._stereo_r.step(bands_r_t, dt)
         if frame.seq != self._last_seq:
             self._trace.step(frame.wave, dt)
             self._last_seq = frame.seq
