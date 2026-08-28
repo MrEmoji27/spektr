@@ -9,6 +9,115 @@ line because it moves at its own pace, and ships inside a spektr release: the
 APK carries the release's version number, and the heading below says which
 port version that is.
 
+## spektr 0.4.5
+
+Five new modes, a new mark, and a change to how you get at the modes at all:
+`l` now picks which of them the app offers you, because fifty-seven is more
+than anyone wants to cycle through to reach their four.
+
+### A new logo
+
+spektr has a proper mark, drawn by **Roshan (RRDOJ)**. It is a terminal
+prompt — `>` over `_` — built out of spectrum bars, with the gradient running
+cyan through violet to red the way the frequency range does. The old icon was
+the Bars mode in a rounded square, which said "audio meter" and nothing about
+where it runs; this one says both halves of what spektr is in one shape.
+
+It ships everywhere the old one did and in a few places it did not: the
+README, the Windows `.ico`, and a full Android adaptive icon set — every
+density, plus the monochrome layer Android 13 themes the launcher with.
+`packaging/make_icon.py` was rewritten to generate them from the one source.
+
+### Loadouts replace presets
+
+`l` now opens a loadout: a checklist of every mode, where what you pick is
+what `v`, `m` and shuffle will offer you from then on. Spektr ships fifty-odd
+modes and nobody wants all of them in one rotation — cycling past the
+forty-six you did not want to reach the four you did was the whole problem.
+Picking everything is the same as picking nothing, so it does nothing until
+you narrow it, and an existing config is unaffected.
+
+Press `s` in that panel to name what you have picked and keep it. Saved
+loadouts appear as `★` rows in the same list; `space` loads one into the
+ticks so you can adjust it before applying, `d` deletes it. They live in
+`loadouts.json` and hold modes only.
+
+This replaces the `l`/`L` preset pair, which is a removal, so: a preset
+bundled mode, theme, frame rate, bands, sensitivity and gate into one named
+snapshot, which meant loading one moved four things you could already see and
+change in the settings panel and had not asked it to touch. Splitting "choose
+a set" from "name the set you just chose" across two keys did not help either
+— you had to know both, and neither showed you what the other had done. A
+loadout is one kind of thing on one key. Your `presets.json` is left on disk
+rather than migrated or deleted: an entry holds a single `mode`, not a set,
+so there is nothing in one that answers "which modes should be offered", and
+inventing a one-mode loadout out of each would be worse than ignoring them.
+
+`h` was reworked alongside it. It now explains what the things *are* — what a
+loadout is, what shuffle actually swaps, what the `(o)`/`(q)` suffixes and the
+`·plugin` marker mean, why a mode sometimes disappears — instead of only
+listing keys, and every panel's own keys are spelled out. A key and a
+two-word description do not tell you what the thing does.
+
+### Five modes, and the terrain family
+
+`Swell` and `Terra` render a height field rather than a bar chart — the band
+plan becomes a landscape and the music moves it. `Constellations`, `Star
+Trails` and `Supernova` join the cosmos family: one draws a figure that grows
+with the beat, one is a long exposure of a turning sky, and one spends its
+whole budget on a single event and waits for it.
+
+`Shooting Star` was reworked at the same time — fragments now enter at the
+edge of the display and cross it, rather than appearing partway through their
+own run, and how near a meteor is decides its speed, tail and brightness
+together instead of three independent rolls. Vertical separation in the band
+columns got an adaptive gutter, so a wide terminal no longer smears
+neighbouring bars into each other.
+
+52 modes to 57. Nothing was removed.
+
+### Star Trails stopped flooding the screen
+
+Three compounding errors, all reading as a screen of solid white. The motion
+blur weighted four neighbours at half each, so the kernel summed to more than
+one and a single lit dot filled the field in ten seconds with no stars drawn
+at all. The exposure length was fixed while the spin was not, so on ordinary
+percussive material every star swept a 110-degree arc and they fused into a
+disc; the exposure is now cut short against the measured spacing between
+stars, which is what a photographer does anyway. And the blur was applied per
+frame rather than per second, so the same passage came out twice as dense at
+240 fps as at 24.
+
+`Maelstrom` had the same per-frame bug in its dissipation, left behind when
+its forcing terms were converted: the dye kept 93% of itself per second at 24
+fps against 49% at 240, so the smoke lingered nearly twice as long on a slow
+display.
+
+### Motion profiles
+
+The settings panel has a new `motion` row with two stops. `snappy` is the
+tuning everything was calibrated against and stays the default; `glide` is
+the slower, cava-like character — bars rise lazily, sink for most of a
+second, energy leans into neighbouring bars, and transients arrive already
+softened. Side by side on the same track, `glide` is the one that reads as
+"busier in the centre": cava's smoothing rounds off bass hits while
+sustained mids accumulate, which is most of why cava looks centre-weighted
+next to spektr's faster attack.
+
+None of it touches the analysis. The band plan, the EQ tilt, autosens and
+the onset detector are upstream of the switch and identical under both
+profiles — this changes how a measurement is animated, never what was
+measured. And it is dt-correct throughout, deliberately not a port of
+cava's gravity/integral filters: those are framerate-dependent by
+construction (`framerate_mod = 66/framerate`), which is the exact bug
+`motion.py` exists to keep out. `glide` reproduces the feel — slower spring
+constants, a temporal pre-blend standing in for noise reduction, and a
+monstercat-style neighbour spread standing in for cava's filter of the same
+name — without importing the frame-rate coupling.
+
+The Android engine takes the same row in its own settings screen, driven by
+the same Python profile table, so both platforms move the same way.
+
 ## spektr 0.4.0
 
 First release with a prebuilt binary for every platform: Windows exe and

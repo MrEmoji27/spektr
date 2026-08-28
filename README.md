@@ -470,7 +470,7 @@ browser or file manager the first time.
 
 The APK carries its own version number and it is not the one on the release.
 The port has had fewer versions than the desktop app, so the build inside
-spektr 0.4.0 reports **v0.2.0**; putting 0.4.0 on it would claim four versions
+spektr 0.4.5 reports **v0.2.0**; putting 0.4.5 on it would claim five versions
 of something that has had two. `CHANGELOG.md` lists the Android versions
 separately, and the app shows that same file under **what's new**.
 
@@ -574,6 +574,9 @@ place for it to arrive.
 ### Credits
 
 **zemo** — author and maintainer.
+**Roshan (RRDOJ)** — the logo: a terminal prompt built out of spectrum bars.
+
+Assisted work, on the terms set out above:
 
 - **Opus 5** — most of the assisted work.
 - **GPT-5.6 Luna** — dispatched on individual modes.
