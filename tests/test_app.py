@@ -16,9 +16,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 # The app writes its settings back on exit (app.on_unmount), and the test
-# drives real UI changes through those settings — including saving a preset,
-# which writes presets.json next to config.json. Both config.py and presets.py
-# build their path from palette.config_dir(), so redirecting that one function
+# drives real UI changes through those settings — including saving a loadout,
+# which writes loadouts.json next to config.json. Both config.py and
+# loadouts.py build their path from palette.config_dir(), so redirecting it
 # scratches both at once rather than needing a matching patch per module added
 # under this directory later.
 import spektr.palette as _palette  # noqa: E402
@@ -88,11 +88,10 @@ async def main() -> int:
 
         # keyboard surface. s (shuffle) is pressed twice — on then off — so it
         # doesn't leave a 15s timer running that could fire mid-test and change
-        # the mode out from under an assertion later in this file. L (save
-        # preset) opens an overlay that escape then cancels, for the same
+        # the mode out from under an assertion later in this file. l (the
+        # loadout) opens an overlay that escape then cancels, for the same
         # reason: left open, it would swallow every keypress after it via
-        # check_action. l (load preset) is safe bare — with no presets saved
-        # yet it just notifies and never opens anything. show_status has no
+        # check_action. show_status has no
         # key of its own any more (folded into the settings panel's source
         # row) but startup and the source keys still call it internally, so
         # it's called directly here rather than left completely untested.
@@ -114,7 +113,6 @@ async def main() -> int:
             "s",
             "s",
             "l",
-            "L",
             "escape",
         ):
             await pilot.press(key)
@@ -204,39 +202,44 @@ async def main() -> int:
             f"settings panel OK ({'opened+stepped+closed' if settings_open else 'did not open'})"
         )
 
-        # presets: save the current look under a name, switch away, load it
-        # back, and confirm both the name-prompt and the preset picker itself
-        # round-trip correctly.
-        viz.set_mode("Flame")
+        # loadouts: narrow the offered modes to one, name that selection, and
+        # confirm the name-prompt round-trips and the panel comes back with
+        # the picks intact. `n` clears every tick, `space` takes the mode under
+        # the cursor, `s` asks for a name.
+        viz.set_mode("Bars")
         viz.commit_mode()
-        viz.apply_theme("synthwave")
-        viz.commit_theme()
         await pilot.pause()
 
-        await pilot.press("L")
+        await pilot.press("l")
+        await pilot.pause()
+        await pilot.press("n")
+        await pilot.press("space")
+        await pilot.pause()
+        await pilot.press("s")
         await pilot.pause()
         for ch in "smoke test":
             await pilot.press("space" if ch == " " else ch)
         await pilot.press("enter")
         await pilot.pause()
-        if "smoke test" not in app._presets:
-            problems.append(f"preset was not saved: {list(app._presets)}")
-
-        viz.set_mode("Bars")
-        viz.commit_mode()
-        viz.apply_theme("classic")
-        viz.commit_theme()
+        if "smoke test" not in app._loadouts:
+            problems.append(f"loadout was not saved: {list(app._loadouts)}")
+        await pilot.press("enter")          # apply, closing the panel
         await pilot.pause()
 
-        await pilot.press("l")
-        await pilot.pause()
-        await pilot.press("enter")
-        await pilot.pause()
-        if viz.mode_name != "Flame" or viz.theme_name != "synthwave":
+        if len(viz.mode_names) != 1:
             problems.append(
-                f"preset did not apply: mode={viz.mode_name} theme={viz.theme_name}"
+                f"the loadout did not narrow what is offered: {viz.mode_names}"
             )
-        mark(f"presets OK (saved+loaded {list(app._presets)})")
+        if app.settings.loadout != app._loadouts.get("smoke test"):
+            problems.append(
+                f"applied {app.settings.loadout}, saved "
+                f"{app._loadouts.get('smoke test')}"
+            )
+        mark(f"loadouts OK (saved+applied {list(app._loadouts)})")
+
+        # put every mode back, or the modes the sections below reach for are
+        # no longer on offer
+        app.settings.loadout = []
 
         # theme editor: nudge a colour, cancel, then do it again and save.
         # Cancelling has to leave both the live theme and the themes folder
