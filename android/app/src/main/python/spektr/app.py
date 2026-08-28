@@ -12,7 +12,7 @@ from textual.widgets import Footer, Header
 from . import __version__, config, nowplaying
 from . import modes as mode_registry
 from . import palette as palette_mod
-from . import presets as presets_module
+from . import loadouts as loadouts_module
 from .pickers import (
     ColourPicker,
     HelpPanel,
@@ -136,13 +136,16 @@ class Spektr(App):
         Binding("m,space", "cycle_mode", "Mode"),
         Binding("M", "cycle_mode(-1)", "Prev mode", show=False),
         Binding("v", "pick_mode", "Modes"),
-        # Pairs with `v`: lower picks a mode, upper picks the set `v`
-        # offers. `l`/`L` were the obvious letters and are both presets.
-        Binding("V", "pick_loadout", "Loadout"),
+        Binding("l", "loadout", "Loadout"),
         Binding("t", "pick_theme", "Themes"),
         Binding("c", "settings", "Settings"),
         Binding("T", "cycle_theme", "Next theme", show=False),
-        Binding("f", "toggle_chrome", "Full screen"),
+        # Off the footer, not off the key. Adding `l` pushed the row past
+        # 80 columns and what fell off the end was `h Help` and `q Quit` —
+        # the two a first-time user cannot afford to lose. This is the
+        # cheapest thing to drop: a display toggle nobody needs in their
+        # first minute, still listed in `h` like every hidden binding.
+        Binding("f", "toggle_chrome", "Full screen", show=False),
         Binding("d", "next_source", "Next source", show=False),
         Binding("D", "default_source", "Default output", show=False),
         Binding("r", "reload", "Reload themes + plugins", show=False),
@@ -150,14 +153,12 @@ class Spektr(App):
         # (see action_settings' source row) since it's now free, and s for
         # Shuffle is a plainer mnemonic than the a it had before.
         Binding("s", "toggle_shuffle", "Shuffle"),
-        Binding("l", "load_preset", "Load preset", show=False),
-        Binding("L", "save_preset", "Save preset", show=False),
         Binding("left_square_bracket", "gain(-1)", "Sens -", show=False),
         Binding("right_square_bracket", "gain(1)", "Sens +", show=False),
         Binding("g", "gate(-1)", "Gate -", show=False),
         Binding("G", "gate(1)", "Gate +", show=False),
         Binding("h,question_mark", "help", "Help"),
-        Binding("p", "show_perf", "Perf", show=False),
+        Binding("p", "show_perf", "Frame time and FPS", show=False),
         Binding("q", "quit", "Quit"),
     ]
 
@@ -171,11 +172,11 @@ class Spektr(App):
         super().__init__()
         self._device = device
         self._allow_mic = allow_mic
-        #: where settings, presets, themes, plugins and ascii reels live;
+        #: where settings, loadouts, themes, plugins and ascii reels live;
         #: None means the platform default from palette.config_dir()
         self._config_dir = config_dir
         # Clamped whatever the source. `config.load` already does it, but an
-        # injected Settings — a preset being applied, a test, an embedder —
+        # injected Settings — a test, an embedder —
         # goes straight into the widget, where an fps of "soon" raises out of
         # `int()` before anything is on screen. Nothing in a settings object is
         # worth failing to start over.
@@ -185,7 +186,7 @@ class Spektr(App):
         #: the shuffle timer, or None when shuffle is off
         self._shuffle_timer = None
         self._shuffle_count = 0
-        self._presets = presets_module.load(config_dir)
+        self._loadouts = loadouts_module.load(config_dir)
         #: the capture/device status text — what the header falls back to
         #: when nothing is playing that the OS will report on
         self._capture_status = self.SUB_TITLE
@@ -297,54 +298,6 @@ class Spektr(App):
                 viz.mode_names,
                 current=viz.mode_name,
                 on_preview=viz.preview_mode,
-                labels=labels,
-                display=shown,
-            ),
-            done,
-        )
-
-    def action_pick_loadout(self) -> None:
-        """Choose which modes the interface offers at all.
-
-        Deliberately built over the *unfiltered* roster rather than
-        ``viz.mode_names``: that property is already narrowed by the loadout,
-        so feeding it back in would make the modal show only what is currently
-        ticked and there would be no way to add a mode back. Quarantined modes
-        stay out — a mode that crashes is not something to hand someone a
-        tickbox for — and the subcell variants follow ``fine_modes`` exactly as
-        they do everywhere else.
-        """
-        viz = self.viz
-        pool = mode_registry.MODES if viz.show_fine else mode_registry.listed()
-        offer = [m.name for m in pool if not viz.quarantine.is_disabled(m.name)]
-        labels = {
-            m.name: (f"·{m.plugin}" if m.is_plugin else "") for m in pool
-        }
-        shown = {m.name: mode_registry.label(m.name) for m in pool}
-
-        def done(choice: list[str] | None) -> None:
-            # None is cancel; [] is a real answer meaning "no restriction".
-            if choice is None:
-                return
-            self.settings.loadout = choice
-            self._save_settings()
-            # The running mode is left alone even when it falls outside the
-            # new loadout: yanking the picture away is a worse surprise than
-            # a mode that stays until you next move. `cycle_mode` already
-            # handles the current name being absent from the list, so the
-            # next `m` steps into the loadout on its own.
-            n = len(viz.mode_names)
-            self.notify(
-                f"loadout: all {n} modes" if not choice else
-                f"loadout: {n} mode{'s' if n != 1 else ''}",
-                timeout=2)
-
-        self._open_overlay(
-            LoadoutPicker(
-                "loadout",
-                offer,
-                chosen=self.settings.loadout,
-                current=viz.mode_name,
                 labels=labels,
                 display=shown,
             ),
@@ -635,64 +588,95 @@ class Spektr(App):
 
         self.notify(f"shuffle — {viz.mode_name} · {viz.palette.name}", timeout=2)
 
-    # ── presets ──────────────────────────────────────────────────────────────
-    # A named snapshot of mode + theme + the four settings-panel numbers.
-    # Loading previews mode and theme exactly like the `t`/`v` pickers do —
-    # arrow through, see it, escape puts back what you had. fps/bands/
-    # sensitivity/gate apply immediately as you arrow instead, same as the `c`
-    # panel already does for those four; there's no existing "undo" concept
-    # for them anywhere in the app, so a preset preview doesn't invent one.
+    # ── loadouts ─────────────────────────────────────────────────────────────
 
-    def action_save_preset(self) -> None:
-        def done(name: str | None) -> None:
-            if not name:
-                return
-            viz = self.viz
-            s = self.settings
-            self._presets[name] = {
-                "mode": viz.mode_name,
-                "theme": viz.theme_name,
-                "fps": viz._target_fps,
-                "bands": s.bands,
-                "sensitivity": s.sensitivity,
-                "gate": s.gate,
-            }
-            presets_module.save(self._presets, config_dir=self._config_dir)
-            self.notify(f"preset saved — {name}", timeout=2)
+    def action_loadout(self, chosen=None) -> None:
+        """The one panel for which modes the interface offers.
 
-        self._open_overlay(NamePrompt("save preset as…", placeholder="name"), done)
+        Built over the *unfiltered* roster rather than ``viz.mode_names``:
+        that property is already narrowed by the active loadout, so feeding it
+        back in would show only what is currently ticked and there would be no
+        way to add a mode back. Quarantined modes stay out — a mode that
+        crashes is not something to hand someone a tickbox for — and the
+        subcell variants follow ``fine_modes`` as they do everywhere else.
 
-    def action_load_preset(self) -> None:
-        if not self._presets:
-            self.notify("no presets saved yet — press L to save the current look", timeout=3)
-            return
-
+        ``chosen`` overrides what opens ticked, which is how the panel comes
+        back with your picks intact after naming a loadout.
+        """
         viz = self.viz
+        pool = mode_registry.MODES if viz.show_fine else mode_registry.listed()
+        offer = [m.name for m in pool if not viz.quarantine.is_disabled(m.name)]
+        labels = {m.name: (f"·{m.plugin}" if m.is_plugin else "") for m in pool}
+        shown = {m.name: mode_registry.label(m.name) for m in pool}
 
-        def preview(name: str) -> None:
-            p = self._presets.get(name)
-            if p is None:
+        def forget(name: str) -> None:
+            self._loadouts.pop(name, None)
+            loadouts_module.save(self._loadouts, config_dir=self._config_dir)
+
+        def done(result) -> None:
+            # None is cancel. Otherwise ("apply"|"save", names), where an
+            # empty list is a real answer meaning "no restriction" — which is
+            # why cancel cannot be represented as one.
+            if result is None:
                 return
-            viz.preview_mode(p["mode"])
-            viz.preview_theme(p["theme"])
-            viz._retime(p["fps"], requested=True)
-            viz.set_bands(p["bands"])
-            viz.set_sensitivity(p["sensitivity"])
-            viz.set_gate(p["gate"])
-
-        def done(name: str | None) -> None:
-            if name is None:
-                viz.cancel_mode_preview()
-                viz.cancel_theme_preview()
-            else:
-                viz.commit_mode()
-                viz.commit_theme()
-                self.notify(f"preset — {name}", timeout=2)
+            what, names = result
+            if what == "save":
+                self._name_loadout(names)
+                return
+            self.settings.loadout = names
+            # config.save directly rather than through a helper: this panel is
+            # the only thing in the file that persists outside the settings
+            # panel's own path, and reaching for a method defined elsewhere in
+            # the class made the loadout depend on it existing.
+            config.save(self.settings, config_dir=self._config_dir)
+            # The running mode is left alone even when it falls outside the
+            # new loadout: yanking the picture away is a worse surprise than
+            # a mode that stays until you next move. `cycle_mode` already
+            # handles the current name being absent, so the next `m` steps
+            # into the loadout on its own.
+            n = len(viz.mode_names)
+            self.notify(
+                f"loadout off — all {n} modes" if not names
+                else f"loadout — {n} mode{'' if n == 1 else 's'}",
+                timeout=2)
 
         self._open_overlay(
-            Picker("presets", list(self._presets), current=None, on_preview=preview),
+            LoadoutPicker(
+                "loadout",
+                offer,
+                chosen=self.settings.loadout if chosen is None else chosen,
+                saved=self._loadouts,
+                on_delete=forget,
+                current=viz.mode_name,
+                labels=labels,
+                display=shown,
+            ),
             done,
         )
+
+    def _name_loadout(self, names: list[str]) -> None:
+        """Ask for a name, then hand the panel back with the picks intact.
+
+        A round trip rather than a prompt inside the panel, because an overlay
+        replaces the one before it — but the user should not be able to tell:
+        they press ``s``, type a name, and are back where they were with
+        everything still ticked, whether they named it or escaped.
+        """
+        def named(name: str | None) -> None:
+            if name:
+                # Everything ticked stores as empty, and a named loadout that
+                # restricts nothing is a trap rather than a feature — there
+                # would be no way to tell it from the ones that do.
+                if not names:
+                    self.notify("nothing to save — a loadout needs a narrower "
+                                "pick than every mode", timeout=3)
+                else:
+                    self._loadouts[name] = names
+                    loadouts_module.save(self._loadouts, config_dir=self._config_dir)
+                    self.notify(f"saved — {name}", timeout=2)
+            self.action_loadout(chosen=names)
+
+        self._open_overlay(NamePrompt("save loadout as…", placeholder="name"), named)
 
     def action_reload(self) -> None:
         """Re-read themes and plugins from disk without restarting.
@@ -827,21 +811,51 @@ class Spektr(App):
                 for b in self.BINDINGS
                 if b.description
             ]),
-            ("in a picker or panel", [
-                ("↑ ↓", "move"),
-                ("← →", "change the value (settings)"),
-                ("type", "filter the list (pickers)"),
+            # Everything below the generated key list exists because a key
+            # and its one-line description do not tell you what the thing
+            # *is*. "Loadout" is not an explanation of a loadout.
+            ("in a picker — v, t", [
+                ("↑ ↓", "move — it previews as you go"),
+                ("type", "filter the list"),
                 ("enter", "keep it"),
-                ("esc", "cancel — the previous mode or theme comes back"),
+                ("esc", "cancel — what you had comes back"),
             ]),
-            # The loadout panel is the one that does not follow the rules
-            # above: it picks a set rather than one thing, so the list holds
-            # the cursor instead of a filter box and typing does not filter.
-            ("in the loadout (V)", [
-                ("space", "pick this mode in or out"),
-                ("a  n", "all, or none"),
-                ("/", "filter the list, enter to come back to it"),
-                ("enter", "save — everything picked means no restriction"),
+            # The loadout panel does not follow the rules above: it picks a
+            # set rather than one thing, so the list holds the cursor instead
+            # of a filter box and typing does not filter.
+            ("in the loadout — l", [
+                ("↑ ↓", "move"),
+                ("space", "on a mode: pick it in or out"),
+                ("", "on a ★: load that set"),
+                ("s", "name what is picked, and keep it"),
+                ("d", "delete the ★ under the cursor"),
+                ("a  n", "pick all, or none"),
+                ("/", "filter — enter comes back to the list"),
+                ("enter", "apply and close"),
+                ("esc", "cancel — nothing changes"),
+            ]),
+            ("in the settings panel — c", [
+                ("↑ ↓", "move between rows"),
+                ("← →", "change it — applies live"),
+                ("esc", "close"),
+            ]),
+            # Short lines on purpose. A long one wraps with no hanging
+            # indent and stops reading as a list — and someone opening the
+            # help is already lost, so this is the worst place to be wordy.
+            ("what these mean", [
+                ("loadout", "which modes v, m and shuffle offer you."),
+                ("", "pick a few and the rest stop turning up."),
+                ("", "pick all, and nothing is held back."),
+                ("★", "a loadout you named. space loads it."),
+                ("shuffle", "swaps mode and/or theme on a timer."),
+                ("", "s starts it, c chooses which it swaps."),
+                ("subcells", "(o) draws 2x4 dots per character, (q) 2x2."),
+                ("", "the extra pairs are opt-in in c, and want"),
+                ("", "a font with Unicode 16 octants."),
+                ("·name", "that mode came from a plugin, not spektr."),
+                ("dropped", "a mode that keeps crashing is switched"),
+                ("", "off until restart, rather than taking"),
+                ("", "the app down with it."),
             ]),
             ("now", [
                 ("mode", mode_registry.label(viz.mode_name)),
@@ -854,11 +868,14 @@ class Spektr(App):
                 # for unless the help says it is there.
                 ("loadout", (f"{len(viz.mode_names)} of them"
                              if self.settings.loadout else "off — all of them")),
+                ("saved", (", ".join(self._loadouts) if self._loadouts
+                           else "none yet — pick some modes in l and press s")),
                 ("subcells", f"{self.settings.cells} — shown as {cells}"),
             ]),
             ("files", [
                 ("config", str(self._config_dir or palette_mod.config_dir())),
-                ("", "themes/, plugins/ and ascii/ live in there too"),
+                ("", "config.json and loadouts.json are in there,"),
+                ("", "and so are themes/, plugins/ and ascii/."),
             ]),
             ("more", [
                 ("", f"spektr {__version__} — spektr --help for the command line"),

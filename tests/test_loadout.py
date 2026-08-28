@@ -2,8 +2,8 @@
 
 Spektr registers far more modes than anyone wants in a shuffle rotation, and
 cycling past fifty to reach the four you like is the problem this solves. The
-loadout is a set of names in the settings, edited in a modal on ``V``, and it
-narrows one thing: :attr:`AudioVisualizer.mode_names`. That property is the
+loadout is a set of names in the settings, edited in the modal on ``l``, and
+it narrows one thing: :attr:`AudioVisualizer.mode_names`. That property is the
 single list the picker, the ``m``/space cycle keys and shuffle all read, which
 is why the filter lives there and not in three places.
 
@@ -28,7 +28,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from spektr import config  # noqa: E402
 from spektr.app import Spektr  # noqa: E402
-from spektr.pickers import LoadoutPicker  # noqa: E402
+from spektr import loadouts as loadouts_module  # noqa: E402
+from spektr.pickers import LoadoutPicker, NamePrompt  # noqa: E402
 from spektr.widget import AudioVisualizer  # noqa: E402
 
 
@@ -123,15 +124,32 @@ def test_saving_everything_is_stored_as_no_restriction():
                       on_done=got.append)
     p._chosen = {"Bars", "Flame"}
     p.action_choose()
-    assert got == [[]]
+    assert got == [("apply", [])]
 
 
 def test_cancelling_is_distinct_from_saving_an_empty_set():
-    """Cancel returns None so the caller can tell it from "no restriction"."""
+    """Cancel returns None so the caller can tell it from "no restriction".
+
+    They are different answers — "leave it alone" against "restrict nothing" —
+    and an empty list cannot carry both.
+    """
     got: list = []
     p = LoadoutPicker("loadout", ["Bars", "Flame"], on_done=got.append)
     p.action_cancel()
     assert got == [None]
+
+
+def test_asking_to_save_hands_the_picks_back_out():
+    """Naming needs a prompt, and a prompt would replace this overlay.
+
+    So ``s`` finishes with the picks rather than opening anything, and the app
+    does the round trip — name it, then reopen the panel still ticked.
+    """
+    got: list = []
+    p = LoadoutPicker("loadout", ["Bars", "Flame", "Snow"], chosen=["Bars"],
+                      on_done=got.append)
+    p.action_save()
+    assert got == [("save", ["Bars"])]
 
 
 def test_the_tickbox_survives_the_markup_parser():
@@ -147,8 +165,8 @@ def test_the_tickbox_survives_the_markup_parser():
     from rich.text import Text
 
     p = LoadoutPicker("loadout", ["Bars", "Flame"], chosen=["Bars"])
-    assert "[x]" in Text.from_markup(p._label_for("Bars")).plain
-    assert "[ ]" in Text.from_markup(p._label_for("Flame")).plain
+    assert "[x]" in Text.from_markup(p._label_for_row("mode", "Bars")).plain
+    assert "[ ]" in Text.from_markup(p._label_for_row("mode", "Flame")).plain
 
 
 def test_a_mode_named_with_a_bracket_cannot_take_the_panel_down():
@@ -159,31 +177,63 @@ def test_a_mode_named_with_a_bracket_cannot_take_the_panel_down():
     """
     from rich.text import Text
 
-    p = LoadoutPicker("loadout", ["Bars [dim]", "[/]"], chosen=["Bars [dim]"])
+    p = LoadoutPicker("loadout", ["Bars [dim]", "[/]"], chosen=["Bars [dim]"],
+                      saved={"night [b]": ["Bars [dim]"]})
     for name in ("Bars [dim]", "[/]"):
-        assert name in Text.from_markup(p._label_for(name)).plain
+        assert name in Text.from_markup(p._label_for_row("mode", name)).plain
+    # A saved loadout is named by the user, so it is the likeliest bracket of all
+    assert "night [b]" in Text.from_markup(
+        p._label_for_row("saved", "night [b]")).plain
+
+
+def test_the_saved_sets_sit_above_the_modes():
+    """One flat list, saved sets first, told apart by their prefix.
+
+    A header row that cannot be selected is a special case in every direction
+    — cursor movement, filtering, the empty list — so the prefix does that job
+    instead.
+    """
+    p = LoadoutPicker("loadout", ["Bars", "Flame"], saved={"night": ["Bars"]})
+    p._rows = [("saved", "night"), ("mode", "Bars"), ("mode", "Flame")]
+    from rich.text import Text
+    assert "★" in Text.from_markup(p._label_for_row("saved", "night")).plain
+    assert "1 mode" in Text.from_markup(p._label_for_row("saved", "night")).plain
+
+
+def test_loading_a_saved_set_replaces_the_ticks_rather_than_adding_to_them():
+    """Space on a ★ means "this set", not "these as well as what I had"."""
+    p = LoadoutPicker("loadout", ["Bars", "Flame", "Snow"],
+                      chosen=["Bars"], saved={"night": ["Flame", "Snow"]})
+    p._rows = [("saved", "night")]
+
+    class _OL:
+        highlighted = 0
+
+    p._row = lambda: ("saved", "night")           # type: ignore[method-assign]
+    p._refresh_rows = lambda: None                # type: ignore[method-assign]
+    p.action_toggle()
+    assert p._chosen == {"Flame", "Snow"}
 
 
 # ── end to end, through real keystrokes ──────────────────────────────────────
 
-async def _drive() -> list[str]:
+async def _drive(tmp) -> list[str]:
     problems: list[str] = []
     # Same two harness concessions test_app.py makes: a 60 fps repaint never
     # lets Pilot see an idle app, and a toast holds it busy for its timeout.
-    app = Spektr(settings=config.Settings(fps=15))
+    app = Spektr(settings=config.Settings(fps=15), config_dir=tmp)
     app.notify = lambda *a, **k: None  # type: ignore[method-assign]
     app._save_settings = lambda *a, **k: None  # type: ignore[method-assign]
 
     async with app.run_test(size=(120, 32)) as pilot:
         offered = list(app.viz.mode_names)
 
-        await pilot.press("V")
+        await pilot.press("l")
         await pilot.pause()
-        panel = app.query(LoadoutPicker)
-        if not panel:
-            return ["V did not open the loadout modal"]
+        if not app.query(LoadoutPicker):
+            return ["l did not open the loadout modal"]
 
-        # 'n' clears, space ticks the row under the cursor, enter saves.
+        # n clears, space ticks the row under the cursor, enter applies.
         await pilot.press("n")
         await pilot.pause()
         await pilot.press("space")
@@ -194,30 +244,72 @@ async def _drive() -> list[str]:
         if app.query(LoadoutPicker):
             problems.append("enter did not close the modal")
         if len(app.settings.loadout) != 1:
-            problems.append(f"expected one mode saved, got {app.settings.loadout}")
+            problems.append(f"expected one mode picked, got {app.settings.loadout}")
         if app.viz.mode_names != app.settings.loadout:
             problems.append(
-                f"offer list {app.viz.mode_names} does not match the saved "
-                f"loadout {app.settings.loadout}")
+                f"offer list {app.viz.mode_names} does not match the loadout "
+                f"{app.settings.loadout}")
 
         # Reopening must show the whole roster again, or a mode could never
         # be added back once it had been dropped.
-        await pilot.press("V")
+        await pilot.press("l")
         await pilot.pause()
         panel = app.query_one(LoadoutPicker)
         if list(panel._items) != offered:
             problems.append("the modal was built from the narrowed list, so a "
                             "dropped mode could never be re-added")
-        # Escape leaves the saved loadout alone.
-        saved = list(app.settings.loadout)
+
+        # s asks for a name and comes back with the picks still ticked.
+        ticked = set(panel._chosen)
+        await pilot.press("s")
+        await pilot.pause()
+        if not app.query(NamePrompt):
+            problems.append("s did not ask for a name")
+        for ch in "night":
+            await pilot.press(ch)
+        await pilot.press("enter")
+        await pilot.pause()
+        if app._loadouts.get("night") != app.settings.loadout:
+            problems.append(f"the named loadout is {app._loadouts.get('night')}, "
+                            f"not the picks {app.settings.loadout}")
+        panel = app.query(LoadoutPicker)
+        if not panel:
+            problems.append("the panel did not come back after naming")
+        elif set(panel.first()._chosen) != ticked:
+            problems.append("the picks were lost on the way through the prompt")
+
+        # The saved loadout shows as a row, and d removes it for good.
+        if panel:
+            rows = panel.first()._rows
+            if ("saved", "night") not in rows:
+                problems.append("the saved loadout is not listed in the panel")
+            elif rows[0] != ("saved", "night"):
+                problems.append("saved loadouts should sit above the modes")
+            # The panel opens on the running mode, so d has to be aimed at
+            # the star first — on a mode row it is deliberately a no-op.
+            await pilot.press("d")
+            await pilot.pause()
+            if "night" not in app._loadouts:
+                problems.append("d deleted something while on a mode row")
+            await pilot.press("home")
+            await pilot.pause()
+            await pilot.press("d")
+            await pilot.pause()
+            if "night" in app._loadouts:
+                problems.append("d did not delete the saved loadout")
+            if "night" in loadouts_module.load(tmp):
+                problems.append("the delete was not written to disk")
+
+        # Escape leaves the active loadout alone.
+        active = list(app.settings.loadout)
         await pilot.press("escape")
         await pilot.pause()
-        if app.settings.loadout != saved:
+        if app.settings.loadout != active:
             problems.append("escape changed the loadout")
 
     return problems
 
 
-def test_the_modal_saves_and_the_offer_list_follows():
-    problems = asyncio.run(_drive())
+def test_the_modal_applies_saves_and_deletes(tmp_path):
+    problems = asyncio.run(_drive(tmp_path))
     assert not problems, "; ".join(problems)

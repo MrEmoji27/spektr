@@ -241,7 +241,7 @@ function: **every user-facing feature routes through `palette.config_dir()`**.
 
 ```
 config_dir()/config.json      settings
-config_dir()/presets.json     presets
+config_dir()/loadouts.json    named mode sets
 config_dir()/themes/*.toml    user themes + the theme editor's output
 config_dir()/plugins/         plugin modules
 ```
@@ -283,7 +283,7 @@ and that boundary used to be implicit. Both changes named here have now landed
 on `main`, so the port starts from a cleaner seam than this document assumed:
 
 1. **Make `config_dir()` injectable** — done. The config root is an optional
-   `config_dir=` parameter threaded through `config`, `presets`, `plugins`,
+   `config_dir=` parameter threaded through `config`, `loadouts`, `plugins`,
    `asciiart` and `palette`, with an `Spektr(config_dir=...)` app seam that
    reaches the widget's theme list. Commits `35604d1`, `b3454a0`, `e425170`.
    It defaults through the module attribute at call time, so nothing changes

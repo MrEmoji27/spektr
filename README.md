@@ -296,25 +296,31 @@ Full guide, including the whole of `ctx` and the drawing toolkit: **[docs/plugin
 | Key | Action | | Key | Action |
 |---|---|---|---|---|
 | `v` | Visualizer picker — live preview, `/` filter | | `d` / `D` | Next audio source / back to the default |
-| `V` | Loadout — pick which modes are offered at all | | `s` | Shuffle on/off — set what it cycles in `c` |
+| `l` | Loadout — which modes are offered at all | | `s` | Shuffle on/off — set what it cycles in `c` |
 | `t` | Theme picker — live preview, `/` filter | | `[` `]` | Sensitivity down / up |
 | `c` | Settings — frame rate, bands, sensitivity, gate, source | | `g` `G` | Noise gate down / up |
 | `m` / `space` | Next mode (`M` for previous) | | `r` | Reload themes and plugins from disk |
 | `T` | Next theme | | `p` | Frame time and FPS |
-| `f` | Hide header and footer — full-screen visual | | `h` / `?` | Help — every key, plus where the files live |
-| `L` | Save the current mode + theme + settings as a preset | | `l` | Load a saved preset — live preview, `esc` restores |
+| `f` | Hide header and footer — full-screen visual | | `h` / `?` | Help — every key, and what each thing means |
 | `q` | Quit | | | |
 
 Mode, theme, frame rate, band count, sensitivity, gate, shuffle with its scope, and the loadout are remembered between runs.
-Presets are separate — named snapshots you save on purpose, picked back up with `l`.
 
-`V` opens the **loadout** — a checklist of every mode, where `space` picks one in or
-out, `a` and `n` take all or none, and `/` filters. Whatever is left is what `v`, `m`
-and shuffle will offer you, which is the point: spektr ships far more modes than anyone
-wants in one rotation, and cycling past fifty to reach your four is the problem it
-solves. Picking everything is the same as picking nothing — both mean no restriction —
-so it starts out doing nothing until you narrow it, and `--mode` still names any mode
-whether it is in the loadout or not.
+`l` opens the **loadout** — a checklist of every mode. `space` picks one in or out, `a`
+and `n` take all or none, `/` filters. Whatever is left is what `v`, `m` and shuffle
+offer you, which is the point: spektr ships far more modes than anyone wants in one
+rotation, and cycling past fifty to reach your four is the problem it solves. Picking
+everything is the same as picking nothing — both mean no restriction — so it does
+nothing until you narrow it, and `--mode` still names any mode whether it is in the
+loadout or not.
+
+Press `s` in that panel to name what you have picked and keep it. Named loadouts show
+as `★` rows at the top of the same list: `space` loads one into the ticks so you can
+adjust it before applying, `d` deletes it. They live in `loadouts.json` beside your
+config, and they hold modes only — your theme and settings are never moved by loading
+one. This replaces the old `l`/`L` presets, which bundled mode, theme and four
+settings numbers together and so changed things you had not asked them to change; an
+existing `presets.json` is left on disk, just no longer read.
 
 `c` opens a settings panel in the same shape as the pickers — arrow keys change values
 and everything applies live, because a settings screen you have to close to see the

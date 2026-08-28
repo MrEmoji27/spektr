@@ -177,78 +177,117 @@ class Picker(Widget):
 
 
 class LoadoutPicker(Picker):
-    """A :class:`Picker` over the whole mode list, choosing a *set* of them.
+    """Pick which modes the interface offers, and name the sets you keep.
 
     Every other picker here answers "which one now"; this one answers "which
-    ones at all", and hands back a list rather than a string. Cancelling
-    returns None, which the caller reads as "leave the loadout alone" — an
-    empty list is a real answer meaning "no restriction", so the two cannot
-    share a value.
+    ones at all". It is also the only place loadouts are saved, loaded and
+    deleted, because splitting "choose a set" from "name the set you just
+    chose" across two keys is what made the old preset pair awkward: you had
+    to know both, and neither showed you what the other had done.
 
-    Two deliberate departures from the base picker, both forced by the same
-    thing — this panel needs a single-keystroke toggle:
+    Saved loadouts and modes share one flat list rather than sitting in
+    labelled groups. A header row that cannot be selected is a special case in
+    every direction — cursor movement, filtering, the empty list — and the
+    prefix already says which kind a row is: a star for a saved loadout, a
+    tickbox for a mode.
+
+    Finishing hands back ``("apply", names)`` or ``("save", names)``, or None
+    for cancel. "Save" has to travel back out to the app because naming needs
+    a prompt and this panel is the overlay — the app takes the names, asks for
+    one, and opens this panel again. Deleting needs no such round trip, so it
+    goes straight through ``on_delete``.
+
+    Two departures from the base picker, both forced by needing a
+    single-keystroke toggle:
 
     * The **list** takes focus, not the filter box. ``Input`` consumes
       printable keys, so with the filter focused (what :class:`Picker` does)
-      ``space`` would type a space instead of toggling, and ``a``/``n`` would
+      ``space`` would type a space instead of toggling and ``a``/``n`` would
       never reach a binding at all.
-    * The filter is therefore behind ``/``, the usual TUI idiom, and ``enter``
-      or ``escape`` inside it hands focus back to the list. Dropping the
-      filter entirely was the simpler option and the wrong one: the list is
-      the full mode roster, which is well past what anyone wants to arrow
-      through to find four names.
-
-    Toggling is tracked against the mode's own name, not the row index, so it
-    survives the list being re-filtered underneath it.
+    * The filter is therefore behind ``/``, and ``enter`` or ``escape`` inside
+      it hands focus back to the list. Dropping the filter was the simpler
+      option and the wrong one: this list is the full mode roster, well past
+      what anyone wants to arrow through to find four names.
     """
 
     BINDINGS = [
         *Picker.BINDINGS,
-        Binding("space", "toggle", "Toggle", show=False),
+        Binding("space", "toggle", "Pick", show=False),
         Binding("a", "all", "All", show=False),
         Binding("n", "none", "None", show=False),
+        Binding("s", "save", "Save", show=False),
+        Binding("d", "delete", "Delete", show=False),
         Binding("slash", "focus_filter", "Filter", show=False),
     ]
 
-    def __init__(self, title: str, items, chosen=None, **kw):
+    def __init__(self, title: str, items, chosen=None, saved=None,
+                 on_delete=None, **kw):
         super().__init__(title, items, **kw)
-        #: Names ticked right now. Seeded from the saved loadout, intersected
+        #: name -> the modes it offers. Held rather than re-read so deleting
+        #: one redraws immediately instead of only after the panel reopens.
+        self._saved: dict[str, list[str]] = dict(saved or {})
+        self._on_delete = on_delete
+        #: Modes ticked right now. Seeded from the active loadout, intersected
         #: with what is actually on offer so a stale name cannot be silently
-        #: re-saved, and an empty saved loadout starts with everything ticked
-        #: — "no restriction" and "all of them ticked" are the same picture,
-        #: and starting blank would read as though the modes had been lost.
+        #: re-saved, and an empty one starts with everything ticked — "no
+        #: restriction" and "all of them ticked" are the same picture, and
+        #: starting blank would read as though the modes had been lost.
         picked = set(chosen or ())
         self._chosen: set[str] = {i for i in self._items if i in picked} or set(self._items)
+        #: The rows on screen, as ``(kind, name)`` with kind "saved" or "mode".
+        #: Parallel to the option list, so the cursor index means something
+        #: whatever the filter is doing.
+        self._rows: list[tuple[str, str]] = []
 
     def compose(self) -> ComposeResult:
         with Vertical(id="panel"):
             yield Label(self._title, id="title")
             yield Input(placeholder="filter…", id="filter")
             yield OptionList(id="list")
-            yield Label("space pick · a all · n none · ⏎ save · esc cancel",
+            yield Label("space pick · s save · d delete · a all · n none · ⏎ apply",
                         id="hint")
 
     def on_mount(self) -> None:
         self._repopulate()
-        ol = self.query_one("#list", OptionList)
-        if self._current in self._shown:
-            ol.highlighted = self._shown.index(self._current)
-        # After the refresh, not during it. Focusing here looks like it works
-        # and does not: the screen settles focus onto the first focusable
-        # child once the panel is mounted, which is the filter box, and every
-        # toggle key then went into it as text — pressing "n" filtered the
-        # list to modes matching "n" instead of clearing the ticks.
-        self.call_after_refresh(ol.focus)
+        # Both of these have to wait for the refresh, and for the same reason:
+        # the panel is not settled yet and whatever is set here is overwritten.
+        # Focus goes to the filter box, so every toggle key arrives as text —
+        # pressing "n" filtered the list to modes matching "n" instead of
+        # clearing the ticks — and the cursor snaps back to row 0, which on
+        # this panel is a saved loadout, so the first space would load a set
+        # rather than tick the mode you were looking at.
+        self.call_after_refresh(self._settle)
 
-    def _label_for(self, name: str) -> str:
-        """The name behind a tickbox, with the blurb under it as usual."""
+    def _settle(self) -> None:
+        """Put the cursor on the running mode and give the list the keyboard."""
+        ol = self.query_one("#list", OptionList)
+        at = self._row_index(("mode", self._current or ""))
+        if at is not None:
+            ol.highlighted = at
+        ol.focus()
+
+    # ── rows ──
+    def _row_index(self, row) -> int | None:
+        try:
+            return self._rows.index(row)
+        except ValueError:
+            return None
+
+    def _label_for_row(self, kind: str, name: str) -> str:
+        """One row's text. Everything interpolated goes through markup_safe.
+
+        Including the tickbox, which is not paranoia: ``[x]`` is a well-formed
+        Textual tag, so the parser ate it and a ticked row rendered as a bare
+        name, while ``[ ]`` came through untouched because the space makes it
+        invalid markup — so exactly the ticked half of the list lost its box,
+        which reads as a rendering quirk rather than as unescaped markup.
+        """
+        if kind == "saved":
+            n = len(self._saved.get(name, ()))
+            plural = "" if n == 1 else "s"
+            return (f" ★  {markup_safe(name)}"
+                    f"\n     [dim]{n} mode{plural}[/dim]")
         extra = self._labels.get(name)
-        # Through markup_safe like every other interpolated value, and for the
-        # same reason: "[x]" is a well-formed Textual tag, so the parser ate
-        # the whole box and a ticked row rendered as a bare name with nothing
-        # in front of it. "[ ]" survived only because the space makes it
-        # invalid markup, which is why half the list looked right and the bug
-        # read as a rendering quirk rather than as unescaped markup.
         box = markup_safe("[x]" if name in self._chosen else "[ ]")
         mark = "▸" if name == self._current else " "
         line = f"{mark}{box} {markup_safe(self._display.get(name, name))}"
@@ -256,8 +295,23 @@ class LoadoutPicker(Picker):
             return line
         return f"{line}\n     [dim]{markup_safe(extra)}[/dim]"
 
+    def _repopulate(self, query: str = "") -> None:
+        rows: list[tuple[str, str]] = [
+            ("saved", n) for n in self._saved if self._match(query, n)
+        ]
+        rows += [("mode", i) for i in self._items if self._match(query, i)]
+        self._rows = rows
+        # Kept in step for the base class, whose filter and preview paths read
+        # it. Saved rows are not modes, so they are not in it.
+        self._shown = [n for k, n in rows if k == "mode"]
+        ol = self.query_one("#list", OptionList)
+        ol.clear_options()
+        if rows:
+            ol.add_options([self._label_for_row(k, n) for k, n in rows])
+            ol.highlighted = 0
+
     def _refresh_rows(self) -> None:
-        """Redraw the ticks, holding the cursor still.
+        """Redraw in place, holding the cursor still.
 
         ``OptionList`` has no way to restyle one row, so the whole list is
         rebuilt; without restoring ``highlighted`` afterwards the cursor would
@@ -266,16 +320,39 @@ class LoadoutPicker(Picker):
         ol = self.query_one("#list", OptionList)
         at = ol.highlighted
         ol.clear_options()
-        if self._shown:
-            ol.add_options([self._label_for(i) for i in self._shown])
-            ol.highlighted = min(at or 0, len(self._shown) - 1)
+        if self._rows:
+            ol.add_options([self._label_for_row(k, n) for k, n in self._rows])
+            ol.highlighted = min(at or 0, len(self._rows) - 1)
+
+    def _row(self) -> tuple[str, str] | None:
+        ol = self.query_one("#list", OptionList)
+        i = ol.highlighted
+        if i is None or not self._rows or i >= len(self._rows):
+            return None
+        return self._rows[i]
+
+    def _selected(self) -> str | None:
+        """The base class's notion: the highlighted *mode*, or None."""
+        row = self._row()
+        return row[1] if row and row[0] == "mode" else None
 
     # ── actions ──
     def action_toggle(self) -> None:
-        name = self._selected()
-        if name is None:
+        """Space: tick a mode, or load a saved loadout into the ticks.
+
+        Loading does not close the panel. Seeing which modes a saved loadout
+        holds — and being able to adjust them before applying — is most of why
+        it sits in the same list as the modes rather than behind its own key.
+        """
+        row = self._row()
+        if row is None:
             return
-        self._chosen.symmetric_difference_update({name})
+        kind, name = row
+        if kind == "saved":
+            picked = set(self._saved.get(name, ()))
+            self._chosen = {i for i in self._items if i in picked}
+        else:
+            self._chosen.symmetric_difference_update({name})
         self._refresh_rows()
 
     def action_all(self) -> None:
@@ -286,6 +363,23 @@ class LoadoutPicker(Picker):
         self._chosen = set()
         self._refresh_rows()
 
+    def action_delete(self) -> None:
+        row = self._row()
+        if row is None or row[0] != "saved":
+            return
+        name = row[1]
+        self._saved.pop(name, None)
+        if self._on_delete is not None:
+            self._on_delete(name)
+        at = self.query_one("#list", OptionList).highlighted
+        self._repopulate(self.query_one("#filter", Input).value)
+        if self._rows:
+            self.query_one("#list", OptionList).highlighted = min(
+                at or 0, len(self._rows) - 1)
+
+    def action_save(self) -> None:
+        self._finish(("save", self._picked()))
+
     def action_focus_filter(self) -> None:
         self.query_one("#filter", Input).focus()
 
@@ -295,12 +389,12 @@ class LoadoutPicker(Picker):
         self._repopulate(event.value)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        # Enter in the filter goes back to the list rather than saving, so
+        # Enter in the filter goes back to the list rather than applying, so
         # narrowing and then ticking is one continuous motion.
         self.query_one("#list", OptionList).focus()
 
     def on_option_list_option_selected(self, event) -> None:
-        """Enter on the focused list means save.
+        """Enter on the focused list means apply.
 
         Needed because the list is what holds focus here. ``OptionList`` binds
         ``enter`` to its own ``select``, and a binding on the focused widget
@@ -310,16 +404,17 @@ class LoadoutPicker(Picker):
         event.stop()
         self.action_choose()
 
-    def action_choose(self) -> None:
-        """Save. Everything ticked is the same answer as nothing restricted.
+    def _picked(self) -> list[str]:
+        """The ticks, in roster order. All of them is stored as none of them.
 
-        Normalised to ``[]`` in that case so the config records the intent
-        rather than a frozen snapshot of today's mode list — otherwise adding
-        a mode later, or installing a plugin, would leave it silently excluded
-        by a loadout the user thinks says "all".
+        Freezing today's list would silently exclude any mode added later — a
+        new release, or a plugin — from a loadout the user believes says "all".
         """
         picked = [i for i in self._items if i in self._chosen]
-        self._finish([] if len(picked) == len(self._items) else picked)
+        return [] if len(picked) == len(self._items) else picked
+
+    def action_choose(self) -> None:
+        self._finish(("apply", self._picked()))
 
     def action_cancel(self) -> None:
         self._finish(None)
@@ -331,8 +426,7 @@ class LoadoutPicker(Picker):
         the filter box, which the screen releases on removal, but a focused
         ``OptionList`` survives as the focused node after its panel is gone,
         and every subsequent keystroke is delivered to a widget that is no
-        longer in the tree. The symptom is the whole app going deaf: pressing
-        ``V`` a second time did nothing at all.
+        longer in the tree. The symptom is the whole app going deaf.
         """
         try:
             self.screen.set_focus(None)

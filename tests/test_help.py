@@ -227,3 +227,32 @@ def test_pressing_h_shows_the_panel_without_eating_the_chrome():
             assert app.is_running
 
     asyncio.run(drive())
+
+
+def test_the_footer_still_reaches_quit_at_eighty_columns():
+    """The last two entries are the two a first-time user cannot lose.
+
+    Textual's footer truncates rather than wrapping, so every binding added to
+    it pushes the tail off the end silently. Adding the loadout key did exactly
+    that: at 80 columns the row ended at "h H", so both Help and Quit were
+    gone, and nothing failed. Checked by rendering, because the only honest
+    measure of "does it fit" is whether the characters are on screen.
+    """
+    import asyncio
+    import io
+
+    from rich.console import Console
+
+    async def footer(width: int) -> str:
+        app = Spektr(settings=Settings(fps=15, chrome=True))
+        app.notify = lambda *a, **k: None  # type: ignore[method-assign]
+        async with app.run_test(size=(width, 10)) as pilot:
+            await pilot.pause()
+            cons = Console(width=width, record=True, file=io.StringIO())
+            cons.print(app.screen._compositor)
+            text = cons.export_text()
+            return text.splitlines()[-1] if text.strip() else ""
+
+    row = asyncio.run(footer(80))
+    for want in ("Help", "Quit"):
+        assert want in row, f"{want} fell off the 80-column footer: {row!r}"

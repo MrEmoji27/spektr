@@ -30,7 +30,7 @@ second renderer expensive later.
 - `widget.py` — drives the analyser and the active mode each frame, feeds the
   output to `make_strips`, and owns the live palette/theme state.
 - `app.py`, `pickers.py` — the CLI, keybindings, overlays, and the persisted
-  state (config, presets, themes, plugins, ascii reels) through the config
+  state (config, loadouts, themes, plugins, ascii reels) through the config
   directory.
 - `capture.py`, `motion.py`, `display.py`, `nowplaying.py` — platform
   services the widget composes; they are not part of the portable engine.
