@@ -334,6 +334,49 @@ The frame budget is 16.7 ms at 60 fps and the whole app has to fit in it.
 * Tagging a release now builds and attaches the Windows exe, the Windows
   installer, the Linux binary and the Android APK from one tag.
 
+## Android v0.3.0 — ships in spektr 0.4.5
+
+### The scene view
+
+The height-mapped terrain renderer is gone and four raymarched scenes have
+taken its place — **Metaball**, **Wormhole**, **Monolith** and **Lattice** —
+drawn entirely in a fragment shader. This is a change of kind, not of degree.
+
+The old renderer asked Python for a picture: a float per pixel, every frame,
+about 33 ms of numpy on the tablet, and then displaced a grid mesh by it. What
+it could ever be was therefore one thing — a lit sheet — and on a device it
+read as a strip of landscape floating in a black frame, which is exactly what
+it was.
+
+The scene view ships no picture at all. A frame is forty floats: energy, bass,
+mid, treble, an onset envelope, the beat phase, and twenty-four bands. The
+shader builds the world from them. Three things follow. It fills the screen by
+construction, because there is no mesh to frame and no camera distance to
+solve — every pixel is in the scene, and the ray through it either hits
+something or hits the sky, which is drawn in the theme's colours too. It costs
+almost nothing on the Python side: 172 bytes and no arrays, against a mode's
+worth of numpy per frame. And shape is free — fusing metaballs, an infinite
+tunnel, a fractured solid and a lattice running to the horizon are four `map`
+functions rather than four geometry pipelines.
+
+Colour still comes from spektr's 64-entry ramp, uploaded as a texture, so all
+fifty-odd themes work here unchanged. The surface renders at reduced
+resolution and is scaled up by the display hardware: a raymarcher is
+fill-bound and the panel is 1536x2560, so at native resolution the cost is
+four megapixels of sphere tracing, which no phone GPU does at thirty frames.
+Half is invisible on an organic scene and four times cheaper.
+
+### The launcher icon
+
+The new mark, as a proper adaptive icon: every density, a foreground and
+background layer, and the monochrome layer Android 13 uses to theme the
+launcher with the wallpaper. The old build shipped a single flat drawable.
+
+### Also
+
+The motion row from the desktop settings panel is here too, driven by the same
+Python profile table, so both platforms move the same way.
+
 ## Android v0.2.0 — ships in spektr 0.4.0
 
 ### The picker release

@@ -35,6 +35,7 @@ object EngineManager {
     const val DEFAULT_THEME = "gruvbox"
     private const val FRAME_MS = 33L
     private const val DEFAULT_BANDS = 16
+    private const val DEFAULT_MOTION = "snappy"
 
     private const val PREFS = "spektr"
     private const val KEY_MODE = "mode"
@@ -44,6 +45,7 @@ object EngineManager {
     private const val KEY_SMOOTH = "smooth"
     private const val KEY_ROWS = "rows"
     private const val KEY_BANDS = "bands"
+    private const val KEY_MOTION = "motion"
 
     private val pyContext = newSingleThreadContext("spektr-py")
     private val scope = CoroutineScope(pyContext + SupervisorJob())
@@ -98,6 +100,18 @@ object EngineManager {
         private set
 
     /**
+     * The motion profile — desktop's `motion` row.
+     *
+     * The names are Python's (`spektr.motion.PROFILES`); this list only
+     * decides what the settings screen offers, and Python re-validates
+     * whatever it is handed, so a name that drifts out of sync degrades to
+     * "the engine kept the old one" rather than a crash.
+     */
+    val MOTION_CHOICES = listOf("snappy", "glide")
+    var motion by mutableStateOf(DEFAULT_MOTION)
+        private set
+
+    /**
      * Draw the picture rather than the glyphs.
      *
      * A cell is not a pixel: Chladni computes a smooth nodal field and then
@@ -110,13 +124,19 @@ object EngineManager {
         private set
 
     /**
-     * Modes built for the GLES view - the terrain family. Selecting one
-     * turns smooth on (they displace their own float fields), Python ships
-     * heights instead of indices for them, and the GL surface draws them.
-     * There is no separate view switch: being 3D is a property of these
-     * modes, not a lens over all of them.
+     * The scene family: entries the picker offers that are not modes at all.
+     *
+     * Python names them, rather than this list being written twice — the
+     * engine is the authority on what it can render, and a hardcoded copy
+     * here is a thing to forget when one is added. Empty until the engine is
+     * up, which is fine: nothing can be selected before then.
+     *
+     * Selecting one costs nothing to set up. A scene needs no grid, no field
+     * scale and no smooth toggle; Python answers with forty floats and the GL
+     * surface draws the frame itself.
      */
-    val TERRAIN_MODES = setOf("Swell", "Terra")
+    var scenes: Set<String> by mutableStateOf(emptySet())
+        private set
 
     /**
      * How many rows of cells to fit on the screen — the app's resolution.
@@ -216,10 +236,13 @@ object EngineManager {
                 // renamed and themes get dropped, and a build that starts on a
                 // name the engine no longer has would fail on the first render
                 // with nothing on screen to explain it.
+                scenes = e.scenes
                 mode = store.getString(KEY_MODE, null)?.takeIf { it in e.modes } ?: DEFAULT_MODE
                 oled = store.getBoolean(KEY_OLED, false)
                 sensitivity = e.setSensitivity(store.getFloat(KEY_SENSITIVITY, 1.0f))
                 bands = e.setBands(store.getInt(KEY_BANDS, DEFAULT_BANDS))
+                motion =
+                    e.setMotion(store.getString(KEY_MOTION, null) ?: DEFAULT_MOTION)
                 smooth = store.getBoolean(KEY_SMOOTH, false)
                 targetRows = store.getInt(KEY_ROWS, 40).let { r ->
                     if (r in ROW_CHOICES) r else 40
@@ -287,11 +310,6 @@ object EngineManager {
         fieldScale = 2
         renderEma = 0.0
         prefs?.edit()?.putString(KEY_MODE, name)?.apply()
-        // The terrain family displaces its own float field, which only
-        // exists in smooth mode — selecting one turns smooth on with it.
-        if (name in TERRAIN_MODES && !smooth) {
-            useSmooth(true)
-        }
     }
 
     /**
@@ -403,6 +421,16 @@ object EngineManager {
         }
     }
 
+    /** Sets the motion profile and keeps what the engine settled on. */
+    fun useMotion(name: String) {
+        val e = engine ?: return
+        if (name !in MOTION_CHOICES) return
+        scope.launch {
+            motion = e.setMotion(name)
+            prefs?.edit()?.putString(KEY_MOTION, motion)?.apply()
+        }
+    }
+
     /** Step to the next or previous mode in the offered list, wrapping. */
     fun cycleMode(step: Int) {
         val e = engine ?: return
@@ -449,10 +477,16 @@ object EngineManager {
                 val e = engine
                 if (e != null && gridW > 0 && gridH > 0) {
                     try {
-                        val s = if (smooth) capScale(fieldScale, gridW, gridH) else 1
+                        // A scene ignores the grid entirely, so it must not
+                        // feed the field-scale control loop either: its render
+                        // is a fraction of a millisecond, which would ratchet
+                        // the multiplier to its ceiling and leave it there for
+                        // whatever mode is picked next.
+                        val isScene = mode in scenes
+                        val s = if (smooth && !isScene) capScale(fieldScale, gridW, gridH) else 1
                         val t0 = System.nanoTime()
                         e.render(mode, gridW * s, gridH * s)?.let { lastFrame = it }
-                        if (smooth) adaptScale((System.nanoTime() - t0) / 1e6, gridW, gridH)
+                        if (smooth && !isScene) adaptScale((System.nanoTime() - t0) / 1e6, gridW, gridH)
                     } catch (t: Throwable) {
                         Log.w("spektr", "render failed", t)
                     }

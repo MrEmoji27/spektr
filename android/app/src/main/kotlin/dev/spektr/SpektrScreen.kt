@@ -468,7 +468,7 @@ private fun SettingsList(palette: Palette) {
             "Draws the picture instead of the glyphs. A cell is not a pixel — Chladni " +
                 "computes a smooth field and then picks one half-block to stand for each " +
                 "cell. This runs the mode finer and blits what it actually computed. " +
-                "Selecting a terrain-family mode (Swell, Terra) turns this on by itself.",
+                "The scenes ignore it — they are not made of cells.",
             palette,
         ) {
             Chip(if (EngineManager.smooth) "on" else "off", palette, emphasis = EngineManager.smooth) {
@@ -494,6 +494,26 @@ private fun SettingsList(palette: Palette) {
                         palette,
                         emphasis = b == EngineManager.bands,
                     ) { EngineManager.useBands(b) }
+                }
+            }
+        }
+
+        // Motion is how the bars move, not what they measure: the analysis is
+        // upstream of it and identical under both profiles. "glide" is the
+        // slower, centred character — cava's smoothing reproduced without its
+        // frame-rate coupling.
+        SettingRow(
+            "motion",
+            "How the bars move. \"snappy\" chases every hit; \"glide\" rises lazily, " +
+                "sinks for most of a second and lets a hot bar lean into its neighbours — " +
+                "the relaxed look people know from cava.",
+            palette,
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (m in EngineManager.MOTION_CHOICES) {
+                    Chip(m, palette, emphasis = m == EngineManager.motion) {
+                        EngineManager.useMotion(m)
+                    }
                 }
             }
         }
@@ -819,12 +839,17 @@ fun GridView(palette: Palette) {
 
     // Held explicitly: GLSurfaceView exposes setRenderer but no getter, so
     // the update path talks to this instance directly.
-    val terrainRenderer = remember { TerrainRenderer() }
+    val sceneRenderer = remember { SceneRenderer() }
 
-    // The terrain branch is the port's exclusive: when a terrain-family mode
-    // is selected, Python ships float heights and the picture goes to a GLES
-    // surface instead of the blitter. The frame itself is the switch — no
-    // separate view toggle exists.
+    // The surface size the scene view was last scaled for. Held so the clamp
+    // is applied once per layout rather than on every recomposition — a
+    // setFixedSize call tears the surface down and builds it again.
+    var scaledFor by remember { mutableStateOf(0 to 0) }
+
+    // The scene branch is the port's exclusive: when a scene is selected,
+    // Python ships parameters rather than a picture and a fragment shader
+    // draws the frame. The frame itself is the switch — no separate view
+    // toggle exists.
     Box(
         Modifier.fillMaxSize().onSizeChanged { size ->
             viewW = size.width
@@ -832,26 +857,54 @@ fun GridView(palette: Palette) {
         }
     ) {
         val frame = EngineManager.lastFrame
-        if (frame?.isFloatField == true) {
+        if (frame?.isScene == true) {
             AndroidView(
                 factory = { ctx ->
                     GLSurfaceView(ctx).apply {
                         setEGLContextClientVersion(3)
+                        // Asked for rather than inherited: the default chooser
+                        // takes 565 colour, and a scene shaded through a
+                        // 64-entry ramp bands visibly at five bits of blue.
+                        // No depth buffer — a raymarcher sorts along its own
+                        // ray and never needs one.
+                        setEGLConfigChooser(8, 8, 8, 0, 0, 0)
                         preserveEGLContextOnPause = true
-                        setRenderer(terrainRenderer.also { it.submitPalette(palette) })
+                        setRenderer(sceneRenderer.also { it.submitPalette(palette) })
                         renderMode = GLSurfaceView.RENDERMODE_CONTINUOUSLY
                     }
                 },
-                update = {
-                    terrainRenderer.submitPalette(palette)
-                    terrainRenderer.submit(frame)
+                update = { gl ->
+                    // Render below native and let the display scale up. A
+                    // raymarcher is fill-bound and this panel is four
+                    // megapixels — the whole frame is one shader, so the cost
+                    // is exactly the pixel count.
+                    //
+                    // Applied here rather than at construction because the
+                    // view has not been measured when the factory runs: doing
+                    // it there read zeroes, skipped the clamp, and rendered
+                    // every frame at full resolution.
+                    if (viewW > 0 && viewH > 0 && (viewW to viewH) != scaledFor) {
+                        scaledFor = viewW to viewH
+                        val longest = maxOf(viewW, viewH)
+                        if (longest > SceneRenderer.FIXED_LONG_SIDE) {
+                            val k = SceneRenderer.FIXED_LONG_SIDE.toFloat() / longest
+                            gl.holder.setFixedSize(
+                                (viewW * k).toInt().coerceAtLeast(1),
+                                (viewH * k).toInt().coerceAtLeast(1),
+                            )
+                        } else {
+                            gl.holder.setSizeFromLayout()
+                        }
+                    }
+                    sceneRenderer.submitPalette(palette)
+                    sceneRenderer.submit(frame)
                 },
                 modifier = Modifier.fillMaxSize(),
             )
         } else if (frame != null) {
             // The captured frame, not a fresh read: the draw lambda runs after
             // recomposition, and re-reading lastFrame there could hand the
-            // glyph path a planes == 4 frame whose codes array is empty —
+            // glyph path a planes == 5 frame whose codes array is empty —
             // which is exactly the crash this once produced.
             Canvas(Modifier.fillMaxSize()) {
                 if (frame.isField) {
@@ -935,7 +988,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawGrid(
     // A float-field frame carries no glyphs at all; it belongs to the GL
     // branch. Guarded here too, so a stale hand-off can never index an
     // empty codes array.
-    if (frame.planes == 4 || frame.codes.isEmpty()) return
+    if (frame.isScene || frame.codes.isEmpty()) return
     val ramp = palette.ramp
     val rampColor = { idx: Int -> if (idx < ramp.size) Color(ramp[idx]) else Color(0xFF000000) }
     val bgIndex = { i: Int -> if (frame.planes == 3) frame.bidx!![i].toInt() and 0xFF else -1 }

@@ -17,10 +17,12 @@ import java.nio.ByteOrder
  * background". The grid is the terminal's constraint, not the mode's, and
  * this is the same frame with that constraint taken off.
  *
- * `planes == 4` (wire v2) is the terrain format: w*h float32 heights in
- * 0..1, straight from before the ramp quantises them. No codes, no colour —
- * the GLES renderer colours through the same 64-entry ramp and displaces by
- * height. This is the Android-exclusive view; nothing else consumes it.
+ * `planes == 5` (wire v3) is the scene format, and it is not a picture at
+ * all: [SCENE_FLOATS] float32 describing what the music is doing — energy,
+ * bands, the beat, an onset envelope — which [SceneRenderer] hands to a
+ * fragment shader that draws the whole frame itself. `w` is the float count
+ * and `h` is 1. Wire v2's float *height* plane is gone with the height-mapped
+ * terrain view it existed for.
  */
 class FrameBuf(
     val w: Int,
@@ -36,12 +38,21 @@ class FrameBuf(
     /** True when this is a picture to blit rather than a grid to typeset. */
     val isField: Boolean get() = planes == 1
 
-    /** True when this frame carries float heights for the terrain renderer. */
-    val isFloatField: Boolean get() = planes == 4 && fvals != null
+    /** True when this frame is scene parameters rather than anything to draw. */
+    val isScene: Boolean get() = planes == 5 && fvals != null
 
     companion object {
         const val MAGIC = "SPKT"
-        const val VERSION = 2
+        const val VERSION = 3
+
+        /**
+         * Floats in a scene frame. Python's `SCENE_HEAD + SCENE_BANDS`, and
+         * the two have to move together — the layout is read by index on both
+         * sides, so a mismatch is silently wrong rather than an error.
+         */
+        const val SCENE_FLOATS = 40
+        const val SCENE_HEAD = 16
+        const val SCENE_BANDS = 24
         const val HEADER_SIZE = 12
 
         /** Ramp indices are 0..63, so 255 is free to mean "background here". */
@@ -59,7 +70,7 @@ class FrameBuf(
             val w = bb.short.toInt() and 0xFFFF
             val h = bb.short.toInt() and 0xFFFF
             if (version != VERSION) return null
-            if (planes < 1 || planes > 4) return null
+            if (planes < 1 || planes > 5) return null
             if (w == 0 || h == 0) return null
             val cells = w * h
             if (planes == 1) {
@@ -68,12 +79,12 @@ class FrameBuf(
                 bb.get(field)
                 return FrameBuf(w, h, 1, IntArray(0), field, null)
             }
-            if (planes == 4) {
-                if (data.size != HEADER_SIZE + cells * 4) return null
-                val fb = bb.asFloatBuffer()
-                val floats = FloatArray(cells)
-                fb.get(floats)
-                return FrameBuf(w, h, 4, IntArray(0), null, null, floats)
+            if (planes == 5) {
+                if (h != 1 || w != SCENE_FLOATS) return null
+                if (data.size != HEADER_SIZE + w * 4) return null
+                val floats = FloatArray(w)
+                bb.asFloatBuffer().get(floats)
+                return FrameBuf(w, 1, 5, IntArray(0), null, null, floats)
             }
             val expected = HEADER_SIZE + cells * 4 + cells + if (planes == 3) cells else 0
             if (data.size != expected) return null

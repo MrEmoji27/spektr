@@ -29,22 +29,63 @@ three times and convert each element; instead everything is packed into one
 
 from __future__ import annotations
 
+import math
 import struct
 import time
 
 import numpy as np
 
-from spektr.analysis import Analyser, N_BANDS
+from spektr.analysis import N_BANDS, Analyser
 from spektr.capture import RingBuffer
 from spektr.modes import MODES, Ctx
-from spektr.motion import Peaks, Spring, Trace
+from spektr.motion import (
+    GLIDE_BLEND_TAU,
+    PROFILES,
+    Peaks,
+    Spring,
+    Trace,
+    spread,
+)
 from spektr.palette import BUILTIN, Palette
 
 #: Wire format version. Kotlin refuses a buffer it does not recognise rather
-#: than reading a stale layout as though it were current. v2 adds the float
-#: field plane (``planes == 4``) for the port's terrain view; the glyph and
-#: index layouts are unchanged from v1.
-WIRE_VERSION = 2
+#: than reading a stale layout as though it were current. v3 replaces v2's
+#: float *height* plane with the scene parameter block (``planes == 5``): the
+#: port no longer ships a picture for its 3D view, it ships the music. The
+#: glyph and index layouts are unchanged from v1.
+WIRE_VERSION = 3
+
+#: The scene family — raymarched solids the GLES view draws.
+#:
+#: Deliberately *not* spektr modes. A mode is a function from a Ctx to a grid
+#: of glyphs, and there is no grid of glyphs that is a raymarched metaball;
+#: pretending otherwise would mean writing a second, flat, worse version of
+#: each of these to satisfy a contract nothing needs them to keep. So the
+#: scene lives in the fragment shader and Python's whole job is to describe
+#: what the music is doing.
+#:
+#: That also makes them nearly free. The height-mapped view this replaces cost
+#: 33 ms a frame on the tablet — a mode's worth of numpy, every frame, to
+#: build a picture the GPU then had to be told about. A scene frame is 160
+#: bytes and no numpy at all.
+SCENES = ("Metaball", "Wormhole", "Monolith", "Lattice")
+SCENE_INDEX = {name: i for i, name in enumerate(SCENES)}
+
+#: Scene parameter block: a fixed header of scalars, then the bands. Kotlin
+#: reads the same layout by index, so these two halves are one definition in
+#: two languages and have to move together.
+#:
+#:  0 scene   1 t        2 energy   3 bass     4 mid      5 treble
+#:  6 pulse   7 hardest  8 beat     9 tempo   10 flux    11 peak band
+#: 12 tilt   13 hits    14 silent  15 —      16.. bands
+SCENE_HEAD = 16
+SCENE_BANDS = 24
+SCENE_FLOATS = SCENE_HEAD + SCENE_BANDS
+
+#: How fast a hit fades out of a scene, in seconds. Long enough that a shape
+#: is still moving when the next beat lands at 120 bpm, short enough that it
+#: is not simply always on.
+_PULSE_TAU = 0.28
 
 #: How much of the ramp's low end OLED mode fades into true black, as a
 #: fraction of the ramp. An OLED pixel showing #000000 is *off* — that is the
@@ -94,129 +135,6 @@ def _clamp_bars(n: int) -> int:
     return 0 if n <= 0 else max(8, min(64, n))
 
 
-class _RecordingPalette:
-    """A palette that remembers the floats modes hand it just before quantising.
-
-    Every mode ends its frame with ``ctx.ramp(field)`` — one call to
-    :meth:`Palette.indices` carrying the per-cell floats the whole picture is
-    shaded by. Immediately afterwards those floats are crushed to 64 ramp
-    indices, which is invisible in flat colour and fatal as terracing once
-    the terrain view lights the surface. This proxy sits between the modes
-    and the real palette (the engine hands its Ctx a palette either way), so
-    the terrain path can ship the *pre-quantisation* floats over the wire
-    without touching a single mode or any shared engine file — the port's
-    founding rule holds; this lives entirely on the Android side.
-
-    Only the last call's array is kept: nearly every mode shades through
-    exactly one ``ramp`` call per frame, and where one does not, the shape
-    check at pack time falls back to the quantised indices rather than
-    shipping a mis-mapped height map.
-    """
-
-    def __init__(self, inner: Palette) -> None:
-        self._inner = inner
-        self.last_norm: np.ndarray | None = None
-
-    def indices(self, norm) -> np.ndarray:
-        arr = np.asarray(norm, dtype=np.float64)
-        self.last_norm = arr
-        return self._inner.indices(arr)
-
-    def __getattr__(self, name):
-        return getattr(self._inner, name)
-
-
-def _field_float(codes, cidx, bidx, rec: _RecordingPalette):
-    """The picture those glyphs stood for, as float heights instead of indices.
-
-    Same geometry walk as :func:`_field` — braille gives 4x2 dots per cell,
-    half-blocks give two rows, everything else one — but each pixel carries a
-    normalised float for the GPU to displace and light, not a 64-step index.
-    Background pixels are 0.0.
-
-    The heights come from the recording palette, best source first:
-
-    1. A recording shaped exactly like this geometry's output plane — what
-       the half-block modes produce, since they ramp their smooth field at
-       full field resolution (Chladni measured at (2h, w)). Zero loss; the
-       quantiser never touched these numbers.
-    2. A recording shaped like the cell grid — the braille modes' shape,
-       whose dots then share their cell's height.
-    3. The quantised indices as floats. Still a valid height map, just with
-       the 64-step terracing this path exists to avoid; a mode that shades
-       through several ``ramp`` calls lands here rather than shipping a
-       mis-mapped surface.
-    """
-    h, w = codes.shape
-    hexmax = max(1, len(rec._inner.hexes) - 1)
-    idx_float = cidx.astype(np.float32) / hexmax
-
-    rec_norm = rec.last_norm
-
-    def clipped(a):
-        return np.clip(np.asarray(a, dtype=np.float32), 0.0, 1.0)
-
-    braille = (codes >= 0x2800) & (codes <= 0x28FF)
-    upper = codes == 0x2580
-    full = codes == 0x2588
-    lower = codes == 0x2584
-    blank = (codes == 0) | (codes == 0x20)
-
-    if braille.any():
-        sr, sc = 4, 2
-        out_h, out_w = h * sr, w * sc
-        if rec_norm is not None and tuple(rec_norm.shape) == (out_h, out_w):
-            out = clipped(rec_norm).copy()
-        else:
-            norm = None
-            if rec_norm is not None and tuple(rec_norm.shape) == (h, w):
-                norm = clipped(rec_norm)
-            out = np.zeros((out_h, out_w), dtype=np.float32)
-            if norm is None:
-                norm = idx_float
-            bits = np.where(braille, codes - 0x2800, 0)
-            for bit, (dy, dx) in enumerate(_BRAILLE_BITS):
-                on = ((bits >> bit) & 1).astype(bool)
-                sub = out[dy::sr, dx::sc]
-                np.copyto(sub, norm, where=on)
-            # Non-braille marks (peak ticks, box drawing) read as solid cells.
-            solid = ~braille & ~blank
-            if solid.any():
-                for dy in range(sr):
-                    for dx in range(sc):
-                        sub = out[dy::sr, dx::sc]
-                        np.copyto(sub, norm, where=solid)
-        return out, out_w, out_h
-
-    if upper.any() or full.any() or lower.any():
-        bg = bidx.astype(np.float32) / hexmax \
-            if bidx is not None else np.zeros((h, w), dtype=np.float32)
-        if rec_norm is not None and tuple(rec_norm.shape) == (h * 2, w):
-            # Full-resolution floats straight off the mode's own field.
-            base = clipped(rec_norm)
-            blank2 = np.repeat(blank, 2, axis=0)
-            return np.where(blank2, np.float32(0.0), base), w, h * 2
-        norm = None
-        if rec_norm is not None and tuple(rec_norm.shape) == (h, w):
-            norm = clipped(rec_norm)
-        if norm is None:
-            norm = idx_float
-        top = np.where(full | upper, norm, np.where(blank, 0.0, bg))
-        bot = np.where(full | lower, norm, np.where(blank, 0.0, bg))
-        other = ~(upper | full | lower | blank)
-        top = np.where(other, norm, top)
-        bot = np.where(other, norm, bot)
-        out = np.empty((h * 2, w), dtype=np.float32)
-        out[0::2] = top
-        out[1::2] = bot
-        return out, w, h * 2
-
-    solid = ~blank
-    if rec_norm is not None and tuple(rec_norm.shape) == (h, w):
-        return np.where(solid, clipped(rec_norm), np.float32(0.0)), w, h
-    return np.where(solid, idx_float, np.float32(0.0)), w, h
-
-
 class Engine:
     """One per app. Holds the ring, the analyser and the mode's scratch state."""
 
@@ -245,16 +163,17 @@ class Engine:
         self._modes = {m.name: m for m in MODES}
         self._theme = BUILTIN["gruvbox"]
         self._palette = Palette(self._theme)
-        self._rec = _RecordingPalette(self._palette)
         self._swatches: list[list[str]] | None = None
         self._oled = False
         self._field_mode = False
 
-        #: The terrain family — modes built for the GLES view. Selecting one
-        #: makes render() ship float heights instead of the index plane; no
-        #: separate switch exists, because "3D" is a property of the mode,
-        #: not a lens over all of them.
-        self._terrain_modes = {"Swell", "Terra"}
+        #: Decays every frame, kicked to 1.0 by an onset. The scenes want a
+        #: hit as a shape over time rather than as the instant it happened,
+        #: and a fragment shader has no memory between frames to build one
+        #: from — so the envelope is integrated here and shipped as a number.
+        self._pulse = 0.0
+        self._hardest = 0.0
+        self._hits = 0
 
         # Debug counters; see stats().
         self._stats_t0 = self._t0
@@ -281,11 +200,22 @@ class Engine:
         # Same objects and same constants as ``AudioVisualizer.__init__``,
         # sized to the count the analyser actually resolved — the wanted
         # setting and the resolved count only agree at or below N_BANDS.
-        self._spring = Spring(resolved)
+        # The motion profile starts on snappy, the default, and is switched
+        # live by ``set_motion`` — same table as the desktop widget, so a
+        # profile means the same feel on both platforms.
+        self._motion = "snappy"
+        params = PROFILES[self._motion]
+        self._spring = Spring(resolved, **params)
         self._peaks = Peaks(resolved)
-        self._stereo_l = Spring(resolved)
-        self._stereo_r = Spring(resolved)
+        self._stereo_l = Spring(resolved, **params)
+        self._stereo_r = Spring(resolved, **params)
         self._trace = Trace(tau=0.028)
+        # Glide's temporal pre-blends, one per spring exactly as the widget
+        # keeps them. Idle until glide is selected; re-seeded from live audio
+        # on the first glide frame.
+        self._band_blend = Trace(tau=GLIDE_BLEND_TAU)
+        self._stereo_l_blend = Trace(tau=GLIDE_BLEND_TAU)
+        self._stereo_r_blend = Trace(tau=GLIDE_BLEND_TAU)
         #: Last analyser sequence the trace was stepped for. The wave is only
         #: advanced on a genuinely new block, exactly as the widget does it.
         self._last_seq = -1
@@ -395,7 +325,6 @@ class Engine:
             return False
         self._theme = spec
         self._palette = Palette(spec)
-        self._rec = _RecordingPalette(self._palette)
         return True
 
     # ── colours, as flat lists ──
@@ -484,6 +413,26 @@ class Engine:
         self._analyser.sensitivity = v
         return v
 
+    def set_motion(self, name: str) -> str:
+        """Switch the motion profile, live — desktop settings' motion row.
+
+        Same table and same conditioning as ``AudioVisualizer.set_motion``,
+        so ``glide`` feels identical on both platforms. Springs are retuned
+        in place rather than replaced, so position and velocity survive the
+        switch; the pre-blends are dropped because history accumulated under
+        one profile is history the other never saw. Returns what was taken,
+        so Kotlin can show the settled value rather than the ask.
+        """
+        if name not in PROFILES:
+            return self._motion
+        if name != self._motion:
+            self._motion = name
+            for spring in (self._spring, self._stereo_l, self._stereo_r):
+                spring.retune(**PROFILES[name])
+            for blend in (self._band_blend, self._stereo_l_blend, self._stereo_r_blend):
+                blend.value = None
+        return name
+
     def mode_names(self) -> list[str]:
         """The modes the picker offers — everything except the hidden ones.
 
@@ -494,7 +443,11 @@ class Engine:
         missing glyph. ``render`` still accepts them by name, exactly as
         desktop keeps a hidden mode selectable from a config file.
         """
-        return [m.name for m in MODES if not m.hidden]
+        return [*SCENES, *(m.name for m in MODES if not m.hidden)]
+
+    def scene_names(self) -> list[str]:
+        """The subset of [mode_names] the GLES view draws, for Kotlin's switch."""
+        return list(SCENES)
 
     def theme_names(self) -> list[str]:
         return sorted(BUILTIN)
@@ -538,8 +491,9 @@ class Engine:
         """
         began = time.monotonic()
         self._feed_silence(began)
-        mode = self._modes.get(name)
-        if mode is None:
+        scene = SCENE_INDEX.get(name)
+        mode = None if scene is not None else self._modes.get(name)
+        if mode is None and scene is None:
             raise KeyError(f"no mode named {name!r}")
 
         # Mode scratch is keyed to the mode, and switching mode must not hand
@@ -564,18 +518,30 @@ class Engine:
             # analyser rather than a constant fixed at construction — and the
             # mode's scratch goes with them: cached geometry can be sized to
             # the old count. The desktop widget drops the same dict on this
-            # event (``_resize_bands``).
+            # event (``_resize_bands``). Rebuilt under the current motion
+            # profile, so a resize never silently resets the personality.
             n = len(f.bands)
-            self._spring = Spring(n)
+            params = PROFILES[self._motion]
+            self._spring = Spring(n, **params)
             self._peaks = Peaks(n)
-            self._stereo_l = Spring(n)
-            self._stereo_r = Spring(n)
+            self._stereo_l = Spring(n, **params)
+            self._stereo_r = Spring(n, **params)
             self._state = {}
 
-        self._spring.step(f.bands, dt)
+        # Motion profile conditioning, exactly as the widget's _tick does it:
+        # glide pre-blends temporally then spreads to neighbours; snappy
+        # feeds the raw spectrum straight through.
+        if self._motion == "glide":
+            bands_t = spread(self._band_blend.step(f.bands, dt))
+            bands_l_t = spread(self._stereo_l_blend.step(f.bands_l, dt))
+            bands_r_t = spread(self._stereo_r_blend.step(f.bands_r, dt))
+        else:
+            bands_t, bands_l_t, bands_r_t = f.bands, f.bands_l, f.bands_r
+
+        self._spring.step(bands_t, dt)
         self._peaks.step(self._spring.x, dt)
-        self._stereo_l.step(f.bands_l, dt)
-        self._stereo_r.step(f.bands_r, dt)
+        self._stereo_l.step(bands_l_t, dt)
+        self._stereo_r.step(bands_r_t, dt)
         if f.seq != self._last_seq:
             self._trace.step(f.wave, dt)
             self._last_seq = f.seq
@@ -593,6 +559,21 @@ class Engine:
         self._stats_onsets += onsets
         self._stats_band_peak = max(self._stats_band_peak, float(self._spring.x.max()))
 
+        # Onset envelope, integrated here because the shader cannot keep one.
+        self._pulse *= math.exp(-dt / _PULSE_TAU)
+        if onsets:
+            hard = min(1.0, max(0.0, float(f.onset_strength)))
+            self._pulse = 1.0
+            self._hardest = hard
+            self._hits += onsets
+
+        if scene is not None:
+            out_bytes = self._pack_scene(scene, f, energy, now - self._t0)
+            spent = time.monotonic() - began
+            self._stats_render += spent
+            self._stats_render_max = max(self._stats_render_max, spent)
+            return out_bytes
+
         ctx = Ctx(
             w=w, h=h,
             bands=self._spring.x, peaks=self._peaks.value,
@@ -603,7 +584,7 @@ class Engine:
             t=now - self._t0,
             dt=dt,
             energy=energy, silent=f.silent,
-            palette=self._rec, state=self._state,
+            palette=self._palette, state=self._state,
             bars=self._bars_wanted,
             onset_seq=f.onset_seq, onsets=onsets,
             onset_strength=f.onset_strength,
@@ -613,28 +594,71 @@ class Engine:
         out = mode.fn(ctx)
         codes, cidx = out[0], out[1]
         bidx = out[2] if len(out) == 3 else None
-        if self._field_mode and name in self._terrain_modes:
-            # The terrain family: float heights for the GLES displacement,
-            # pre-quantisation — these modes hand ctx.ramp their whole field
-            # in one call, so the recording is exact. planes == 4 says
-            # "w*h float32 little-endian".
-            plane, fw, fh = _field_float(codes, cidx, bidx, self._rec)
+        if self._field_mode:
+            plane, fw, fh = _field(codes, cidx, bidx)
             out_bytes = b"".join((
-                _HEADER.pack(_MAGIC, WIRE_VERSION, 4, fw, fh),
-                np.ascontiguousarray(plane, dtype="<f4").tobytes(),
+                _HEADER.pack(_MAGIC, WIRE_VERSION, 1, fw, fh),
+                np.ascontiguousarray(plane, dtype=np.uint8).tobytes(),
             ))
-        elif self._field_mode:
-                plane, fw, fh = _field(codes, cidx, bidx)
-                out_bytes = b"".join((
-                    _HEADER.pack(_MAGIC, WIRE_VERSION, 1, fw, fh),
-                    np.ascontiguousarray(plane, dtype=np.uint8).tobytes(),
-                ))
         else:
             out_bytes = _pack(codes, cidx, bidx)
         spent = time.monotonic() - began
         self._stats_render += spent
         self._stats_render_max = max(self._stats_render_max, spent)
         return out_bytes
+
+    def _pack_scene(self, scene: int, f, energy: float, t: float) -> bytes:
+        """One scene frame: ``planes == 5``, a flat block of float32.
+
+        No geometry crosses here and no picture does either. A raymarched
+        scene is defined entirely by its own shader; what it cannot know is
+        what the music is doing, and that is all of forty numbers. Kotlin
+        hands them straight to a uniform array.
+
+        The bands are resampled to a fixed [SCENE_BANDS] rather than shipped at
+        whatever count the analyser resolved. A shader indexing a uniform array
+        wants a constant bound, and the scenes read bands as *positions along a
+        spectrum* — a metaball's third orbit, a lattice's third rank — which is
+        a fraction of the way up, not an FFT bin. Resampling keeps that meaning
+        fixed while the band-count setting moves underneath it.
+        """
+        bands = self._spring.x
+        if len(bands) != SCENE_BANDS:
+            bands = np.interp(
+                np.linspace(0.0, 1.0, SCENE_BANDS),
+                np.linspace(0.0, 1.0, len(bands)),
+                bands,
+            )
+        left = float(self._stereo_l.x.mean())
+        right = float(self._stereo_r.x.mean())
+        head = [
+            float(scene),
+            # Wrapped, not raw. A float32 loses its fractional resolution as it
+            # grows, and a scene left running overnight would drift from
+            # smooth motion into visible stepping. An hour is longer than any
+            # period in these shaders, so the wrap is invisible.
+            float(t % 3600.0),
+            float(np.clip(energy, 0.0, 1.0)),
+            float(np.clip(bands[:SCENE_BANDS // 6].mean() * 1.4, 0.0, 1.0)),
+            float(np.clip(bands[SCENE_BANDS // 6:SCENE_BANDS // 2].mean() * 1.6, 0.0, 1.0)),
+            float(np.clip(bands[SCENE_BANDS // 2:].mean() * 2.0, 0.0, 1.0)),
+            float(self._pulse),
+            float(self._hardest),
+            float(f.beat_phase),
+            float(np.clip(f.tempo_bpm / 200.0, 0.0, 1.5)),
+            float(np.clip(f.flux, 0.0, 1.0)),
+            float(np.clip(bands.max(), 0.0, 1.0)),
+            float(np.clip((right - left) * 4.0, -1.0, 1.0)),
+            float(self._hits % 1024),
+            1.0 if f.silent else 0.0,
+            0.0,
+        ]
+        assert len(head) == SCENE_HEAD
+        block = np.asarray(head + list(np.clip(bands, 0.0, 1.0)), dtype="<f4")
+        return b"".join((
+            _HEADER.pack(_MAGIC, WIRE_VERSION, 5, SCENE_FLOATS, 1),
+            block.tobytes(),
+        ))
 
     def set_field_mode(self, on: bool) -> None:
         """Draw as a picture rather than as glyphs.

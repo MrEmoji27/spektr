@@ -48,6 +48,13 @@ class PyEngine private constructor(
     /** Every mode the picker may offer. Hidden octant variants are not among them. */
     val modes: List<String>,
     val themes: List<String>,
+    /**
+     * Which of [modes] are scenes rather than modes — the entries Python
+     * answers with parameters instead of a picture, for the GLES view. Read
+     * from the engine rather than listed here, so adding a scene is one edit
+     * on the Python side and not two that can disagree.
+     */
+    val scenes: Set<String>,
 ) {
     /** Interleaved float32 little-endian stereo PCM — `AudioRecord`'s ENCODING_PCM_FLOAT. */
     fun push(pcm: ByteArray) {
@@ -118,6 +125,15 @@ class PyEngine private constructor(
     fun setBands(count: Int): Int =
         engine.callAttr("set_bands", count).toInt()
 
+    /**
+     * The motion profile — desktop's settings-panel `motion` row. Python
+     * validates against its own table and returns what it took, so an APK
+     * naming a profile a newer engine dropped cannot wedge anything: the
+     * old profile simply stays.
+     */
+    fun setMotion(name: String): String =
+        engine.callAttr("set_motion", name).toString()
+
     private fun toPalette(hexes: List<PyObject>, what: String): Palette? {
         if (hexes.size < 3) {
             Log.w(TAG, "$what gave ${hexes.size} colours, expected bg + fg + ramp")
@@ -147,11 +163,15 @@ class PyEngine private constructor(
             // mistake is gone rather than fixed once.
             val modes = engine.callAttr("mode_names").asList().map { it.toString() }
             val themes = engine.callAttr("theme_names").asList().map { it.toString() }
+            val scenes = engine.callAttr("scene_names").asList().map { it.toString() }.toSet()
             require(modes.isNotEmpty()) { "the engine offers no modes" }
             require(themes.isNotEmpty()) { "the engine offers no themes" }
 
-            Log.i(TAG, "engine up: ${modes.size} modes, ${themes.size} themes")
-            return PyEngine(engine, modes, themes)
+            Log.i(
+                TAG,
+                "engine up: ${modes.size} modes (${scenes.size} scenes), ${themes.size} themes",
+            )
+            return PyEngine(engine, modes, themes, scenes)
         }
 
         fun hexToArgb(hex: String): Int {

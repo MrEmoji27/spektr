@@ -13,6 +13,7 @@ by running the desktop app. It has to be checked here or not at all.
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -74,7 +75,9 @@ def test_the_engine_builds_and_lists_what_the_desktop_has(engine):
     import spektr.modes as M
     from spektr.palette import BUILTIN
 
-    assert len(engine.mode_names()) == len(M.listed())
+    # Every listed desktop mode, plus the scenes, which are the port's own
+    # and exist nowhere in spektr.modes.
+    assert len(engine.mode_names()) == len(M.listed()) + len(spektr_android.SCENES)
     assert len(engine.theme_names()) == len(BUILTIN)
 
 
@@ -92,7 +95,7 @@ def test_the_picker_is_not_offered_modes_android_cannot_draw(engine):
     hidden = {m.name for m in M.MODES if m.hidden}
     assert hidden, "nothing is hidden — has the flag stopped being applied?"
     assert not (hidden & set(offered)), "a hidden mode reached the picker"
-    assert set(offered) == {m.name for m in M.listed()}
+    assert set(offered) == {m.name for m in M.listed()} | set(spektr_android.SCENES)
 
 
 def test_a_hidden_mode_is_still_renderable_by_name(engine):
@@ -368,69 +371,86 @@ def test_the_field_says_where_there_is_nothing():
         assert field[row, 2] == spektr_android.FIELD_EMPTY, "codepoint 0 is nothing at all"
 
 
-def _recording_palette():
-    from spektr.palette import BUILTIN, Palette
+def test_a_scene_ships_parameters_rather_than_a_picture(engine):
+    """Scene frames are planes == 5: a fixed block of float32, no grid at all.
 
-    return spektr_android._RecordingPalette(Palette(BUILTIN["gruvbox"]))
-
-
-def test_field_float_falls_back_to_indices_as_heights():
-    """Without a matching recording, quantised indices stand in as heights."""
-    codes = np.array([[0x20, 0x2588, 0x00]], dtype=np.int32)
-    cidx = np.array([[7, 41, 7]], dtype=np.uint8)
-    field, fw, fh = spektr_android._field_float(codes, cidx, None, _recording_palette())
-    assert (fw, fh) == (3, 2)
-    expect = 41 / 63.0
-    for row in (0, 1):
-        assert field[row, 0] == 0.0, "a space is zero height"
-        assert abs(field[row, 1] - expect) < 1e-6, "a full block's height is its index"
-        assert field[row, 2] == 0.0, "codepoint 0 is nothing at all"
-
-
-def test_field_float_prefers_the_recorded_pre_quantisation_field():
-    """A full-resolution recording crosses untouched by any 64-step ramp."""
-    codes = np.array([[0x2588]], dtype=np.int32)
-    cidx = np.array([[63]], dtype=np.uint8)          # index says "brightest"
-    rec = _recording_palette()
-    rec.last_norm = np.array([[0.5], [0.25]])        # recording disagrees
-    field, fw, fh = spektr_android._field_float(codes, cidx, None, rec)
-    assert (fw, fh) == (1, 2)
-    assert abs(field[0, 0] - 0.5) < 1e-6, "the recording wins over the indices"
-    assert abs(field[1, 0] - 0.25) < 1e-6
-
-
-def test_the_terrain_family_ships_float_heights(engine):
-    """Terrain-family frames are planes == 4: w*h float32 heights in 0..1.
-
-    Being three-dimensional is a property of the modes Swell and Terra, not
-    a lens over every mode — so the family ships floats while everything
-    else keeps the flat index plane, and the GLES renderer can trust the
-    format blindly because only these two modes ever produce it.
+    This is the whole point of the family. The height-mapped view it replaced
+    asked Python for a float per pixel every frame — a mode's worth of numpy —
+    to build a picture the GPU then had to be told about. A scene says what the
+    music is doing in forty numbers and lets the shader do the rest, so the
+    frame does not grow with the screen and the grid arguments are ignored.
     """
-    engine.set_field_mode(True)
     engine.push(_pcm())
-    for name in ("Swell", "Terra"):
+    for name in spektr_android.SCENES:
         for _ in range(3):
             buf = engine.render(name, 60, 20)
-        magic, ver, planes, fw, fh = spektr_android._HEADER.unpack_from(buf, 0)
+        magic, ver, planes, w, h = spektr_android._HEADER.unpack_from(buf, 0)
         assert magic == spektr_android._MAGIC
         assert ver == spektr_android.WIRE_VERSION
-        assert planes == 4, f"{name}: terrain frames carry floats"
-        assert len(buf) == spektr_android._HEADER.size + fw * fh * 4
-        assert fw >= 60 and fh >= 20, f"{name}: field {fw}x{fh} coarser than grid"
-        heights = np.frombuffer(buf, "<f4", fw * fh, spektr_android._HEADER.size)
-        assert np.isfinite(heights).all(), f"{name}: a non-finite height"
-        assert heights.min() >= 0.0, f"{name}: height below the floor"
-        assert heights.max() <= 1.0, f"{name}: height above the ceiling"
-        # These modes ramp their whole field in one call, so the heights are
-        # genuinely continuous — the anti-terracing point of wire v2.
-        assert len(np.unique(np.round(heights, 4))) > 64, (
-            f"{name}: heights collapsed to quantised levels"
-        )
-    buf = engine.render("Chladni", 60, 20)
-    assert spektr_android._HEADER.unpack_from(buf, 0)[2] == 1, (
-        "a non-family mode must keep the flat index plane"
+        assert planes == 5, f"{name}: a scene ships parameters"
+        assert (w, h) == (spektr_android.SCENE_FLOATS, 1)
+        assert len(buf) == spektr_android._HEADER.size + spektr_android.SCENE_FLOATS * 4
+
+        p = np.frombuffer(buf, "<f4", spektr_android.SCENE_FLOATS,
+                          spektr_android._HEADER.size)
+        assert np.isfinite(p).all(), f"{name}: a non-finite parameter"
+        assert p[0] == spektr_android.SCENE_INDEX[name], f"{name}: wrong scene index"
+        # Everything the shader reads as a level is normalised, because the
+        # shader has no way to find out what a raw magnitude would mean.
+        for i in (2, 3, 4, 5, 6, 7, 8, 10, 11):
+            assert 0.0 <= p[i] <= 1.0, f"{name}: parameter {i} = {p[i]} out of range"
+        assert -1.0 <= p[12] <= 1.0, f"{name}: stereo tilt out of range"
+        bands = p[spektr_android.SCENE_HEAD:]
+        assert len(bands) == spektr_android.SCENE_BANDS
+        assert ((bands >= 0.0) & (bands <= 1.0)).all(), f"{name}: a band out of range"
+
+
+def test_a_scene_frame_does_not_grow_with_the_grid(engine):
+    """The grid arguments are accepted and ignored — there is no grid in a scene."""
+    engine.push(_pcm())
+    small = engine.render("Metaball", 20, 8)
+    large = engine.render("Metaball", 400, 200)
+    assert len(small) == len(large) == (
+        spektr_android._HEADER.size + spektr_android.SCENE_FLOATS * 4
     )
+
+
+def test_the_scenes_are_offered_and_are_not_modes(engine):
+    """They appear in the picker, and nothing in spektr.modes answers to them."""
+    from spektr.modes import MODES
+
+    offered = engine.mode_names()
+    registered = {m.name for m in MODES}
+    for name in spektr_android.SCENES:
+        assert name in offered, f"{name} is not offered to the picker"
+        assert name not in registered, (
+            f"{name} is registered as a mode; scenes exist precisely because "
+            "there is no glyph grid that is a raymarched solid"
+        )
+    assert engine.scene_names() == list(spektr_android.SCENES)
+
+
+def test_an_onset_leaves_an_envelope_a_shader_can_use(engine):
+    """The pulse decays between hits rather than being an instant.
+
+    A fragment shader has no memory between frames, so a scene cannot build a
+    decay from a bare "an onset happened". The envelope is integrated on this
+    side and shipped as a number.
+    """
+    engine.push(_pcm())
+    for _ in range(4):
+        engine.render("Metaball", 60, 20)
+
+    engine._pulse = 1.0
+    engine._hardest = 0.8
+    seen = []
+    for _ in range(6):
+        time.sleep(0.02)
+        buf = engine.render("Metaball", 60, 20)
+        seen.append(float(np.frombuffer(buf, "<f4", 8, spektr_android._HEADER.size)[6]))
+    assert seen[0] < 1.0, "the pulse did not decay at all"
+    assert seen == sorted(seen, reverse=True), f"the envelope is not monotone: {seen}"
+    assert seen[-1] < 0.9, f"the envelope decays too slowly to read as a hit: {seen}"
 
 
 def test_a_mode_that_fills_the_screen_fills_the_field(engine):
@@ -450,12 +470,8 @@ def test_every_mode_survives_the_field_path(engine):
             for _ in range(3):
                 buf = engine.render(name, 60, 20)
             _, _, planes, fw, fh = spektr_android._HEADER.unpack_from(buf, 0)
-            if planes == 4:
-                # The terrain family ships float heights instead of indices.
-                assert len(buf) == spektr_android._HEADER.size + fw * fh * 4
-            else:
-                assert planes == 1
-                assert len(buf) == spektr_android._HEADER.size + fw * fh
+            assert planes == 1
+            assert len(buf) == spektr_android._HEADER.size + fw * fh
             assert fw >= 60 and fh >= 20, f"{name}: field {fw}x{fh} is coarser than the grid"
         except Exception as exc:                     # noqa: BLE001 — reporting
             bad.append(f"{name}: {type(exc).__name__}: {exc}")

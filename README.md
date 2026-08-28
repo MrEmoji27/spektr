@@ -470,8 +470,8 @@ browser or file manager the first time.
 
 The APK carries its own version number and it is not the one on the release.
 The port has had fewer versions than the desktop app, so the build inside
-spektr 0.4.5 reports **v0.2.0**; putting 0.4.5 on it would claim five versions
-of something that has had two. `CHANGELOG.md` lists the Android versions
+spektr 0.4.5 reports **v0.3.0**; putting 0.4.5 on it would claim five versions
+of something that has had three. `CHANGELOG.md` lists the Android versions
 separately, and the app shows that same file under **what's new**.
 
 Build it yourself with `cd android && ./gradlew :app:assembleDebug`; the
