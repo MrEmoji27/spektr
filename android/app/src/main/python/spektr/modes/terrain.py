@@ -186,6 +186,10 @@ def _terra_state(w: int, fh: int) -> dict:
     return {
         "xs": np.broadcast_to(xs, (fh, w)).copy(),
         "ys": np.broadcast_to(ys, (fh, w)).copy(),
+        # The same two axes un-broadcast. The noise wants the full grids; the
+        # onset hills are separable and only need each coordinate once.
+        "xs1": xs[0].copy(),
+        "ys1": ys[:, 0].copy(),
         "bx": np.zeros(_TERRA_BUMPS),
         "by": np.zeros(_TERRA_BUMPS),
         "born": np.full(_TERRA_BUMPS, -1e9),
@@ -296,13 +300,22 @@ def terra(ctx: Ctx):
         age = (t - st["born"])[alive]
         px = st["bx"][alive] * w
         py = st["by"][alive] * fh
-        dx = st["xs"] * w - px[:, None, None]
-        dy = st["ys"] * fh - py[:, None, None]
+        dx = st["xs1"] * w - px[:, None]                      # (bumps, w)
+        dy = st["ys1"] * fh - py[:, None]                     # (bumps, fh)
         rad = 0.09 * min(fh, w)
-        hill = np.exp(-(dx * dx + dy * dy) / (2.0 * rad * rad))
-        grow = np.minimum(age[:, None, None] * 3.0, 1.0)      # rise fast…
-        erode = np.exp(-np.maximum(age[:, None, None] - 1.2, 0.0) * 0.55)  # …erode slow
-        field += np.sum(hill * grow * erode * st["power"][alive][:, None, None], axis=0)
+        spread = -1.0 / (2.0 * rad * rad)
+        grow = np.minimum(age * 3.0, 1.0)                     # rise fast…
+        erode = np.exp(-np.maximum(age - 1.2, 0.0) * 0.55)    # …erode slow
+        # A round Gaussian is separable — exp(-(dx²+dy²)/2r²) is exp(-dx²/2r²)
+        # times exp(-dy²/2r²) — so the two axes are exponentiated apart and
+        # combined by an outer product, which is what the matrix multiply is.
+        # Written the obvious way this built a (bumps, fh, w) array and ran
+        # exp over all of it: five hills on a 400x100 terminal is 400,000
+        # exponentials a frame, five times the whole noise field, and it made
+        # Terra the only mode over the 16.7 ms budget. This does 3,000.
+        ex = np.exp(dx * dx * spread)
+        ey = np.exp(dy * dy * spread) * (grow * erode * st["power"][alive])[:, None]
+        field += ey.T @ ex
 
     field = _soft(field)
 
