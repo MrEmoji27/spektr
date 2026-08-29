@@ -32,7 +32,17 @@ display for the desk. It is a second screen, not a second product: see
 ## Install
 
 > [!TIP]
-> **Windows, no Python required** — grab `spektr.exe` from the
+> **Windows, one line, no Python required** — paste this into PowerShell:
+>
+> ```powershell
+> irm https://github.com/MrEmoji27/spektr/releases/latest/download/spektr.exe -OutFile spektr.exe; ./spektr.exe
+> ```
+>
+> That downloads the current release next to you and starts it. Nothing is
+> installed and nothing is written outside the folder you ran it in, so
+> deleting `spektr.exe` is the uninstall.
+>
+> Or grab `spektr.exe` from the
 > [latest release](https://github.com/MrEmoji27/spektr/releases) and double-click it.
 > A black window opens with the visualiser in it; that's a terminal, and it's meant to
 > happen. Windows may warn that it doesn't recognise the app — **More info → Run anyway**;
@@ -65,10 +75,10 @@ spektr
 ```
 
 > [!NOTE]
-> A one-line install is on the way in a later release. It won't be under the
-> name `spektr` — that belongs to an unrelated project on PyPI — so the package
-> name gets announced along with it. Until then use a prebuilt binary above, or
-> the source install here.
+> A one-line `pip install` is still on the way. It won't be under the name
+> `spektr` — that belongs to an unrelated project on PyPI — so the package name
+> gets announced along with it. The PowerShell line above needs no Python at
+> all, and is the shortest way in on Windows today.
 
 On Windows you can also just double-click `start.bat`, which builds a private
 environment on first run and starts spektr on every run after.

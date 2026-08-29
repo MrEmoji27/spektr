@@ -14,6 +14,18 @@ ones, four 3D scenes on Android, and a logo.
 
 **52 modes → 57.** Themes stay at 55.
 
+### One line to install it on Windows
+
+```powershell
+irm https://github.com/MrEmoji27/spektr/releases/latest/download/spektr.exe -OutFile spektr.exe; ./spektr.exe
+```
+
+Paste that into PowerShell and spektr downloads and starts. No Python, no
+installer, nothing added to your system — it just puts `spektr.exe` in the
+folder you ran it from, so deleting that file is the uninstall.
+
+There is still an installer below if you would rather have a Start Menu entry.
+
 ### Pick the ones you like — press `l`
 
 Fifty-seven modes is a lot to press `m` through when you only love four of

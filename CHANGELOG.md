@@ -15,6 +15,28 @@ Five new modes, a new mark, and a change to how you get at the modes at all:
 `l` now picks which of them the app offers you, because fifty-seven is more
 than anyone wants to cycle through to reach their four.
 
+### One line to install on Windows
+
+```powershell
+irm https://github.com/MrEmoji27/spektr/releases/latest/download/spektr.exe -OutFile spektr.exe; ./spektr.exe
+```
+
+`releases/latest/download/<asset>` is a GitHub redirect that always resolves
+to the newest published release, so the line does not carry a version and
+does not go stale on the next tag. It fetches the portable build rather than
+the installer: nothing is registered, nothing is written outside the working
+directory, and deleting the exe is the uninstall — which is the right default
+for a one-liner someone pastes to try a thing once.
+
+`irm` rather than `curl.exe` because `Invoke-RestMethod` is a PowerShell
+builtin on every supported Windows and needs no aliasing, and rather than
+`iwr` because `Invoke-WebRequest` builds a parsed response object it then
+throws away. Both work; this is the shortest that is also honest about what
+it does.
+
+Not a `pip install`, which is still pending: `spektr` on PyPI belongs to an
+unrelated project, so that one arrives with a package name to announce.
+
 ### A new logo
 
 spektr has a proper mark, drawn by **Roshan (RRDOJ)**. It is a terminal
