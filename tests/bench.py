@@ -114,19 +114,17 @@ REPORT_ONLY_FLAG = "--report-ratchet"
 #: is not the 25% the gap needs. The ceiling is 27.0: above the spread, and
 #: still failing the mode if it gets 7% worse than its worst reading.
 #:
-#: ``Pulse`` and ``Chladni (o)`` are the other reason, and are here under
-#: protest. Neither is over budget by design and neither was touched: they
-#: read under on the same runner in the two runs before, and crossed by 0.01
-#: and 0.47 ms in the third. That is the runner, not the modes — the same
-#: image and numpy build measured a 0.94-1.45x spread mode-to-mode against the
-#: 0.4.0 run. Recording them buys a release that three green runs would also
-#: have bought. If the Windows runner settles, delete these two rather than
-#: leaving them to rot: a ceiling nobody meant is how a real regression hides.
+#: ``Pulse`` and ``Chladni (o)`` were briefly recorded here too, to get 0.4.5
+#: out, and have been taken back off. Neither was over by design and neither
+#: had been touched: both read under on the same runner in the two runs before
+#: and crossed by 0.01 and 0.47 ms in the third, and against the 0.4.0 run the
+#: same image and numpy build measured a 0.94-1.45x spread mode to mode. That
+#: is the runner. A ceiling nobody meant is how a real regression hides, which
+#: is the thing this file exists to prevent, so they are gone rather than left
+#: to rot — and the tag build measures them again on every release.
 OVER_BUDGET_BY_DESIGN = {
     ("Chladni Extreme (o)", (400, 100)): 18.0,
     ("Terra", (400, 100)): 27.0,
-    ("Pulse", (400, 100)): 17.5,
-    ("Chladni (o)", (400, 100)): 18.0,
 }
 
 #: Ceiling for a mode with no recorded cost, in units of the median mode.
