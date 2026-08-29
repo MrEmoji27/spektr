@@ -195,12 +195,32 @@ def _terra_state(w: int, fh: int) -> dict:
     }
 
 
+#: The two lattice hash multipliers, and the sine and cosine of each and of
+#: their sum. The corner offsets are constants, so these are the only trig
+#: this mode does per *process* rather than per frame.
+_HASH_U = 12.9898
+_HASH_V = 78.233
+_SIN_U, _COS_U = math.sin(_HASH_U), math.cos(_HASH_U)
+_SIN_V, _COS_V = math.sin(_HASH_V), math.cos(_HASH_V)
+_SIN_UV, _COS_UV = math.sin(_HASH_U + _HASH_V), math.cos(_HASH_U + _HASH_V)
+
+
 def _sine_noise(u: np.ndarray, v: np.ndarray, freq: float, seed: float) -> np.ndarray:
     """Hash-free value noise: sines of lattice coordinates, smoothed.
 
     Not real gradient noise, and does not need to be — the ridged transform
     downstream only asks for smooth hills and hollows at a known scale, and
-    this delivers them for four multiplies and two trig calls per octave.
+    this delivers them at two trig calls per octave.
+
+    Two, not the four the corners would suggest. All four lattice corners are
+    ``sin(base + k)`` for a *constant* offset k — 0, A, B and A+B, where A and
+    B are the two hash multipliers — so the angle-addition identity gives the
+    other three from ``sin(base)`` and ``cos(base)`` and a handful of scalars
+    worked out once at import. That halves the transcendental work, which is
+    nearly all of this mode's cost: Terra evaluated twelve full-grid sines a
+    frame across three octaves and came out at 20 ms on a 400x100 terminal,
+    against a 16.7 ms budget at 60 fps. It is the same function to float
+    rounding, not an approximation of it.
     """
     su = u * freq + seed
     sv = v * freq * 0.62 + seed * 1.7
@@ -208,10 +228,13 @@ def _sine_noise(u: np.ndarray, v: np.ndarray, freq: float, seed: float) -> np.nd
     fu, fv = su - iu, sv - iv
     fu = fu * fu * (3.0 - 2.0 * fu)          # smoothstep the lattice crossings
     fv = fv * fv * (3.0 - 2.0 * fv)
-    n00 = np.sin(iu * 12.9898 + iv * 78.233 + seed)
-    n10 = np.sin((iu + 1) * 12.9898 + iv * 78.233 + seed)
-    n01 = np.sin(iu * 12.9898 + (iv + 1) * 78.233 + seed)
-    n11 = np.sin((iu + 1) * 12.9898 + (iv + 1) * 78.233 + seed)
+    base = iu * _HASH_U + iv * _HASH_V + seed
+    sb, cb = np.sin(base), np.cos(base)
+    # sin(base + k) = sin(base)cos(k) + cos(base)sin(k)
+    n00 = sb
+    n10 = sb * _COS_U + cb * _SIN_U
+    n01 = sb * _COS_V + cb * _SIN_V
+    n11 = sb * _COS_UV + cb * _SIN_UV
     top = n00 * (1 - fu) + n10 * fu
     bot = n01 * (1 - fu) + n11 * fu
     return (top * (1 - fv) + bot * fv).astype(np.float32)
