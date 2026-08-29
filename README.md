@@ -2,6 +2,8 @@
 
 <img src="https://raw.githubusercontent.com/MrEmoji27/spektr/main/assets/spektr.png" width="96" alt="spektr icon" />
 
+<sub>logo by Roshan (RRDOJ)</sub>
+
 **spektr** — a terminal spectrum analyser for whatever your speakers are doing.
 
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
