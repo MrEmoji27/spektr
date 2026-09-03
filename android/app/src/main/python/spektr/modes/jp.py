@@ -3,14 +3,22 @@
 Every mode here is the *same* segmented LED meter: a column per band, a fixed
 ladder of bulbs per column, the unlit bulbs drawn rather than left blank. That
 ladder is :func:`bar_panel` and all four modes draw it. What differs is the
-machine wrapped around it — a peak-hold meter, a travelling scan, a piano, a
-ring — so the family is an experiment in what a bar graph can be *put inside*
-rather than four unrelated pictures that happen to share a prefix.
+mode each one is *blended with*: ``Keys``' note roll, ``Dune``'s sandpile, a
+piano keyboard, and ``Radial``'s circle.
 
-That is the rule to keep if these are edited: the bars come first and stay
-legible, and the mechanic is layered onto them. A JP mode where you can
-no longer see a bar per band has stopped being one — the first version of this
-file lost the bars in three of the four and had to be rewritten.
+Two rules keep this a family rather than a shelf of near-duplicates, and both
+were learned by breaking them.
+
+**The bars come first.** The mechanic is layered onto a ladder that stays
+legible — the first version of this file lost the bars entirely in three of
+the four and had to be rewritten.
+
+**The partner has to be a real mechanic, not a decoration.** The fourth mode
+used to be a scan light sweeping the panel, and it was cut: ``Sonar`` already
+owns the travelling sweep with fading returns, and what was left after that
+was a bar chart with a line moving over it. If a new JP mode cannot be
+named as "``Bars`` × *something that already exists*", it is a clone of
+``Bars`` and it should not be added.
 
 Against the flat spectrum group they sit next to: ``Bars`` draws smooth
 fractional blocks and ``Ladder`` a contiguous stack, both of which show only
@@ -35,8 +43,7 @@ from . import (
 _LED = ord("▆")          # a lit bulb
 _OFF = ord("▁")          # an unlit one: the dark base of the same bulb
 _FULL = ord("█")
-_HALF_DOWN = ord("▄")
-_RULE = ord("│")
+_HALF_DOWN = ord("▄")   # a trail bulb: lighter than lit, heavier than unlit
 
 #: Where an unlit bulb and the *foot* of a lit ladder sit on the ramp.
 #:
@@ -69,6 +76,12 @@ _KW_WAVES = 2
 #: Bulbs along one spoke of the ring.
 _RING_SEGS = 12
 
+#: Sand per second into a band at full level, for Drift. ``Dune`` uses 0.55
+#: against a 160-row dot grid; a twenty-bulb ladder needs about three times
+#: that before anything crosses a bulb boundary often enough to read as
+#: moving. See :func:`jp_drift`.
+_DRIFT_FEED = 1.6
+
 
 def bulb_rows(rows: int) -> np.ndarray:
     """Which of ``rows`` rows carry bulbs: the bottom one and every other up.
@@ -80,6 +93,43 @@ def bulb_rows(rows: int) -> np.ndarray:
     return ((rows - 1) - np.arange(rows)) % 2 == 0
 
 
+def bulb_count(rows: int) -> int:
+    """How many bulbs a column of ``rows`` rows holds."""
+    return (rows + 1) // 2
+
+
+def bulb_row_index(rows: int) -> np.ndarray:
+    """Screen row of each bulb, counting bulb 0 as the bottom one.
+
+    Anything that travels *along* a ladder has to move in bulbs, not in rows:
+    a trail advanced one screen row at a time spends half its life on the dark
+    rows between bulbs and flickers. So the roll buffers here are indexed by
+    bulb and converted to rows only when they are drawn.
+    """
+    return rows - 1 - 2 * np.arange(bulb_count(rows))
+
+
+def crest_bulb(levels: np.ndarray, rows: int) -> np.ndarray:
+    """Index of the topmost lit bulb for each level, or -1 for none.
+
+    :func:`bar_panel` lights bulb *k* when ``level > 2k / rows``. This counts
+    that same comparison rather than inverting it into ``ceil(level * rows / 2)
+    - 1``, which is the closed form and is wrong about one level in forty.
+    The two arithmetic paths disagree at exactly the boundaries: a level that
+    is a couple of ulps above ``34/40`` lights the bulb, while the closed form
+    rounds ``level * 40 / 2`` back down to ``17.0`` and reports the bulb below
+    it. Half a screen away that is a trail detaching one bulb inside its own
+    bar, which looks like a rendering glitch and is impossible to find by
+    reading either function on its own.
+
+    Cheap to do properly — the comparison is ``n`` by ``bulbs``, both small —
+    and it cannot drift from :func:`bar_panel` unless the threshold there is
+    changed, in which case the same expression has to change here too.
+    """
+    thresh = 2 * np.arange(bulb_count(rows)) / rows
+    return (np.asarray(levels)[:, None] > thresh[None, :]).sum(axis=1).astype(np.int32) - 1
+
+
 def bar_panel(ctx: Ctx, rows: int, levels: np.ndarray, active: np.ndarray,
               heat: np.ndarray | None = None):
     """The ladder itself — ``(codes, cidx)`` of shape ``(rows, ctx.w)``.
@@ -88,10 +138,11 @@ def bar_panel(ctx: Ctx, rows: int, levels: np.ndarray, active: np.ndarray,
     :func:`band_columns`, because every caller here needs the column mapping
     for something else as well and gathering it twice would be waste.
 
-    ``heat`` is an optional per-column 0..1 multiplier on where the lit bulbs
-    land on the ramp. It exists for Sweep, which dims a column as the scan
-    light moves away from it; leave it out and the ladder is coloured by
-    height alone, which is the green-amber-red an equalizer is expected to be.
+    ``heat`` is an optional per-column multiplier on where the lit bulbs land
+    on the ramp — Drift pins a collapsing column to the top of it. Values above
+    1 are fine, since :meth:`Ctx.ramp` clips. Leave it out and the ladder is
+    coloured by height alone, which is the green-amber-red an equalizer is
+    expected to be.
     """
     w = ctx.w
     on_row = bulb_rows(rows)
@@ -140,91 +191,173 @@ def peak_bulbs(ctx: Ctx, codes, cidx, peaks: np.ndarray, rows: int,
 
 
 @mode("JP Bars", group="jp",
-      blurb="a segmented LED meter, unlit bulbs and all, with peak bulbs that hang and fall")
+      blurb="a segmented LED meter whose crest peels off and rises, like notes leaving a key")
 def jp_bars(ctx: Ctx):
-    """The family's plain meter, and the reference for the other three.
+    """The meter, blended with the note roll out of ``Keys``.
 
     ``Bars`` shows a level as a height of ink and nothing else, so a quiet
-    passage is a nearly empty screen. A graphic equalizer's panel is fully
-    there at all times — the bulbs above the level are unlit, not absent —
-    and that is what is drawn here, with the peak flag lighting a bulb of its
-    own that hangs where the level got to and falls back after it.
+    passage is a nearly empty screen and a loud one is a shape that vanishes
+    the instant the level drops. A graphic equalizer's panel is fully there at
+    all times — the bulbs above the level are unlit, not absent — and on top
+    of that this keeps what the bar *did*: every frame the crest sheds a bulb
+    that detaches and climbs the ladder, fading, exactly the way a struck note
+    leaves the keyboard and travels up the roll in ``Keys``.
+
+    So the picture holds two things at once. The bright ladder is now; the
+    half-height trail above it is the last couple of seconds of this band, and
+    a bar that rose fast leaves a staircase behind it because the emission
+    point moves with the crest.
+
+    **Not VFD, and the difference is the whole point.** ``VFD`` is the other
+    Japanese hi-fi display and it also puts something above the bar, but its
+    phosphor decays *in place* — the trail marks where the bar was and stays
+    there while it dims. These trails *travel*. One is a bar with a soft edge;
+    this is a bar with a history scrolling away from it. Anyone tempted to
+    unify them should switch between the two for a few seconds first.
     """
+    rows, w = ctx.h, ctx.w
     n = ctx.n_display
-    col_band, active = band_columns(ctx.w, n)
-    levels = np.where(active, ctx.display_bands(n)[col_band], 0.0)
+    col_band, active = band_columns(w, n)
+    lv = ctx.display_bands(n)
+    levels = np.where(active, lv[col_band], 0.0)
     peaks = np.where(active, ctx.display_peaks(n)[col_band], 0.0)
 
-    codes, cidx = bar_panel(ctx, ctx.h, levels, active)
-    peak_bulbs(ctx, codes, cidx, peaks, ctx.h)
+    nb = bulb_count(rows)
+    st = ctx.scratch("jp_roll", lambda: {
+        "roll": np.zeros((nb, n), dtype=np.float32),
+        "was": np.full(n, -1, dtype=np.int32),
+        "acc": 0.0,
+    })
+    if st["roll"].shape != (nb, n):
+        st["roll"] = np.zeros((nb, n), dtype=np.float32)
+        st["was"] = np.full(n, -1, dtype=np.int32)
+    roll = st["roll"]
+
+    # Paced in seconds, not frames, like every other scroll in the app: the
+    # trail must cross the ladder in the same time at 30 fps and at 144.
+    st["acc"] += (nb / 2.2) * ctx.dt
+    shift = min(int(st["acc"]), nb)
+    if shift:
+        st["acc"] -= shift
+        roll[shift:] = roll[:nb - shift]
+        roll[:shift] = 0.0
+    roll *= np.float32(np.exp(-max(ctx.dt, 0.0) / 0.9))
+
+    # Emit only the bulbs a *rise* actually added — the bars that were just
+    # raised, which is the thing being left behind. Emitting at the crest
+    # every frame instead was the first attempt and it filled the whole panel
+    # with trail: the crest wanders, so a continuous emitter smears across
+    # every bulb it visits and there is nothing left to read. A held note
+    # sheds nothing, and that is correct; it is not doing anything.
+    crest = np.clip(crest_bulb(lv, rows), -1, nb - 1)
+    kk = np.arange(nb, dtype=np.int32)[:, None]
+    raised = (kk > st["was"][None, :]) & (kk <= crest[None, :])
+    np.maximum(roll, raised * lv.astype(np.float32)[None, :], out=roll)
+    st["was"] = crest
+
+    codes, cidx = bar_panel(ctx, rows, levels, active)
+    peak_bulbs(ctx, codes, cidx, peaks, rows)
+
+    # Trails go in only where the ladder is unlit, so the live bar always wins
+    # its own cells and the picture never says a bulb is both.
+    rws = bulb_row_index(rows)
+    up = np.linspace(1.0, _LIT_FLOOR, rows)
+    ghost = np.where(active[None, :], roll[:, col_band], np.float32(0.0))
+    sub_c, sub_x = codes[rws], cidx[rws]
+    show = (ghost > 0.06) & (sub_c == _OFF)
+    sub_c[show] = _HALF_DOWN
+    sub_x[show] = ctx.ramp(up[rws][:, None] * ghost)[show]
+    codes[rws], cidx[rws] = sub_c, sub_x
     return codes, cidx
 
 
-@mode("JP Sweep", group="jp",
-      blurb="the same meter, refreshed one band at a time by a travelling scan")
-def jp_sweep(ctx: Ctx):
-    """A sample-and-hold meter: the scan light is what updates a bar.
+@mode("JP Drift", group="jp",
+      blurb="the meter as a sandpile — bulbs stack up and avalanche into their neighbours")
+def jp_drift(ctx: Ctx):
+    """The meter, blended with the sandpile out of ``Dune``.
 
-    Every other bar mode redraws every column from the current level every
-    frame. Here a column only takes a new reading when the scan light passes
-    over it, and then *holds* that height until the light comes back round —
-    so what is on screen is the spectrum smeared across one lap of the sweep,
-    oldest just ahead of the light and newest just behind it. The colour
-    carries the age: a freshly-read column sits at the top of the ramp and
-    cools as the light walks away from it, which is the comet the old
-    swept-analyser displays drew.
+    Every other mode in this family draws the level: read it, light that many
+    bulbs. Here the bulbs are a running *sum*. Sand rains into each band in
+    proportion to its level, a column only ever grows, and the sole way down
+    is a collapse — height crossing the angle of repose, dumping most of
+    itself and pushing the excess sideways into the two bands next to it.
+    A loud passage therefore keeps toppling columns for seconds afterwards,
+    because what decides that is the pile, not the spectrum.
 
-    The head is a rule drawn down the dark rows *between* the bulbs and
-    nowhere else, so the light passes behind the ladder. Brightening the
-    bulbs in that column as well was the obvious thing and it was wrong: it
-    lit the unlit ones too, and the head read as a full-height bar rather
-    than as a light.
+    The law is ``Dune``'s — inflow with the square of the level, collapse at
+    the angle of repose, a third of the excess to each side — but it is drawn
+    on the family's ladder rather than as dot-resolution grit, and that
+    changes two constants that are worth spelling out, because both were
+    found by the audit rather than by taste.
+
+    **Inflow is faster here, and has to be.** ``Dune`` fills a 160-row dot
+    grid, so a hundredth of a unit of sand still moves the top of the heap by
+    a dot. A twenty-bulb ladder is an order of magnitude coarser: at Dune's
+    rate nothing crosses a bulb boundary for a quarter of a second at a time
+    and the panel reads as *frozen*, which is what the animation check called
+    it. The rate buys back the resolution the ladder gives up.
+
+    **The pile starts at the spectrum, not at zero.** From flat it would spend
+    the first seconds as an empty panel — the mode would have nothing to say
+    when you switched to it, and its whole colour range would be missing until
+    the heap got tall enough to reach it. Seeded, it opens as a bar graph and
+    then starts drifting, which is also the honest picture: the sand has been
+    falling all along, you just arrived.
+
+    A collapse then needs help to be visible at all. Grit shows an avalanche
+    as a texture sliding; sixteen bulbs cannot, so a toppling column and the
+    two it feeds flash to the top of the ramp and fade, and that flash is how
+    you see where the sand went.
+
+    This replaced a scan-light mode that was the fourth JP. It was cut
+    because ``Sonar`` already owns the travelling sweep with fading returns,
+    and a JP version of it was a bar chart with a line moving over it —
+    a clone of ``Bars`` wearing a different mechanic rather than a blend with
+    one. Sideways transfer between bands is something no other mode does.
     """
     w, h = ctx.w, ctx.h
     if w < 10 or h < 4:
         return empty(w, h)
 
-    n = ctx.n_display
-    col_band, active = band_columns(w, n)
+    n = int(np.clip(ctx.n_display, 6, 40))
     lv = ctx.display_bands(n)
 
-    st = ctx.scratch("jp_sweep", lambda: {
-        "pos": 0.0,
-        "hold": np.zeros(n, dtype=np.float64),
-        "age": np.ones(n, dtype=np.float64),
+    st = ctx.scratch("jp_drift", lambda: {
+        "h": lv.astype(np.float64).copy(),
+        "flash": np.zeros(n, dtype=np.float64),
+        "rng": np.random.default_rng(53),
     })
-    if st["hold"].shape[0] != n:
-        st["hold"] = np.zeros(n, dtype=np.float64)
-        st["age"] = np.ones(n, dtype=np.float64)
+    if st["h"].shape[0] != n:
+        st["h"] = lv.astype(np.float64).copy()
+        st["flash"] = np.zeros(n, dtype=np.float64)
+    pile, flash, rng = st["h"], st["flash"], st["rng"]
 
-    # Position is accumulated from dt rather than computed as t * rate: the
-    # rate varies with the music, and multiplying a varying rate by the whole
-    # elapsed time retroactively rewrites where the light has already been.
-    # scenes._tunnel has the long version of why that bug is not theoretical.
-    rate = 0.30 + ctx.drive * 0.45 + ctx.energy * 0.30      # laps per second
-    prev = st["pos"]
-    st["pos"] = (prev + rate * ctx.dt) % 1.0
-    span = ((st["pos"] - prev) % 1.0) * n
+    pile += lv * lv * _DRIFT_FEED * ctx.dt
+    np.clip(pile, 0.0, 1.3, out=pile)
 
-    # Which bands the head crossed this frame, measured at the band's centre
-    # and in band units ahead of where the light was — one modular subtraction
-    # instead of a wrapped pair of slices.
-    ahead = ((np.arange(n) + 0.5) - prev * n) % n
-    crossed = ahead <= span
-    st["hold"][crossed] = lv[crossed]
-    st["age"][crossed] = 0.0
-    st["age"] = np.minimum(st["age"] + ctx.dt / 1.7, 1.0)
+    spill = pile > 1.0
+    if spill.any():
+        idx = np.flatnonzero(spill)
+        excess = pile[idx] - 0.55
+        pile[idx] = 0.55 + rng.uniform(-0.03, 0.03, idx.size)
+        left = np.clip(idx - 1, 0, n - 1)
+        right = np.clip(idx + 1, 0, n - 1)
+        np.add.at(pile, left, excess * 0.35)
+        np.add.at(pile, right, excess * 0.35)
+        np.clip(pile, 0.0, 1.3, out=pile)
+        # the column that went, and the two it went into
+        flash[idx] = 1.0
+        np.maximum.at(flash, left, 0.7)
+        np.maximum.at(flash, right, 0.7)
 
-    fresh = 0.25 + 0.75 * (1.0 - st["age"])
-    levels = np.where(active, st["hold"][col_band], 0.0)
-    codes, cidx = bar_panel(ctx, h, levels, active,
-                            heat=np.where(active, fresh[col_band], 0.0))
+    st["flash"] = flash * float(np.exp(-max(ctx.dt, 0.0) / 0.22))
 
-    head = int(np.clip(st["pos"] * w, 0, w - 1))
-    gap = ~bulb_rows(h)
-    codes[gap, head] = _RULE
-    cidx[gap, head] = RAMP_STEPS - 1
-    return codes, cidx
+    col_band, active = band_columns(w, n)
+    levels = np.where(active, np.clip(pile, 0.0, 1.0)[col_band], 0.0)
+    # ``heat`` above 1 is fine: ctx.ramp clips, so a collapsing column simply
+    # pins to the top of the ramp for as long as the flash lasts.
+    heat = np.where(active, 1.0 + st["flash"][col_band] * 1.6, 0.0)
+    return bar_panel(ctx, h, levels, active, heat=heat)
 
 
 @mode("JP Keys", group="jp",

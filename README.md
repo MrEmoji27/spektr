@@ -142,14 +142,21 @@ Listed in the order the picker cycles them.
 | **Murmuration** | a flock wheeling and scattering with the beat | **Rain** | rain on the glass, falling harder when it's loud |
 | **Retro** | sunset grid, with the spectrum as the horizon | **Ember** | a coal bed burning by band, sparks off the hot spots |
 | **Auroras** | a light ribbon whose lower rim rides the spectrum | **Snow** | snowfall in three planes, gusting and lying in drifts |
-| **JP Bars** | a segmented LED meter, unlit bulbs and all, with peak bulbs that hang and fall | **JP Keys** | the same meter standing on a piano — each bar rises out of its own key |
-| **JP Sweep** | the meter refreshed one band at a time by a travelling scan | **JP Pulse** | the meter bent into a ring — a spoke of bulbs per band, chased on the beat |
+| **JP Bars** | a segmented LED meter whose crest peels off and rises, like notes leaving a key | **JP Keys** | the same meter standing on a piano — each bar rises out of its own key |
+| **JP Drift** | the meter as a sandpile — bulbs stack up and avalanche into their neighbours | **JP Pulse** | the meter bent into a ring — a spoke of bulbs per band, chased on the beat |
 
 The four **JP** modes are one *jp* group and, unusually, one
-picture: they all draw the same segmented LED bar graph, and what differs is
-the machine wrapped around it. Where **Bars** and **Ladder** show only the lit
-part of a column, these draw the unlit bulbs too — the difference between a
-bar chart with gaps in it and a panel of hardware with the power on.
+picture: every one of them draws the same segmented LED bar graph, and what
+differs is the mode it is *blended with* — **Keys**' note roll, **Dune**'s
+sandpile, a piano keyboard, and **Radial**'s circle. Where **Bars** and
+**Ladder** show only the lit part of a column, these draw the unlit bulbs
+too: the difference between a bar chart with gaps in it and a panel of
+hardware with the power on.
+
+The blend has to be a real mechanic rather than a decoration, which is a rule
+with a body behind it — a fifth JP that swept a scan light across the
+panel was cut, because **Sonar** already owns the travelling sweep and what
+was left after that was a bar chart with a line moving over it.
 
 **Shooting Star** opens a *cosmos* group, and it is built on a different
 bargain from everything above it: the picture is mostly empty and mostly
