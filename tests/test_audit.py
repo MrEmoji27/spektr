@@ -100,6 +100,14 @@ SELF_ANIMATING = {
     # beat that threw them — so a frozen spectrum still moves, which is the
     # whole distinction from Dither next to it
     "Dither Storm", "Dither Storm Extreme",
+    # the scan light travels and every bar it has already read keeps cooling
+    # on its own timer, so the picture ages even at a frozen spectrum
+    # (JP Sweep); the dial keeps rotating and a launched chaser runs
+    # once round it before fading (JP Pulse). JP Bars and JP
+    # Keys are deliberately *not* here: both are bar charts, and a bar chart
+    # of a constant signal is supposed to be constant — Keys' release tail
+    # has already reached the level by the second frame of a held note.
+    "JP Sweep", "JP Pulse",
 }
 
 #: Modes driven by the waveform rather than the band levels.

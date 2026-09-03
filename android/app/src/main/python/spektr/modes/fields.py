@@ -753,7 +753,7 @@ def chladni_extreme_fine(ctx: Ctx):
 
 @mode("VFD", group="fields", blurb="vacuum-fluorescent bargraph with phosphor afterglow")
 def vfd(ctx: Ctx):
-    """The other Japanese hi-fi display technology, next to Kenwood's LEDs.
+    """The other Japanese hi-fi display technology, next to the LED meters.
 
     A vacuum-fluorescent display doesn't turn off instantly — the phosphor
     keeps glowing for a beat after the drive current cuts, so a fast

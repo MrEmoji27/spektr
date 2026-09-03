@@ -618,6 +618,7 @@ from . import lofi       # noqa: E402,F401
 from . import halftone   # noqa: E402,F401
 from . import terrain    # noqa: E402,F401
 from . import cosmos     # noqa: E402,F401
+from . import jp    # noqa: E402,F401   # the JP family
 
 
 @mode("None", group="off", blurb="nothing at all")
