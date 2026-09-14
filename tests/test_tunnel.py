@@ -136,12 +136,12 @@ def test_spokes_are_thin_even_strokes_with_a_gentle_taper(name, size):
                 break
             cells = {(int(round(y0 + py * t)), int(round(x0 + px * t))) for t in np.arange(-4, 4.01, 0.25)}
             wd = sum(1 for y, x in cells if 0 <= y < dr and 0 <= x < dc and walls[y, x])
-            if wd:
+            # Near the vanishing point the neighbouring spokes are closer than
+            # the +-4 dot window measures across, so their dots would count as
+            # width; judge each spoke where its neighbours are clear of it.
+            if wd and r * 2 * math.pi / 16 > 10:
                 widths.append(wd)
-        # Near the vanishing point the neighbouring spokes are closer than the
-        # +-4 dot window measures across, so their dots would count as width;
-        # judge each spoke from where its neighbours are clear of the window.
-        widths = np.array(widths[12:])
+        widths = np.array(widths)
         assert widths.size > 5, f"spoke {k} is missing"
         assert widths.max() <= 4, f"spoke {k} swells to {widths.max()} dots"
         # consecutive samples a dot apart never jump by more than a dot
@@ -259,3 +259,36 @@ def test_a_loud_small_tunnel_stays_a_line_drawing(name):
         win = sliding_window_view(np.pad(d, 2), (5, 5)).sum(axis=(-1, -2))
         heavy.append(float((win[d] >= 18).mean()))
     assert np.mean(heavy) < 0.135, f"{name}: {100 * np.mean(heavy):.1f}% of lit dots in solid blocks at full level"
+
+
+@pytest.mark.parametrize("size", SIZES)
+@pytest.mark.parametrize("name", MODES)
+def test_spokes_converge_on_the_vanishing_point_without_a_blob(name, size):
+    """The spokes run on into the centre as hairlines, and the centre stays open.
+
+    They used to stop at a hole several dots wide. Now each one continues to
+    where it would fuse with its neighbour, the four axes reaching within a
+    couple of dots of the centre, and none of them thickens or brightens on
+    the way in.
+    """
+    state, frames = _play(name, *size, frames=4)
+    geo = _geo(state)
+    d = frames[-1]
+    dr, dc = d.shape
+    cx, cy = dc / 2.0, dr / 2.0
+    s = cy / cx
+    yy, xx = np.mgrid[0:dr, 0:dc]
+    dist = np.hypot((xx - cx) * s, yy - cy)
+    # the axes reach the centre
+    for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+        ray = [(int(round(cy + dy * r)), int(round(cx + dx * r / s))) for r in np.arange(2.5, 8.0, 0.5)]
+        assert all(geo["walls"][y, x] or geo["walls"][y, min(dc - 1, x + 1)] or geo["walls"][min(dr - 1, y + 1), x]
+                   for y, x in ray), f"{name} {size}: an axis spoke stops short of the centre"
+    # no blob: the lit share of the innermost disc stays low
+    core = dist <= 6.0
+    assert d[core].mean() < 0.35, f"{name} {size}: {100 * d[core].mean():.0f}% of the centre is lit"
+    # dimmer inward: spoke brightness never rises toward the centre
+    v = geo["spoke_value"]
+    inner = geo["walls"] & (dist < 12.0)
+    outer = geo["walls"] & (dist > 20.0) & (dist < 30.0)
+    assert v[inner].mean() < v[outer].mean(), "the spokes brighten into the centre"

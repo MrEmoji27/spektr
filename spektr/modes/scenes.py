@@ -472,17 +472,33 @@ def _tunnel(ctx, inward: bool):
         # Spokes: sixteen straight lines through the centre. The nearest one's
         # direction, taken from the stretched angle and mapped back to dots,
         # gives an exact perpendicular distance in dots.
-        k = np.rint(turn * np.float32(16.0)) * np.float32(2.0 * math.pi / 16.0)
+        spoke = np.rint(turn * np.float32(16.0)).astype(np.int32) % 16
+        k = spoke.astype(np.float32) * np.float32(2.0 * math.pi / 16.0)
         ux, uy = np.cos(k) / s, np.sin(k)
         norm = np.sqrt(ux * ux + uy * uy)
         perp = np.abs(xx * uy - yy * ux) / norm
-        # Neighbouring spokes are dist * 2pi/16 apart; inside the radius where
-        # that is under three dots they would fuse, which is the vanishing point.
-        hole = np.float32(min(0.25 * max_r, max(0.07 * max_r, 3.0 / (2.0 * math.pi / 16.0))))
-        walls = (perp <= np.float32(0.55) + np.float32(0.45) * near) & (dist > hole)
+        # Outside ``hole`` the spokes are the tapering strokes; inside it they
+        # carry on to the vanishing point as one-dot hairlines. Sixteen lines
+        # cannot all get there — neighbours are ``dist * 2pi/16`` apart and fuse
+        # into a blob under about two and a half dots — so they stop in a
+        # hierarchy, each where it would touch its neighbour: the eight
+        # in-between spokes at that radius, the four diagonals where eight
+        # lines would fuse, and the four axes where four would, which is a
+        # dot or two from the centre. Every line stays one continuous stroke,
+        # and all of them dim toward the centre rather than brighten into a
+        # starburst.
+        step = np.float32(2.0 * math.pi / 16.0)
+        fuse = np.float32(2.5)
+        hole = np.float32(min(0.25 * max_r, max(0.07 * max_r, 3.0 / float(step))))
+        reach_in = np.where(spoke % 4 == 0, fuse / (4 * step),
+                            np.where(spoke % 2 == 0, fuse / (2 * step), fuse / step)).astype(np.float32)
+        outer = (perp <= np.float32(0.55) + np.float32(0.45) * near) & (dist > hole)
+        inner = (perp <= np.float32(0.5)) & (dist <= hole) & (dist >= reach_in)
+        walls = outer | inner
+        inward = np.clip(dist / hole, 0.0, 1.0)
         spoke_value = np.where(
-            walls, np.float32(0.25) + np.float32(0.35) * np.clip((dist - hole) / np.float32(0.8 * max_r), 0.0, 1.0),
-            np.float32(0.0)).astype(np.float32)
+            outer, np.float32(0.25) + np.float32(0.35) * np.clip((dist - hole) / np.float32(0.8 * max_r), 0.0, 1.0),
+            np.where(inner, np.float32(0.25) * inward * inward, np.float32(0.0))).astype(np.float32)
 
         return {
             "depth055": (np.float32(max_r) / np.maximum(dist, np.float32(0.9)) * np.float32(0.55)).astype(np.float32),
