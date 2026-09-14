@@ -264,31 +264,48 @@ def test_a_loud_small_tunnel_stays_a_line_drawing(name):
 @pytest.mark.parametrize("size", SIZES)
 @pytest.mark.parametrize("name", MODES)
 def test_spokes_converge_on_the_vanishing_point_without_a_blob(name, size):
-    """The spokes run on into the centre as hairlines, and the centre stays open.
+    """The spokes run on into the centre and fade out there, with no blob.
 
-    They used to stop at a hole several dots wide. Now each one continues to
-    where it would fuse with its neighbour, the four axes reaching within a
-    couple of dots of the centre, and none of them thickens or brightens on
-    the way in.
+    They first stopped at a hole several dots wide, then at staggered radii
+    that read live as a ring of stubs round a void. Now each continues to
+    where it would fuse with its neighbour, measured in real dots so the
+    horizontal axis reaches in as far as the vertical one, fading to nearly
+    the background on the way, so the ends dissolve rather than cut off.
     """
-    state, frames = _play(name, *size, frames=4)
+    from spektr.modes import bg_contrast
+
+    fn = M.get(name).fn
+    state: dict = {}
+    bands = np.full(N_BANDS, 0.5)
+    for f in range(4):
+        ctx = Ctx(w=size[0], h=size[1], bands=bands, peaks=bands, bands_l=bands, bands_r=bands,
+                  wave=np.zeros(512), stereo=np.zeros((512, 2)), frame=f, t=f / 60, dt=1 / 60,
+                  energy=0.5, silent=False, palette=PAL, state=state)
+        codes, cidx = fn(ctx)[:2]
     geo = _geo(state)
-    d = frames[-1]
+    d = _dots(codes)
     dr, dc = d.shape
     cx, cy = dc / 2.0, dr / 2.0
-    s = cy / cx
     yy, xx = np.mgrid[0:dr, 0:dc]
-    dist = np.hypot((xx - cx) * s, yy - cy)
-    # the axes reach the centre
+    dots = np.hypot(xx - cx, yy - cy)
+    # the axes reach within four real dots of the centre, both of them
     for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-        ray = [(int(round(cy + dy * r)), int(round(cx + dx * r / s))) for r in np.arange(2.5, 8.0, 0.5)]
+        ray = [(int(round(cy + dy * r)), int(round(cx + dx * r))) for r in np.arange(4.0, 9.0, 0.5)]
         assert all(geo["walls"][y, x] or geo["walls"][y, min(dc - 1, x + 1)] or geo["walls"][min(dr - 1, y + 1), x]
                    for y, x in ray), f"{name} {size}: an axis spoke stops short of the centre"
-    # no blob: the lit share of the innermost disc stays low
-    core = dist <= 6.0
-    assert d[core].mean() < 0.35, f"{name} {size}: {100 * d[core].mean():.0f}% of the centre is lit"
-    # dimmer inward: spoke brightness never rises toward the centre
-    v = geo["spoke_value"]
-    inner = geo["walls"] & (dist < 12.0)
-    outer = geo["walls"] & (dist > 20.0) & (dist < 30.0)
-    assert v[inner].mean() < v[outer].mean(), "the spokes brighten into the centre"
+    # no blob: sparse, and what is lit there is dim
+    core = dots <= 6.0
+    assert d[core].mean() < 0.45, f"{name} {size}: {100 * d[core].mean():.0f}% of the centre is lit"
+    cr = bg_contrast(PAL)
+    cell = lambda m: np.unique(np.stack(np.nonzero(m), 1) // [4, 2], axis=0)  # noqa: E731
+    core_cells = cell(core & d)
+    rim_cells = cell((dots > 40.0) & (dots < 60.0) & geo["walls"] & d)
+    core_c = float(np.mean(cr[cidx[core_cells[:, 0], core_cells[:, 1]]]))
+    rim_c = float(np.mean(cr[cidx[rim_cells[:, 0], rim_cells[:, 1]]]))
+    assert core_c < 0.6 * rim_c, f"{name} {size}: the centre ({core_c:.2f}) is not dimmer than the spokes ({rim_c:.2f})"
+    # and the fade only ever dims inward
+    fade = geo["spoke_fade"]
+    inner = geo["walls"] & (dots < 8.0) & (fade > 0)
+    mid = geo["walls"] & (dots > 12.0) & (fade > 0)
+    if inner.any() and mid.any():
+        assert fade[inner].mean() < fade[mid].mean(), "the spoke ends brighten toward the centre"

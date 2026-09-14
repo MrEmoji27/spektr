@@ -19,6 +19,7 @@ from . import (
     Ctx,
     angular_bands as _angular_bands,
     band_columns,
+    bg_contrast,
     contrast_ramp,
     empty,
     mode,
@@ -490,15 +491,27 @@ def _tunnel(ctx, inward: bool):
         step = np.float32(2.0 * math.pi / 16.0)
         fuse = np.float32(2.5)
         hole = np.float32(min(0.25 * max_r, max(0.07 * max_r, 3.0 / float(step))))
+        # Stop radii in real dots, not in the stretched distance: stretched,
+        # the horizontal axis stopped more than twice as far out as the
+        # vertical one, and the centre read as a wide horizontal void.
+        dots = np.sqrt(xx * xx + yy * yy)
         reach_in = np.where(spoke % 4 == 0, fuse / (4 * step),
                             np.where(spoke % 2 == 0, fuse / (2 * step), fuse / step)).astype(np.float32)
         outer = (perp <= np.float32(0.55) + np.float32(0.45) * near) & (dist > hole)
-        inner = (perp <= np.float32(0.5)) & (dist <= hole) & (dist >= reach_in)
+        inner = (perp <= np.float32(0.5)) & (dist <= hole) & (dots >= reach_in)
         walls = outer | inner
-        inward = np.clip(dist / hole, 0.0, 1.0)
+        # Each spoke fades from its outer weight at ``hole`` to almost the
+        # background by the radius where it stops, so no line ends in a visible
+        # cut. Stopped at full visibility, the staggered ends drew a ring of
+        # stubs round an empty centre — a second cut-off pattern rather than
+        # lines meeting. Faded out, every spoke dissolves on its way in and the
+        # eye carries it the rest of the way to the vanishing point.
+        edge = dots * hole / np.maximum(dist, np.float32(1e-3))   # ``hole`` along this ray, in dots
+        fade = np.clip((dots - reach_in) / np.maximum(edge - reach_in, np.float32(1e-3)), 0.0, 1.0)
         spoke_value = np.where(
             outer, np.float32(0.25) + np.float32(0.35) * np.clip((dist - hole) / np.float32(0.8 * max_r), 0.0, 1.0),
-            np.where(inner, np.float32(0.25) * inward * inward, np.float32(0.0))).astype(np.float32)
+            np.float32(0.0)).astype(np.float32)
+        spoke_fade = np.where(inner, fade ** np.float32(1.5), np.float32(0.0)).astype(np.float32)
 
         return {
             "depth055": (np.float32(max_r) / np.maximum(dist, np.float32(0.9)) * np.float32(0.55)).astype(np.float32),
@@ -510,6 +523,7 @@ def _tunnel(ctx, inward: bool):
             "ring_value": (ring_fade * (np.float32(0.25) + np.float32(0.75) * near)).astype(np.float32),
             "walls": walls,
             "spoke_value": spoke_value,
+            "spoke_fade": spoke_fade,
         }
 
     geo = ctx.scratch("tunnel_geo", build)
@@ -551,10 +565,36 @@ def _tunnel(ctx, inward: bool):
     shade *= geo["ring_value"]
     shade *= ribs
     np.maximum(shade, geo["spoke_value"], out=shade)
-    # The faint end sits higher than the skies' does: these are lines, and a
-    # far line at the quietest colour a theme can show read as missing rather
-    # than as distant.
-    return codes, contrast_ramp(ctx.palette, cell_max(shade), faint=3.0)
+    # Everything except the fading spoke ends keeps a visibility floor of
+    # contrast 3.0: these are lines, and a far line at the quietest colour a
+    # theme can show read as missing rather than as distant. The ends are the
+    # exception — they are meant to disappear — so the colour walk starts much
+    # nearer the background, the rest of the picture is lifted to where 3.0
+    # sits on it, and the ends run from there down toward the background.
+    lo = _faint_walk_point(ctx.palette, _TUNNEL_FADE_FLOOR, 3.0)
+    shade *= np.float32(1.0 - lo)
+    shade += np.float32(lo)
+    np.multiply(shade, lit, out=shade)
+    fade = geo["spoke_fade"] * np.float32(lo + (1.0 - lo) * 0.25)
+    np.maximum(shade, fade, out=shade)
+    return codes, contrast_ramp(ctx.palette, cell_max(shade), faint=_TUNNEL_FADE_FLOOR)
+
+
+#: How close to the background the fading spoke ends get, as WCAG contrast.
+_TUNNEL_FADE_FLOOR = 1.3
+
+
+def _faint_walk_point(palette, faint: float, target: float) -> float:
+    """Where on ``contrast_ramp``'s walk from ``faint`` a contrast of ``target`` sits, 0..1."""
+    cr = bg_contrast(palette)
+    lo = int(np.argmin(np.abs(cr - faint)))
+    hi = int(np.argmax(cr))
+    if hi == lo:
+        return 0.0
+    for v in np.linspace(0.0, 1.0, 65):
+        if cr[int(round(lo + (hi - lo) * v))] >= target:
+            return float(v)
+    return 1.0
 
 
 @mode("Tunnel", group="scenes", blurb="flying down a pipe, ribbed by the beat")
