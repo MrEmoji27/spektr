@@ -210,6 +210,7 @@ class Spektr(App):
         return self.query_one(AudioVisualizer)
 
     def on_mount(self) -> None:
+        self._ask_for_synchronized_output()
         if not self.settings.chrome:
             self._set_chrome(False)
         self.viz.on_mode_disabled = self._mode_disabled
@@ -218,6 +219,36 @@ class Spektr(App):
         if self.settings.shuffle:
             self._start_shuffle()
         self.set_interval(NOWPLAYING_POLL_SECONDS, self._poll_now_playing)
+
+    def _ask_for_synchronized_output(self) -> None:
+        """Ask the terminal whether it can present a whole frame at once.
+
+        Textual brackets each repaint in synchronized-output markers
+        (``CSI ?2026h`` / ``?2026l``) only once the terminal has answered the
+        ``CSI ?2026$p`` query saying it supports them — and only its Linux and
+        web drivers send that query. On Windows it was never asked, so every
+        frame went out unbracketed and Windows Terminal, which does support
+        it, painted each one as it arrived. A visualizer rewrites most of the
+        screen every frame, and the terminal showed the top of one frame over
+        the bottom of the last: matched against the frames spektr actually
+        rendered, 95 of 720 captured 60 fps frames at 188x52 were two renders
+        stitched together, which on Tunnel read as breaks in the fastest ring.
+        With the query sent, 13 were.
+
+        The answer is handled by Textual's own parser, so a terminal that does
+        not support the mode simply never replies and nothing changes. Sent
+        only on Windows, where Textual does not already do it.
+        """
+        if sys.platform != "win32":
+            return
+        driver = getattr(self, "_driver", None)
+        if driver is None or getattr(driver, "is_inline", False) or getattr(driver, "is_headless", False):
+            return
+        try:
+            driver.write("\x1b[?2026$p")
+            driver.flush()
+        except Exception:
+            pass
 
     def _mode_disabled(self, name: str, message: str) -> None:
         """A mode failed repeatedly and was quarantined."""
