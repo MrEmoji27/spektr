@@ -142,7 +142,7 @@ Listed in the order the picker cycles them.
 | **Murmuration** | a flock wheeling and scattering with the beat | **Rain** | rain on the glass, falling harder when it's loud |
 | **Retro** | sunset grid, with the spectrum as the horizon | **Ember** | a coal bed burning by band, sparks off the hot spots |
 | **Auroras** | a light ribbon whose lower rim rides the spectrum | **Snow** | snowfall in three planes, gusting and lying in drifts |
-| **JP Bars** | a segmented LED meter whose crest peels off and rises, like notes leaving a key | **JP Drift** | the meter as a sandpile — bulbs stack up, drain away, and avalanche into their neighbours |
+| **JP Bars** | a segmented LED meter whose crest peels off and rises, like notes leaving a key | **JP Drift** | the meter as a sandpile — bulbs stack up, drain away, and pour into their neighbours on the beat |
 | **JP Pulse** | the meter bent into a ring — a spoke of bulbs per band, chased on the beat | | |
 
 The three **JP** modes are one *jp* group and, unusually, one

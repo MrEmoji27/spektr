@@ -139,25 +139,65 @@ def test_pulse_draws_no_peak_at_the_hub_in_silence():
     assert np.all(cidx[codes != SPACE] == K.recede_index(PAL))
 
 
-def _drift_pile(state):
-    return next(v for k, v in state.items() if k[0] == "jp_drift")["h"]
+def _drift_state(state):
+    return next(v for k, v in state.items() if k[0] == "jp_drift")
 
 
-def _steady_drift(level, secs=12.0):
-    """Hold one level on every band; return mean shown height and collapses/s."""
+def _drift_run(level_fn, secs=12.0, beat_every=None, settle=2.0):
+    """Play Drift a passage; return avalanche statistics after ``settle`` s.
+
+    An avalanche is counted where it starts — a band whose pour goes from
+    empty to non-empty — because it now takes a fifth of a second to pour
+    out, and a per-frame drop test no longer sees one.
+    """
     state: dict = {}
     fn = M.get("JP Drift").fn
-    lv = np.full(N_BANDS, level)
-    heights, drops, prev = [], 0, None
+    sm = np.zeros(N_BANDS)
+    prev_pour = None
+    last_beat = -9.0
+    starts = on_beat = tinted = band_frames = reversals = 0
+    heights, crests = [], []
     for f in range(int(secs / DT)):
-        fn(_ctx(120, 40, state, f * DT, lv))
-        pile = _drift_pile(state).copy()
-        if prev is not None:
-            drops += int(np.sum(prev - pile > 0.3))
-        prev = pile
-        if f * DT > secs - 5.0:
-            heights.append(np.clip(pile, 0.0, 1.0).mean())
-    return float(np.mean(heights)), drops / len(pile) / secs
+        t = f * DT
+        onset = int(beat_every is not None and (t % beat_every) < DT)
+        if onset:
+            last_beat = t
+        raw = level_fn(t)
+        sm = sm + (raw - sm) * np.where(raw > sm, 0.6, 0.12)
+        fn(_ctx(120, 40, state, t, sm.copy(), onsets=onset))
+        st = _drift_state(state)
+        pile, pour = st["h"], st["pour"]
+        crest = K.crest_bulb(np.clip(pile, 0.0, 1.0), 40)
+        if prev_pour is not None and t > settle:
+            new = (prev_pour <= 0.0) & (pour > 0.0)
+            starts += int(new.sum())
+            if t - last_beat <= K._DRIFT_ARMED_S + DT:
+                on_beat += int(new.sum())
+            tinted += int((st["flash"] > 0.3).sum())
+            band_frames += len(pile)
+            heights.append(float(np.clip(pile, 0.0, 1.0).mean()))
+            if len(crests) == 2:
+                reversals += int(((crests[0] == crest) & (crests[1] != crest)).sum())
+        crests = (crests + [crest])[-2:]
+        prev_pour = pour.copy()
+    n = len(prev_pour)
+    span = secs - settle
+    return {
+        "starts": starts,
+        "per_band_s": starts / n / span,
+        "on_beat": on_beat / max(starts, 1),
+        "tinted": tinted / max(band_frames, 1),
+        "reversals_per_band_s": reversals / n / span,
+        "height": float(np.mean(heights)),
+    }
+
+
+def _steady(level):
+    return lambda t: np.full(N_BANDS, level)
+
+
+def _loud_spectrum(t):
+    return np.clip(0.95 * np.exp(-((_X - 0.35) / 0.6) ** 2), 0, 1)
 
 
 def test_drift_answers_quiet_input_without_accumulating():
@@ -168,112 +208,100 @@ def test_drift_answers_quiet_input_without_accumulating():
     has to do neither: quiet input holds a small height, heights rise with
     the level, and only loud input keeps collapsing.
     """
-    quiet, quiet_av = _steady_drift(0.2)
-    medium, medium_av = _steady_drift(0.5)
-    loud, loud_av = _steady_drift(0.9)
-    assert 0.05 < quiet < 0.2, f"steady 0.2 settled at {quiet:.2f}"
-    assert quiet < medium < 0.8, f"steady 0.5 settled at {medium:.2f}"
-    assert quiet_av == 0 and medium_av == 0, "a band below the avalanche level collapsed"
-    assert loud_av > 1.0, f"loud input avalanches only {loud_av:.2f} times a second per band"
-    assert loud < 0.95, f"loud input accumulated to {loud:.2f}"
+    quiet = _drift_run(_steady(0.2))
+    medium = _drift_run(_steady(0.5))
+    loud = _drift_run(_steady(0.9))
+    assert 0.05 < quiet["height"] < 0.2, f"steady 0.2 settled at {quiet['height']:.2f}"
+    assert quiet["height"] < medium["height"] < 0.8, f"steady 0.5 settled at {medium['height']:.2f}"
+    assert quiet["starts"] == 0 and medium["starts"] == 0, "a band below the avalanche level collapsed"
+    assert loud["per_band_s"] > 0.3, f"loud input avalanches only {loud['per_band_s']:.2f}/band/s"
+    assert loud["height"] < 0.9, f"loud input left the columns standing at {loud['height']:.2f}"
 
 
-def test_drift_still_avalanches_on_bass():
+def test_drift_avalanches_land_on_the_beat():
+    """A column past the edge topples on a hit, so avalanches keep time.
+
+    Tested on the onset frame alone this produced no avalanches at all on
+    bass: the onset is detected on a kick's first frame and the sand it feeds
+    crosses the edge a moment later. Hence the short window after each hit.
+    """
+    bass = _drift_run(_bass, secs=20.0, beat_every=0.5, settle=5.0)
+    assert bass["starts"] > 5, f"bass triggered {bass['starts']} avalanches in 15 s"
+    assert bass["on_beat"] > 0.8, f"only {100 * bass['on_beat']:.0f}% of bass avalanches landed on a beat"
+    loud = _drift_run(_loud_spectrum, beat_every=0.5)
+    assert loud["on_beat"] > 0.8, f"only {100 * loud['on_beat']:.0f}% of loud avalanches landed on a beat"
+
+
+def test_drift_quiet_top_stays_low_under_bass():
     state: dict = {}
     fn = M.get("JP Drift").fn
-    drops, prev = 0, None
     sm = np.zeros(N_BANDS)
     for f in range(int(20.0 / DT)):
         raw = _bass(f * DT)
         sm = sm + (raw - sm) * np.where(raw > sm, 0.6, 0.12)
-        fn(_ctx(120, 40, state, f * DT, sm.copy()))
-        pile = _drift_pile(state).copy()
-        if prev is not None and f * DT > 5.0:
-            drops += int(np.sum(prev - pile > 0.3))
-        prev = pile
-    assert drops > 5, f"{drops} collapses in 15 s of kicks"
+        fn(_ctx(120, 40, state, f * DT, sm.copy(), onsets=int((f * DT) % 0.5 < DT)))
+    pile = _drift_state(state)["h"]
     # the top quarter is fed 0.08: it should hold a trace, not a column
-    top = _drift_pile(state)[3 * len(prev) // 4:]
+    top = pile[3 * len(pile) // 4:]
     assert top.max() < 0.1, f"the quiet top of the spectrum filled to {top.max():.2f}"
 
 
-def _loud_drift(level_fn, secs=10.0):
-    """Collapse statistics under loud input, after a two-second settle."""
-    state: dict = {}
-    fn = M.get("JP Drift").fn
-    prev = prev_hit = None
-    hits = chained = flashed = band_frames = reversals = 0
-    crests: list = []
-    for f in range(int(secs / DT)):
-        fn(_ctx(120, 40, state, f * DT, level_fn(f * DT)))
-        st = next(v for k, v in state.items() if k[0] == "jp_drift")
-        pile = st["h"].copy()
-        crest = K.crest_bulb(np.clip(pile, 0.0, 1.0), 40)
-        if prev is not None and f * DT > 2.0:
-            hit = (prev - pile) > 0.3
-            hits += int(hit.sum())
-            if prev_hit is not None:
-                near = np.zeros_like(hit)
-                near[1:] |= prev_hit[:-1]
-                near[:-1] |= prev_hit[1:]
-                chained += int((hit & near).sum())
-            prev_hit = hit
-            flashed += int((st["flash"] > 0.3).sum())
-            band_frames += len(pile)
-            if len(crests) == 2:
-                reversals += int(((crests[0] == crest) & (crests[1] != crest)).sum())
-        crests = (crests + [crest])[-2:]
-        prev = pile
-    n = len(prev)
-    return {
-        "per_band_s": hits / n / (secs - 2.0),
-        "chained": chained / max(hits, 1),
-        "flashed": flashed / max(band_frames, 1),
-        "reversals_per_band_s": reversals / n / (secs - 2.0),
-    }
-
-
 @pytest.mark.parametrize("shape", ["uniform", "spectrum"])
-def test_drift_loud_avalanches_stay_distinct(shape):
-    """Loud input: collapses keep happening, but as separate events.
+@pytest.mark.parametrize("beats", [None, 0.5])
+def test_drift_loud_avalanches_stay_distinct(shape, beats):
+    """Loud input: collapses keep happening, but as separate, readable events.
 
-    Before, every band sat at the angle of repose and a collapse tipped its
-    neighbours over on the very next frame: 68–77% of collapses were that
-    ping-pong, column tops reversed within two frames, and the flash was
-    retriggered faster than it faded, so the panel stayed red. And a row of
-    bands collapsing on the same frame refilled each other straight back over
-    the edge, which left steady full-scale input a solid, motionless panel.
+    Before, a collapse tipped its neighbours over on the very next frame and
+    they tipped it back, column tops reversed within two frames, the flash was
+    retriggered faster than it faded so the panel stayed red, and a row
+    collapsing on one frame refilled itself straight back over the edge.
     """
-    if shape == "uniform":
-        level = lambda t: np.full(N_BANDS, 0.95)  # noqa: E731
-    else:
-        level = lambda t: np.clip(0.95 * np.exp(-((_X - 0.35) / 0.6) ** 2), 0, 1)  # noqa: E731
-    r = _loud_drift(level)
-    assert r["per_band_s"] > 0.8, f"loud input barely avalanches: {r['per_band_s']:.2f}/band/s"
-    assert r["chained"] < 0.1, f"{100 * r['chained']:.0f}% of collapses chained off the previous frame"
+    level = _steady(0.95) if shape == "uniform" else _loud_spectrum
+    r = _drift_run(level, beat_every=beats)
+    assert r["per_band_s"] > 0.3, f"loud input barely avalanches: {r['per_band_s']:.2f}/band/s"
     assert r["reversals_per_band_s"] < 0.1, f"column tops reversed {r['reversals_per_band_s']:.2f}/band/s"
-    assert r["flashed"] < 0.5, f"{100 * r['flashed']:.0f}% of the panel sat flashed"
+    assert r["tinted"] < 0.35, f"{100 * r['tinted']:.0f}% of the panel sat tinted"
+    assert r["height"] < 0.9, f"the columns stood at {r['height']:.2f} on average"
 
 
-@pytest.mark.parametrize("edge", [0, -1])
-def test_drift_edge_spill_leaves_the_panel(edge):
-    """A collapsing edge band feeds its one neighbour, never itself."""
+def test_an_avalanche_pours_out_rather_than_teleporting():
+    """A collapse takes several frames and only ever goes down while it does."""
     state: dict = {}
     fn = M.get("JP Drift").fn
     z = np.zeros(N_BANDS)
     fn(_ctx(120, 40, state, 0.0, z))
-    st = next(v for k, v in state.items() if k[0] == "jp_drift")
-    pile = st["h"]
+    st = _drift_state(state)
+    st["h"][:] = 0.0
+    st["h"][8] = 1.25
+    heights = [1.25]
+    for f in range(1, 40):
+        fn(_ctx(120, 40, state, f * DT, z, onsets=int(f == 1)))
+        heights.append(float(st["h"][8]))
+    steps = np.diff(heights)
+    falling = np.flatnonzero(steps < -1e-9)
+    assert falling.size >= 8, f"the avalanche was over in {falling.size} frames"
+    assert np.all(steps[: falling.max() + 1] <= 1e-9), "the column rose again while it poured out"
+    assert heights[-1] < 0.6
+
+
+@pytest.mark.parametrize("edge", [0, -1])
+def test_drift_edge_spill_leaves_the_panel(edge):
+    """A collapsing edge band pours into its one neighbour, never itself."""
+    state: dict = {}
+    fn = M.get("JP Drift").fn
+    z = np.zeros(N_BANDS)
+    fn(_ctx(120, 40, state, 0.0, z))
+    pile = _drift_state(state)["h"]
     pile[:] = 0.0
     pile[edge] = 1.25
-    fn(_ctx(120, 40, state, DT, z))
-
-    drained = (K._DRIFT_DRAIN_LIN + K._DRIFT_DRAIN_SQ * 1.25) * 1.25 * DT
-    excess = (1.25 - drained) - 0.55
-    inner = 1 if edge == 0 else len(pile) - 2
-    assert pile[edge] <= 0.55 + 0.03 + 1e-9, "the collapsing band took its own spill back"
-    assert pile[inner] == pytest.approx(excess * 0.35)
-    assert np.count_nonzero(pile) == 2
+    n = len(pile)
+    inner = 1 if edge == 0 else n - 2
+    far = [i for i in range(n) if i not in (edge % n, inner)]
+    for f in range(1, 30):
+        fn(_ctx(120, 40, state, f * DT, z, onsets=int(f == 1)))
+    assert pile[edge] <= 0.58, "the collapsing band took its own spill back"
+    assert pile[inner] > 0.05, "the neighbour received nothing"
+    assert np.all(pile[far] == 0.0), "sand landed beyond the one neighbour"
 
 
 def test_peaks_and_trails_never_cover_a_lit_bulb():

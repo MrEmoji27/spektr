@@ -110,18 +110,43 @@ _DRIFT_DRAIN_SQ = 0.3
 #: frame, they tipped it back, and two thirds of all collapses were that
 #: ping-pong: measured on sustained loud input, 68–77% of collapses followed a
 #: neighbour's collapse one frame earlier, and the tops of the columns jumped
-#: every one or two frames. With the wait an avalanche travels outward a
-#: column at a time and each collapse stays a distinct event; bass-triggered
-#: collapses, which are isolated to begin with, are not affected.
+#: every one or two frames.
 _DRIFT_SPILL_REST = 0.2
 
-#: How hard a neighbour flashes when sand lands on it, against 1.0 for the
-#: column that collapsed, and how fast a flash fades. The flash used to be
-#: retriggered faster than it decayed — 0.7 on every neighbour, a 0.22 s fade,
-#: several collapses a second nearby — so on loud input every column sat
-#: pinned to the top of the ramp and the panel stayed red.
-_DRIFT_NEIGHBOUR_FLASH = 0.35
-_DRIFT_FLASH_TAU = 0.15
+#: How long a column may stand past the angle of repose waiting for a beat.
+#: A pile over the edge topples on a beat — so on bass-heavy music the
+#: avalanches land on the kicks, and a cascade steps outward a column per beat
+#: — and if no beat comes it topples anyway after this long, so a sustained
+#: loud pad cannot leave a column standing full. Longer than a beat at 100 bpm,
+#: or the clock beats the music to it.
+_DRIFT_HOLD = 0.6
+
+#: Onset strength that can topple a column, and how long after it lands a
+#: column may still topple on it. Below the strength (a hat, a ghost note) the
+#: pile keeps waiting. The window exists because the onset arrives before the
+#: sand does: a kick is detected on its first frame, and the pile it feeds
+#: crosses the edge a moment later — tested on the onset frame alone, bass
+#: music produced no avalanches at all.
+_DRIFT_TRIGGER = 0.5
+_DRIFT_ARMED_S = 0.3
+
+#: Seconds an avalanche takes to pour out. The sand leaves the collapsing
+#: column and lands on its neighbours over this long, so the top of the column
+#: visibly slides down and the columns beside it visibly rise. It used to be
+#: moved in a single frame: the column teleported down, and what made it an
+#: avalanche was left to a colour flash.
+_DRIFT_POUR_S = 0.18
+
+#: How long a column rests after an avalanche lands before it takes sand
+#: again — long enough to read as the landing, short enough not to read as a
+#: pause. See the feed in :func:`jp_drift`.
+_DRIFT_SETTLE_S = 0.08
+
+#: How fast the tint on moving sand fades once the sand stops moving. The tint
+#: marks sand that is *actually* moving — a column pouring out and the columns
+#: it pours into — rather than a flash fired at the moment of collapse, which
+#: under loud input was retriggered faster than it faded and kept the panel red.
+_DRIFT_FLASH_TAU = 0.12
 
 
 def _drift_rest(levels: np.ndarray) -> np.ndarray:
@@ -364,18 +389,32 @@ def jp_bars(ctx: Ctx):
 
 
 @mode("JP Drift", group="jp",
-      blurb="the meter as a sandpile — bulbs stack up and avalanche into their neighbours")
+      blurb="the meter as a sandpile — bulbs stack up, and pour into their neighbours on the beat")
 def jp_drift(ctx: Ctx):
     """The meter, blended with the sandpile out of ``Dune``.
 
     The other modes in this family draw the level: read it, light that many
     bulbs. Here the bulbs are a running *balance*. Sand rains into each band in
     proportion to the square of its level and drains out faster the taller the
-    pile is, and a column that crosses the angle of repose collapses — dumping
-    most of itself and pushing the excess sideways into the two bands next to
-    it. A band steadily above about 0.68 keeps toppling; below that it settles
-    at a height, so what you see is a meter for the quiet and medium part of a
-    mix and a sandpile for the loud part.
+    pile is. A column that crosses the angle of repose waits there for a beat,
+    then pours most of itself out sideways into the two bands next to it. A
+    band steadily above about 0.68 keeps toppling; below that it settles at a
+    height, so what you see is a meter for the quiet and medium part of a mix
+    and a sandpile, keeping time, for the loud part.
+
+    **Avalanches land on the beat.** A column past the edge topples on the next
+    hit (or within a few frames after one, since the sand a kick feeds arrives
+    a moment after the kick is detected), so on bass-heavy music the columns
+    come down with the kicks, and a spill that tips a neighbour over makes it
+    topple on a *later* beat — a cascade steps across the spectrum in time. A
+    column no beat comes for topples anyway after :data:`_DRIFT_HOLD`, so a
+    loud sustained pad cannot leave anything standing full.
+
+    **An avalanche pours.** The sand leaves over :data:`_DRIFT_POUR_S`, so the
+    column's top slides down bulb by bulb while its neighbours rise; the
+    column takes no new sand while it pours and holds still for a moment when
+    it lands. Only moving sand is tinted toward the top of the ramp — hardest on
+    the column pouring out, lightly on the ones it lands on.
 
     **Drainage is what keeps it a meter.** Without it the pile only ever grew:
     measured on bass-heavy input, after thirty seconds the *emptiest* column
@@ -392,12 +431,13 @@ def jp_drift(ctx: Ctx):
     or sinking toward it — and a frozen spectrum below the avalanche level is a
     frozen picture, as a meter's should be.
 
-    A collapse needs help to be visible: grit shows an avalanche as a texture
-    sliding, and sixteen bulbs cannot, so a toppling column and the two it
-    feeds shift toward the top of the ramp and fade back. Sand that spills off
-    either end of the spectrum is lost — the first and last bands used to spill
-    into *themselves*, which returned a third of every collapse to the column
-    that had just collapsed.
+    Before this, a collapse moved all its sand in one frame and a flash fired
+    on the collapsing column and its neighbours. Under loud input two thirds of
+    collapses were neighbours tipping each other over on consecutive frames,
+    the tops of the columns jumped every frame or two, and the flash was
+    retriggered faster than it faded, so the panel sat red. Sand that pours off
+    either end of the spectrum is lost; the first and last bands used to spill
+    into *themselves*.
     """
     w, h = ctx.w, ctx.h
     if w < 10 or h < 4:
@@ -410,43 +450,78 @@ def jp_drift(ctx: Ctx):
         "h": _drift_rest(lv),
         "flash": np.zeros(n, dtype=np.float64),
         "rest": np.zeros(n, dtype=np.float64),
+        "over": np.zeros(n, dtype=np.float64),
+        "pour": np.zeros(n, dtype=np.float64),
+        "rate": np.zeros(n, dtype=np.float64),
+        "settle": np.zeros(n, dtype=np.float64),
+        "beat_t": -9.0,
         "rng": np.random.default_rng(53),
     })
     if st["h"].shape[0] != n:
         st["h"] = _drift_rest(lv)
-        st["flash"] = np.zeros(n, dtype=np.float64)
-        st["rest"] = np.zeros(n, dtype=np.float64)
+        for key in ("flash", "rest", "over", "pour", "rate", "settle"):
+            st[key] = np.zeros(n, dtype=np.float64)
     pile, flash, rng = st["h"], st["flash"], st["rng"]
 
     dt = max(ctx.dt, 0.0)
-    pile += (lv * lv * _DRIFT_FEED - (_DRIFT_DRAIN_LIN + _DRIFT_DRAIN_SQ * pile) * pile) * dt
+    # A column that is pouring out takes no new sand until it has finished.
+    # Fed while it poured, a loud band gained almost as fast as it lost — its
+    # inflow is about the pour rate — so the avalanche barely descended, ended
+    # well short of the rest height, and bounced back across a bulb boundary
+    # the moment it stopped. It also holds still for a moment after landing —
+    # neither fed nor drained: resumed on the next frame, the feed pushed the
+    # last bulb the pour had just emptied straight back on, and left draining
+    # it could slip one bulb and come straight back, either way a one-frame
+    # blink at the bottom of an avalanche.
+    settling = st["settle"] > 0.0
+    feed = np.where((st["pour"] > 0.0) | settling, 0.0, lv * lv * _DRIFT_FEED)
+    drain = np.where(settling, 0.0, (_DRIFT_DRAIN_LIN + _DRIFT_DRAIN_SQ * pile) * pile)
+    pile += (feed - drain) * dt
     np.clip(pile, 0.0, 1.3, out=pile)
 
-    rest = st["rest"]
+    rest, over, pour, rate = st["rest"], st["over"], st["pour"], st["rate"]
     np.maximum(rest - dt, 0.0, out=rest)
-    spill = (pile > 1.0) & (rest <= 0.0)
-    if spill.any():
-        idx = np.flatnonzero(spill)
-        excess = pile[idx] - 0.55
-        pile[idx] = 0.55 + rng.uniform(-0.03, 0.03, idx.size)
-        flash[idx] = 1.0
+    np.maximum(st["settle"] - dt, 0.0, out=st["settle"])
+
+    # ── toppling: past the angle of repose, on the beat ──
+    edge = (pile > 1.0) & (pour <= 0.0)
+    over[:] = np.where(edge, over + dt, 0.0)
+    if ctx.onsets and ctx.onset_strength >= _DRIFT_TRIGGER:
+        st["beat_t"] = ctx.t
+    armed = ctx.t - st["beat_t"] <= _DRIFT_ARMED_S
+    go = edge & (rest <= 0.0) & (armed | (over >= _DRIFT_HOLD))
+    if go.any():
+        idx = np.flatnonzero(go)
+        pour[idx] = pile[idx] - 0.55 + rng.uniform(-0.03, 0.03, idx.size)
+        rate[idx] = pour[idx] / _DRIFT_POUR_S
+        over[idx] = 0.0
+
+    # ── pouring: the sand slides out over a fifth of a second ──
+    flowing = pour > 0.0
+    moving = np.zeros(n, dtype=np.float64)
+    if flowing.any():
+        idx = np.flatnonzero(flowing)
+        step = np.minimum(pour[idx], rate[idx] * dt)
+        pour[idx] -= step
+        landed = idx[pour[idx] <= 0.0]
+        st["settle"][landed] = _DRIFT_SETTLE_S
+        pile[idx] -= step
+        moving[idx] = 1.0
         for side, ok in ((idx - 1, idx > 0), (idx + 1, idx < n - 1)):
-            # no spill into a band collapsing on the same frame: its own sand
-            # is already moving, and refilling it made a row of simultaneous
-            # collapses land straight back above the angle of repose
-            ok = ok & ~spill[np.clip(side, 0, n - 1)]
-            np.add.at(pile, side[ok], excess[ok] * 0.35)
-            np.maximum.at(flash, side[ok], _DRIFT_NEIGHBOUR_FLASH)
+            np.add.at(pile, side[ok], step[ok] * 0.35)
+            # the columns it lands on warm only a little: the one pouring out
+            # is the event, and tinting its neighbours as hard spread the
+            # colour across most of a loud panel
+            np.maximum.at(moving, side[ok], 0.25)
             np.maximum.at(rest, side[ok], _DRIFT_SPILL_REST)
         np.clip(pile, 0.0, 1.3, out=pile)
-
-    st["flash"] = flash * float(np.exp(-dt / _DRIFT_FLASH_TAU))
+    np.maximum(flash * float(np.exp(-dt / _DRIFT_FLASH_TAU)), moving, out=flash)
 
     col_band, active = band_columns(w, n)
     levels = np.where(active, np.clip(pile, 0.0, 1.0)[col_band], 0.0)
-    # ``heat`` above 1 is fine: ctx.ramp clips, so a collapsing column simply
-    # pins to the top of the ramp for as long as the flash lasts.
-    heat = np.where(active, 1.0 + st["flash"][col_band] * 1.6, 0.0)
+    # ``heat`` above 1 is fine: ctx.ramp clips. Moving sand warms toward the
+    # top of the ramp; still sand is coloured by height alone.
+    heat = np.where(active, 1.0 + flash[col_band] * 0.9, 0.0)
     return bar_panel(ctx, h, levels, active, heat=heat)
 
 
