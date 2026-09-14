@@ -436,17 +436,38 @@ def _tunnel(ctx, inward: bool):
     # "everything about a corridor of this size".
     def build():
         depth = max_r / np.maximum(dist, 0.9)
-        walls = frac(turn * 16.0 + depth * 0.03) < 0.09
         near = np.clip(dist / max_r, 0.0, 1.0)
+        # The spokes are straight lines through the vanishing point, drawn as
+        # a band around each of 16 radial lines rather than as a wedge of
+        # angle. Three things used to bend and break them in the middle, where
+        # the eye expects them to converge most cleanly:
+        #
+        # * a ``depth * 0.03`` twist on the angle. Depth is ``max_r / dist``,
+        #   so the offset grows without bound toward the centre — about 5
+        #   degrees ten dots out and 18 degrees three dots out, against a spoke
+        #   two degrees wide — and the inner third of every spoke drifted
+        #   sideways into a curve;
+        # * a fixed *angular* width, which inside about 28 dots of the centre
+        #   is less than a dot wide and sampled into broken dashes;
+        # * the depth dither, which kept a quarter to half of the dots near
+        #   the centre and scattered what was left of the lines.
+        #
+        # So: no twist; a width that is the wedge where the wedge is wide and
+        # never under a dot where it is not; the dither on the ribs only; and
+        # a small hole at the vanishing point, where sixteen lines a dot apart
+        # would otherwise fuse into a blob.
+        a = frac(turn * 16.0)
+        off = np.minimum(a, 1.0 - a) * np.float32(2.0 * math.pi / 16.0)
+        perp = dist * np.sin(off)
+        wedge = dist * np.float32(math.sin(0.045 * 2.0 * math.pi / 16.0))
+        walls = perp <= np.maximum(wedge, np.float32(0.6))
+        hole = np.float32(max(1.5, 0.07 * max_r))
         return {
             # Pre-scaled: the rib phase is subtracted from this every frame,
             # and the multiply was a full pass over the dot grid for a
             # constant.
             "depth055": depth * np.float32(0.55),
-            # The spokes and the dead zone around the centre are both fixed
-            # masks, so combine them once. ``lit`` below then needs one OR and
-            # one AND rather than two ANDs and an OR.
-            "walls": walls & (dist > 1.5),
+            "walls": walls & (dist > hole),
             "far": dist > 1.5,
             "near": near,
             # The dither threshold rises with distance so the far end thins
@@ -473,9 +494,11 @@ def _tunnel(ctx, inward: bool):
     # so a temporary is 1.3 MB of allocation and a pass over it; ``ribs`` is
     # already a fresh array nothing else holds, which makes it the buffer.
     np.bitwise_and(ribs, geo["far"], out=ribs)
+    # Dither the ribs only: it is what thins the far end of the corridor, and
+    # applied to the spokes it broke them into scattered dots at the centre.
+    np.bitwise_and(ribs, noise_below((dr, dc), ctx.frame, geo["dither"]), out=ribs)
     np.bitwise_or(ribs, geo["walls"], out=ribs)
     lit = ribs
-    np.bitwise_and(lit, noise_below((dr, dc), ctx.frame, geo["dither"]), out=lit)
 
     codes = pack_braille(lit)
     # Same product, one buffer: multiplication commutes exactly in IEEE, so
