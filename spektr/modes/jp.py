@@ -6,8 +6,8 @@ ladder is :func:`bar_panel` and all three modes draw it. What differs is the
 mode each one is *blended with*: ``Keys``' note roll, ``Dune``'s sandpile, and
 ``Radial``'s circle.
 
-Two rules keep this a family rather than a shelf of near-duplicates, and both
-were learned by breaking them.
+Three rules keep this a family rather than a shelf of near-duplicates, and all
+three were learned by breaking them.
 
 **The bars come first.** The mechanic is layered onto a ladder that stays
 legible — the first version of this file lost the bars entirely in three of
@@ -22,6 +22,14 @@ bands cannot give. If a new JP mode cannot be named as "``Bars`` ×
 *something that already exists*", it is a clone of ``Bars`` and it should not
 be added.
 
+**Hierarchy is carried by ink, not by colour.** Everything on a panel is one
+of four weights, heaviest first: a lit bulb ``▆``, a peak ``▂``, a trail
+``▁``, an unlit bulb ``·``. Colour cannot do this job, because a theme's ramp
+is a hue gradient and not a brightness one — on ``gruvbox`` the bottom of the
+ramp is the *brightest* colour on it, so the old unlit bulbs, parked at index
+0, were the loudest thing on screen and drew a ruled grid over the bars. See
+:func:`recede_index` for the one colour decision that is made on measurement.
+
 Against the flat spectrum group they sit next to: ``Bars`` draws smooth
 fractional blocks and ``Ladder`` a contiguous stack, both of which show only
 the lit part of a column. These draw the unlit part too, which is the whole
@@ -32,7 +40,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..palette import RAMP_STEPS
+from ..palette import RAMP_STEPS, _to_linear, hex_to_rgb
 from ..render import SPACE, cell_max, pack_braille
 from . import (
     Ctx,
@@ -42,26 +50,26 @@ from . import (
     polar_grid as _polar,
 )
 
+# The four ink weights, heaviest first. See the module docstring.
 _LED = ord("▆")          # a lit bulb
-_OFF = ord("▁")          # an unlit one: the dark base of the same bulb
-_HALF_DOWN = ord("▄")   # a trail bulb: lighter than lit, heavier than unlit
+_PEAK = ord("▂")         # where the peak is holding
+_TRAIL = ord("▁")        # Bars' shed trail
+_OFF = ord("·")          # an unlit bulb
 
-#: Where an unlit bulb and the *foot* of a lit ladder sit on the ramp.
-#:
-#: A theme's ramp is a hue gradient at full saturation, not a brightness one:
-#: measured across the 55 built-ins, index 0 and index 6 differ by under 10/255
-#: per channel on every one of them. So "draw the unlit bulbs dimmer" does not
-#: exist — an unlit bulb parked near the bottom of the ramp comes out the same
-#: colour as a lit bulb at the bottom of a short column, which is exactly the
-#: pair that has to stay apart.
-#:
-#: Two things separate them instead. The unlit bulb gets a *smaller* glyph, so
-#: the picture is legible as characters and not only as colour — in a dump, in
-#: a screenshot, and on the flatter themes. And the lit ladder starts at
-#: :data:`_LIT_FLOOR` rather than at 0, so even its lowest bulb is a step along
-#: the gradient from an unlit one.
-_IDLE = 0.0
+#: Where the foot of a lit ladder sits on the ramp. The ladder is coloured by
+#: height, hot at the top, and this keeps its lowest bulb a step along the
+#: gradient rather than at the very end of it.
 _LIT_FLOOR = 0.22
+
+#: Below this a level lights nothing and a peak is not drawn. Bands decay
+#: toward zero without reaching it, and without a floor the bottom bulb of
+#: every column stayed lit for as long as the app was open after the music
+#: stopped — a threshold of ``0`` is crossed by any positive float.
+_QUIET = 0.03
+
+#: The WCAG contrast an unlit bulb aims for against the theme's background.
+#: See :func:`recede_index`.
+_RECEDE_CONTRAST = 2.2
 
 #: Concurrent chaser slots on the ring. Two is enough to overlap a fast pair
 #: of kicks (see particles.pulse for the same policy).
@@ -70,11 +78,91 @@ _KW_WAVES = 2
 #: Bulbs along one spoke of the ring.
 _RING_SEGS = 12
 
-#: Sand per second into a band at full level, for Drift. ``Dune`` uses 0.55
-#: against a 160-row dot grid; a twenty-bulb ladder needs about three times
-#: that before anything crosses a bulb boundary often enough to read as
-#: moving. See :func:`jp_drift`.
-_DRIFT_FEED = 1.6
+#: Sand per second into a band at full level, for Drift. Inflow goes with the
+#: square of the level, as in ``Dune``, so a loud band gains far more than
+#: twice what a band half as loud does. See :func:`jp_drift`.
+_DRIFT_FEED = 2.6
+
+#: Drift's drainage, per second: ``_DRIFT_DRAIN_LIN · h + _DRIFT_DRAIN_SQ · h²``
+#: for a pile of height ``h``.
+#:
+#: Height-dependent rather than a fixed rate. A fixed rate is a cutoff: it
+#: took 0.35 of a unit a second out of every band, so anything steadily under
+#: a level of about 0.47 sank to nothing and the quiet half of every mix was
+#: an empty panel. A drain that grows with the pile has no cutoff — every band
+#: settles *somewhere* (steady 0.2 shows about 0.11, 0.35 about 0.32, 0.5
+#: about 0.60) — and still cannot accumulate, because the taller a pile gets
+#: the faster it loses sand.
+#:
+#: The linear term sets how fast silence clears: the tail of an emptying pile
+#: decays at ``_DRIFT_DRAIN_LIN``, which empties a full panel in about three
+#: and a half seconds. The square term sets where avalanches begin: inflow and
+#: drainage balance at the angle of repose for a steady level of
+#: ``sqrt((0.9 + 0.3) / 2.6)`` ≈ 0.68, so from about there up a band keeps
+#: toppling, and below it a band holds a height.
+_DRIFT_DRAIN_LIN = 0.9
+_DRIFT_DRAIN_SQ = 0.3
+
+#: Seconds a band that has just *received* spill must wait before it can
+#: collapse itself. Under loud input every band sits at the angle of repose,
+#: so without this a collapse tipped its neighbours over on the very next
+#: frame, they tipped it back, and two thirds of all collapses were that
+#: ping-pong: measured on sustained loud input, 68–77% of collapses followed a
+#: neighbour's collapse one frame earlier, and the tops of the columns jumped
+#: every one or two frames. With the wait an avalanche travels outward a
+#: column at a time and each collapse stays a distinct event; bass-triggered
+#: collapses, which are isolated to begin with, are not affected.
+_DRIFT_SPILL_REST = 0.2
+
+#: How hard a neighbour flashes when sand lands on it, against 1.0 for the
+#: column that collapsed, and how fast a flash fades. The flash used to be
+#: retriggered faster than it decayed — 0.7 on every neighbour, a 0.22 s fade,
+#: several collapses a second nearby — so on loud input every column sat
+#: pinned to the top of the ramp and the panel stayed red.
+_DRIFT_NEIGHBOUR_FLASH = 0.35
+_DRIFT_FLASH_TAU = 0.15
+
+
+def _drift_rest(levels: np.ndarray) -> np.ndarray:
+    """The height a Drift pile settles at under a steady level.
+
+    Inflow ``F·level²`` balances drainage ``a·h + b·h²`` where
+    ``h = (sqrt(a² + 4bF·level²) - a) / 2b``. Capped just under the angle of
+    repose, so switching to the mode mid-song does not open on every loud
+    column collapsing at once.
+    """
+    a, b, f = _DRIFT_DRAIN_LIN, _DRIFT_DRAIN_SQ, _DRIFT_FEED
+    lv = np.asarray(levels, dtype=np.float64)
+    if b <= 0.0:
+        rest = f * lv * lv / a
+    else:
+        rest = (np.sqrt(a * a + 4.0 * b * f * lv * lv) - a) / (2.0 * b)
+    return np.minimum(rest, 0.98)
+
+
+def recede_index(palette) -> int:
+    """The ramp index an unlit element should be drawn in, measured.
+
+    "Draw it at the bottom of the ramp" is the obvious answer and it is wrong
+    in both directions. On about half the built-ins the low anchor is the
+    *most* visible colour on the ramp — gruvbox's index 0 is a contrast of 7.1
+    against its background and index 63 is 4.3 — so the thing meant to recede
+    is the loudest thing on screen. On most of the rest index 0 is nearly the
+    background itself (plasma 1.34, sapphire 1.19), and a small glyph in it
+    simply is not there.
+
+    So pick by measurement: the index whose contrast against ``theme.bg`` is
+    closest to :data:`_RECEDE_CONTRAST`. That is the quietest available colour
+    on a theme whose whole ramp is loud, and a colour that is still visible on
+    a theme whose ramp fades into its background. Recomputed per call, because
+    an animated theme's ramp moves every frame; it is 64 entries.
+    """
+    lin = _to_linear(np.asarray(palette.rgb, dtype=np.float64))
+    lum = lin @ np.array([0.2126, 0.7152, 0.0722])
+    bg = _to_linear(np.array(hex_to_rgb(palette.theme.bg or "#000000"), dtype=np.float64))
+    lb = float(bg @ np.array([0.2126, 0.7152, 0.0722]))
+    ratio = (np.maximum(lum, lb) + 0.05) / (np.minimum(lum, lb) + 0.05)
+    return int(np.argmin(np.abs(ratio - _RECEDE_CONTRAST)))
 
 
 def bulb_rows(rows: int) -> np.ndarray:
@@ -103,25 +191,36 @@ def bulb_row_index(rows: int) -> np.ndarray:
     return rows - 1 - 2 * np.arange(bulb_count(rows))
 
 
+def bulb_thresholds(rows: int) -> np.ndarray:
+    """The level each bulb lights above, bottom bulb first.
+
+    Bulb *k* lights when ``level > 2k / rows`` — and never below
+    :data:`_QUIET`, which is what lets the bottom bulb go dark. The one place
+    this is decided: :func:`bar_panel` and :func:`crest_bulb` both read it, and
+    they have to agree to the ulp (see :func:`crest_bulb`).
+    """
+    return np.maximum(2 * np.arange(bulb_count(rows)) / rows, _QUIET)
+
+
 def crest_bulb(levels: np.ndarray, rows: int) -> np.ndarray:
     """Index of the topmost lit bulb for each level, or -1 for none.
 
-    :func:`bar_panel` lights bulb *k* when ``level > 2k / rows``. This counts
-    that same comparison rather than inverting it into ``ceil(level * rows / 2)
-    - 1``, which is the closed form and is wrong about one level in forty.
-    The two arithmetic paths disagree at exactly the boundaries: a level that
-    is a couple of ulps above ``34/40`` lights the bulb, while the closed form
-    rounds ``level * 40 / 2`` back down to ``17.0`` and reports the bulb below
-    it. Half a screen away that is a trail detaching one bulb inside its own
-    bar, which looks like a rendering glitch and is impossible to find by
-    reading either function on its own.
-
-    Cheap to do properly — the comparison is ``n`` by ``bulbs``, both small —
-    and it cannot drift from :func:`bar_panel` unless the threshold there is
-    changed, in which case the same expression has to change here too.
+    This counts the same comparison :func:`bar_panel` makes rather than
+    inverting it into ``ceil(level * rows / 2) - 1``, which is the closed form
+    and is wrong about one level in forty. The two arithmetic paths disagree
+    at exactly the boundaries: a level that is a couple of ulps above ``34/40``
+    lights the bulb, while the closed form rounds ``level * 40 / 2`` back down
+    to ``17.0`` and reports the bulb below it. Half a screen away that is a
+    trail detaching one bulb inside its own bar, which looks like a rendering
+    glitch and is impossible to find by reading either function on its own.
     """
-    thresh = 2 * np.arange(bulb_count(rows)) / rows
+    thresh = bulb_thresholds(rows)
     return (np.asarray(levels)[:, None] > thresh[None, :]).sum(axis=1).astype(np.int32) - 1
+
+
+def ladder_colours(ctx: Ctx, rows: int) -> np.ndarray:
+    """Ramp index of each screen row of a ladder: hot at the top."""
+    return ctx.ramp(np.linspace(1.0, _LIT_FLOOR, rows))
 
 
 def bar_panel(ctx: Ctx, rows: int, levels: np.ndarray, active: np.ndarray,
@@ -135,53 +234,60 @@ def bar_panel(ctx: Ctx, rows: int, levels: np.ndarray, active: np.ndarray,
     ``heat`` is an optional per-column multiplier on where the lit bulbs land
     on the ramp — Drift pins a collapsing column to the top of it. Values above
     1 are fine, since :meth:`Ctx.ramp` clips. Leave it out and the ladder is
-    coloured by height alone, which is the green-amber-red an equalizer is
-    expected to be.
+    coloured by height alone.
     """
     w = ctx.w
     on_row = bulb_rows(rows)
     panel = on_row[:, None] & active[None, :]
 
-    thresh = (np.arange(rows - 1, -1, -1, dtype=np.float64) / rows)[:, None]
+    # Row r of a bulb row holds bulb (rows - 1 - r) / 2; the rows between
+    # bulbs never light, so what they are compared against does not matter.
+    k = np.maximum(rows - 1 - np.arange(rows), 0) // 2
+    thresh = bulb_thresholds(rows)[np.minimum(k, bulb_count(rows) - 1)][:, None]
     lit = panel & (levels[None, :] > thresh)
 
-    up = np.linspace(1.0, _LIT_FLOOR, rows)   # hot at the top of the ladder
     if heat is None:
-        hot = np.repeat(ctx.ramp(up)[:, None], w, axis=1)
+        hot = np.repeat(ladder_colours(ctx, rows)[:, None], w, axis=1)
     else:
+        up = np.linspace(1.0, _LIT_FLOOR, rows)
         hot = ctx.ramp(up[:, None] * heat[None, :])
 
     codes = np.where(lit, _LED, np.where(panel, _OFF, SPACE)).astype(np.int32)
-    cidx = np.where(lit, hot, ctx.palette.index(_IDLE))
+    cidx = np.where(lit, hot, recede_index(ctx.palette)).astype(np.int32)
     return codes, cidx
 
 
-def peak_bulbs(ctx: Ctx, codes, cidx, peaks: np.ndarray, rows: int,
-               row0: int = 0) -> None:
-    """Light the bulb the peak is holding at, at the top of the ramp.
+def peak_bulbs(ctx: Ctx, codes, cidx, peaks: np.ndarray, levels: np.ndarray,
+               rows: int) -> None:
+    """Mark the bulb the peak is holding at, one weight under a lit bulb.
 
-    ``spectrum._draw_peaks`` stamps a hairline wherever the cell under it is
-    empty. This cannot: on a panel every bulb row is already occupied, by an
-    unlit bulb if nothing else. So the peak is a *hotter bulb* rather than a
-    different character — which is what the hardware does, and it means a peak
-    landing on a bulb the level already lit simply lights it harder instead of
-    being dropped.
+    Only where the peak has come clear of its bar. A peak level with the bar
+    snaps to the bulb directly above the crest, and drawing that put a cap on
+    every column all the time — a second outline of the bars that said nothing
+    the bars were not already saying. So a peak shows once it is at least two
+    bulbs above the crest, which is when a bar has *fallen away* from it.
+
+    The marker takes the ladder's own colour at that height rather than a
+    highlight, so it reads as *where that bar was*, not as a second thing
+    competing with it.
 
     The row is snapped **down** onto the nearest bulb, never up. The bottom
     row is always a bulb row and bulb rows alternate, so ``r + 1`` is a bulb
     row whenever ``r`` is not and is always still on the panel — snapping up
-    is what walked off the top of a full-scale column. That makes the snap
-    total: there is no "no bulb to put it on" case left to filter out, which
-    is why the only condition below is the level one.
+    is what walked off the top of a full-scale column.
     """
     on_row = bulb_rows(rows)
     r = rows - 1 - np.floor(np.clip(peaks, 0.0, 0.999) * rows).astype(np.int32)
     r = np.where(on_row[r], r, r + 1)
-    cols = np.flatnonzero(peaks > 0.03)
+    above = (rows - 1 - r) // 2 > crest_bulb(levels, rows) + 1
+    cols = np.flatnonzero((peaks > _QUIET) & above)
     if cols.size == 0:
         return
-    codes[row0 + r[cols], cols] = _LED
-    cidx[row0 + r[cols], cols] = RAMP_STEPS - 1
+    rr = r[cols]
+    free = codes[rr, cols] == _OFF
+    rr, cols = rr[free], cols[free]
+    codes[rr, cols] = _PEAK
+    cidx[rr, cols] = ladder_colours(ctx, rows)[rr]
 
 
 @mode("JP Bars", group="jp",
@@ -189,25 +295,23 @@ def peak_bulbs(ctx: Ctx, codes, cidx, peaks: np.ndarray, rows: int,
 def jp_bars(ctx: Ctx):
     """The meter, blended with the note roll out of ``Keys``.
 
-    ``Bars`` shows a level as a height of ink and nothing else, so a quiet
-    passage is a nearly empty screen and a loud one is a shape that vanishes
-    the instant the level drops. A graphic equalizer's panel is fully there at
-    all times — the bulbs above the level are unlit, not absent — and on top
-    of that this keeps what the bar *did*: every frame the crest sheds a bulb
-    that detaches and climbs the ladder, fading, exactly the way a struck note
-    leaves the keyboard and travels up the roll in ``Keys``.
+    ``Bars`` shows a level as a height of ink and nothing else. A graphic
+    equalizer's panel is fully there at all times — the bulbs above the level
+    are unlit, not absent — and on top of that this keeps what the bar *did*:
+    when a bar rises, the bulbs it gained detach and climb the ladder as a
+    thin trail, the way a struck note leaves the keyboard and travels up the
+    roll in ``Keys``.
 
-    So the picture holds two things at once. The bright ladder is now; the
-    half-height trail above it is the last couple of seconds of this band, and
-    a bar that rose fast leaves a staircase behind it because the emission
-    point moves with the crest.
+    The trail is the lightest lit thing on the panel, and it is short: it
+    stops being drawn once it has decayed to a quarter of the level that shed
+    it. A longer trail was the first thing that made this mode unreadable —
+    on busy material every column above its bar was full of history, and the
+    bar was one stack of ink among several.
 
     **Not VFD, and the difference is the whole point.** ``VFD`` is the other
     Japanese hi-fi display and it also puts something above the bar, but its
     phosphor decays *in place* — the trail marks where the bar was and stays
-    there while it dims. These trails *travel*. One is a bar with a soft edge;
-    this is a bar with a history scrolling away from it. Anyone tempted to
-    unify them should switch between the two for a few seconds first.
+    there while it dims. These trails *travel*.
     """
     rows, w = ctx.h, ctx.w
     n = ctx.n_display
@@ -237,12 +341,10 @@ def jp_bars(ctx: Ctx):
         roll[:shift] = 0.0
     roll *= np.float32(np.exp(-max(ctx.dt, 0.0) / 0.9))
 
-    # Emit only the bulbs a *rise* actually added — the bars that were just
-    # raised, which is the thing being left behind. Emitting at the crest
-    # every frame instead was the first attempt and it filled the whole panel
-    # with trail: the crest wanders, so a continuous emitter smears across
-    # every bulb it visits and there is nothing left to read. A held note
-    # sheds nothing, and that is correct; it is not doing anything.
+    # Emit only the bulbs a *rise* actually added. Emitting at the crest every
+    # frame filled the whole panel with trail: the crest wanders, so a
+    # continuous emitter smears across every bulb it visits. A held note sheds
+    # nothing, and that is correct; it is not doing anything.
     crest = np.clip(crest_bulb(lv, rows), -1, nb - 1)
     kk = np.arange(nb, dtype=np.int32)[:, None]
     raised = (kk > st["was"][None, :]) & (kk <= crest[None, :])
@@ -250,17 +352,17 @@ def jp_bars(ctx: Ctx):
     st["was"] = crest
 
     codes, cidx = bar_panel(ctx, rows, levels, active)
-    peak_bulbs(ctx, codes, cidx, peaks, rows)
+    peak_bulbs(ctx, codes, cidx, peaks, levels, rows)
 
-    # Trails go in only where the ladder is unlit, so the live bar always wins
-    # its own cells and the picture never says a bulb is both.
+    # Trails go in only on unlit bulbs, so the live bar and its peak always
+    # win their own cells. Colour is the ladder's at that height — the fade
+    # is carried by the cutoff, since a hue ramp has no "dimmer" to fade to.
     rws = bulb_row_index(rows)
-    up = np.linspace(1.0, _LIT_FLOOR, rows)
     ghost = np.where(active[None, :], roll[:, col_band], np.float32(0.0))
     sub_c, sub_x = codes[rws], cidx[rws]
-    show = (ghost > 0.06) & (sub_c == _OFF)
-    sub_c[show] = _HALF_DOWN
-    sub_x[show] = ctx.ramp(up[rws][:, None] * ghost)[show]
+    show = (ghost > 0.25) & (sub_c == _OFF)
+    sub_c[show] = _TRAIL
+    sub_x[show] = np.broadcast_to(ladder_colours(ctx, rows)[rws][:, None], show.shape)[show]
     codes[rws], cidx[rws] = sub_c, sub_x
     return codes, cidx
 
@@ -270,44 +372,36 @@ def jp_bars(ctx: Ctx):
 def jp_drift(ctx: Ctx):
     """The meter, blended with the sandpile out of ``Dune``.
 
-    Every other mode in this family draws the level: read it, light that many
-    bulbs. Here the bulbs are a running *sum*. Sand rains into each band in
-    proportion to its level, a column only ever grows, and the sole way down
-    is a collapse — height crossing the angle of repose, dumping most of
-    itself and pushing the excess sideways into the two bands next to it.
-    A loud passage therefore keeps toppling columns for seconds afterwards,
-    because what decides that is the pile, not the spectrum.
+    The other modes in this family draw the level: read it, light that many
+    bulbs. Here the bulbs are a running *balance*. Sand rains into each band in
+    proportion to the square of its level and drains out faster the taller the
+    pile is, and a column that crosses the angle of repose collapses — dumping
+    most of itself and pushing the excess sideways into the two bands next to
+    it. A band steadily above about 0.68 keeps toppling; below that it settles
+    at a height, so what you see is a meter for the quiet and medium part of a
+    mix and a sandpile for the loud part.
 
-    The law is ``Dune``'s — inflow with the square of the level, collapse at
-    the angle of repose, a third of the excess to each side — but it is drawn
-    on the family's ladder rather than as dot-resolution grit, and that
-    changes two constants that are worth spelling out, because both were
-    found by the audit rather than by taste.
+    **Drainage is what keeps it a meter.** Without it the pile only ever grew:
+    measured on bass-heavy input, after thirty seconds the *emptiest* column
+    was 55% lit, and once the music stopped the panel froze, full, forever. A
+    fixed drain fixed that and broke the other end — it was a cutoff, and every
+    band steadily under ≈ 0.47 sank to an empty column. The drain now grows
+    with the height of the pile (see :data:`_DRIFT_DRAIN_LIN`), which leaves a
+    small response to quiet input and still clears a full panel in about three
+    and a half seconds of silence.
 
-    **Inflow is faster here, and has to be.** ``Dune`` fills a 160-row dot
-    grid, so a hundredth of a unit of sand still moves the top of the heap by
-    a dot. A twenty-bulb ladder is an order of magnitude coarser: at Dune's
-    rate nothing crosses a bulb boundary for a quarter of a second at a time
-    and the panel reads as *frozen*, which is what the animation check called
-    it. The rate buys back the resolution the ladder gives up.
+    **The pile opens at rest.** It is seeded at the height each band would
+    settle at for the current level (:func:`_drift_rest`), so switching to the
+    mode shows the steady picture at once instead of the whole panel climbing
+    or sinking toward it — and a frozen spectrum below the avalanche level is a
+    frozen picture, as a meter's should be.
 
-    **The pile starts at the spectrum, not at zero.** From flat it would spend
-    the first seconds as an empty panel — the mode would have nothing to say
-    when you switched to it, and its whole colour range would be missing until
-    the heap got tall enough to reach it. Seeded, it opens as a bar graph and
-    then starts drifting, which is also the honest picture: the sand has been
-    falling all along, you just arrived.
-
-    A collapse then needs help to be visible at all. Grit shows an avalanche
-    as a texture sliding; sixteen bulbs cannot, so a toppling column and the
-    two it feeds flash to the top of the ramp and fade, and that flash is how
-    you see where the sand went.
-
-    This replaced a scan-light mode that was the fourth JP. It was cut
-    because ``Sonar`` already owns the travelling sweep with fading returns,
-    and a JP version of it was a bar chart with a line moving over it —
-    a clone of ``Bars`` wearing a different mechanic rather than a blend with
-    one. Sideways transfer between bands is something no other mode does.
+    A collapse needs help to be visible: grit shows an avalanche as a texture
+    sliding, and sixteen bulbs cannot, so a toppling column and the two it
+    feeds shift toward the top of the ramp and fade back. Sand that spills off
+    either end of the spectrum is lost — the first and last bands used to spill
+    into *themselves*, which returned a third of every collapse to the column
+    that had just collapsed.
     """
     w, h = ctx.w, ctx.h
     if w < 10 or h < 4:
@@ -317,34 +411,40 @@ def jp_drift(ctx: Ctx):
     lv = ctx.display_bands(n)
 
     st = ctx.scratch("jp_drift", lambda: {
-        "h": lv.astype(np.float64).copy(),
+        "h": _drift_rest(lv),
         "flash": np.zeros(n, dtype=np.float64),
+        "rest": np.zeros(n, dtype=np.float64),
         "rng": np.random.default_rng(53),
     })
     if st["h"].shape[0] != n:
-        st["h"] = lv.astype(np.float64).copy()
+        st["h"] = _drift_rest(lv)
         st["flash"] = np.zeros(n, dtype=np.float64)
+        st["rest"] = np.zeros(n, dtype=np.float64)
     pile, flash, rng = st["h"], st["flash"], st["rng"]
 
-    pile += lv * lv * _DRIFT_FEED * ctx.dt
+    dt = max(ctx.dt, 0.0)
+    pile += (lv * lv * _DRIFT_FEED - (_DRIFT_DRAIN_LIN + _DRIFT_DRAIN_SQ * pile) * pile) * dt
     np.clip(pile, 0.0, 1.3, out=pile)
 
-    spill = pile > 1.0
+    rest = st["rest"]
+    np.maximum(rest - dt, 0.0, out=rest)
+    spill = (pile > 1.0) & (rest <= 0.0)
     if spill.any():
         idx = np.flatnonzero(spill)
         excess = pile[idx] - 0.55
         pile[idx] = 0.55 + rng.uniform(-0.03, 0.03, idx.size)
-        left = np.clip(idx - 1, 0, n - 1)
-        right = np.clip(idx + 1, 0, n - 1)
-        np.add.at(pile, left, excess * 0.35)
-        np.add.at(pile, right, excess * 0.35)
-        np.clip(pile, 0.0, 1.3, out=pile)
-        # the column that went, and the two it went into
         flash[idx] = 1.0
-        np.maximum.at(flash, left, 0.7)
-        np.maximum.at(flash, right, 0.7)
+        for side, ok in ((idx - 1, idx > 0), (idx + 1, idx < n - 1)):
+            # no spill into a band collapsing on the same frame: its own sand
+            # is already moving, and refilling it made a row of simultaneous
+            # collapses land straight back above the angle of repose
+            ok = ok & ~spill[np.clip(side, 0, n - 1)]
+            np.add.at(pile, side[ok], excess[ok] * 0.35)
+            np.maximum.at(flash, side[ok], _DRIFT_NEIGHBOUR_FLASH)
+            np.maximum.at(rest, side[ok], _DRIFT_SPILL_REST)
+        np.clip(pile, 0.0, 1.3, out=pile)
 
-    st["flash"] = flash * float(np.exp(-max(ctx.dt, 0.0) / 0.22))
+    st["flash"] = flash * float(np.exp(-dt / _DRIFT_FLASH_TAU))
 
     col_band, active = band_columns(w, n)
     levels = np.where(active, np.clip(pile, 0.0, 1.0)[col_band], 0.0)
@@ -360,35 +460,28 @@ def jp_pulse(ctx: Ctx):
     """The same ladder, once round the circle: one spoke of bulbs per band.
 
     ``Radial`` fills a smooth wedge out from the centre and ``Pulse`` blobs a
-    disc. This is the bar graph in polar coordinates and nothing else: each
-    band gets a spoke with a dark gutter either side of it, the spoke carries
-    the family's ladder of discrete bulbs growing outward from a hub, and the
-    peak bulb hangs out past the level exactly as it does on the flat panel.
-    A band is therefore still readable as a bar — which angle it is at, how
-    far out it reaches — rather than as a brightness somewhere on a ring.
+    disc. This is the bar graph in polar coordinates: each band gets a spoke
+    with a dark gutter either side of it, the spoke carries the family's
+    ladder of discrete bulbs growing outward from a hub, and the peak hangs
+    out past the level exactly as it does on the flat panel.
 
-    The ring turns on an energy-driven clock accumulated in scratch, and an
-    onset launches a chaser: a bright band position that runs once round and
-    fades, flaring each spoke it passes. The chaser is added to the *band*
-    table before the gather, so it costs a table of ``n`` entries and no extra
-    pass over the dot grid — the same reasoning as :func:`angular_lut`.
+    The ink weights are the flat panel's, in dots. A lit bulb is a solid arc
+    ``_RING_SEGS`` of the spoke deep; the peak is a thin arc; an unlit bulb is
+    a few dots on the spoke's centreline. The first version drew unlit bulbs
+    with every dot set and told them apart from lit ones by colour alone — so
+    on a hue ramp the dial read as one solid ring and the spokes that were
+    actually lit were close to invisible.
 
-    **Where the frame goes.** The first version did all of this per dot, and
-    at 400x100 that is 320,000 elements times about thirty passes: it benched
-    at 13.2 ms, second-costliest mode in the app, for a picture that only ever
-    takes ``n * _RING_SEGS`` distinct forms. So the same split the rest of the
-    file's polar code uses applies here twice over.
+    An onset launches a chaser: a bright band position that runs once round
+    and fades, flaring each spoke it passes. *Only* an onset — the chaser
+    used to be launched on a timer as well, which fired it in silence.
 
-    * The *radial* half — which bulb a dot belongs to, whether it is on a bulb
-      rather than in the gap between two — depends only on the geometry, so it
-      is built once per size and cached. That is why the dial's outer radius
-      is fixed rather than breathing with :attr:`Ctx.pulse`: a breathing
-      radius makes every one of those arrays frame-dependent, and the beat is
-      already carried by the chaser and by the whole-dial lift on ``top``.
-    * The *angular* half becomes a 512-entry table, gathered with an index
-      that spin advances by integer addition. Rotation is then quantised to
-      1/512 of a turn, which is 0.7 degrees and below what the dot grid can
-      show anyway.
+    **Where the frame goes.** The *radial* half — which bulb a dot belongs to,
+    and whether it is on the solid, thin or dotted part of it — depends only
+    on the geometry, so it is built once per size and cached. The *angular*
+    half is a 512-entry table gathered with an index that spin advances by
+    integer addition, so rotation is quantised to 0.7 degrees, below what the
+    dot grid can show anyway.
     """
     dr, dc = ctx.dot_rows, ctx.dot_cols
     if dr < 16 or dc < 16:
@@ -402,20 +495,13 @@ def jp_pulse(ctx: Ctx):
         "spin": 0.0,
         "born": np.full(_KW_WAVES, -99.0),
         "amp": np.zeros(_KW_WAVES),
-        "acc": 0.0,
     })
     st["spin"] = (st["spin"] + (0.04 + ctx.energy * 0.09) * ctx.dt) % 1.0
 
-    # chaser slots — same policy as particles.pulse, which explains the clock
-    st["acc"] += (0.8 + ctx.energy * 5.0) * ctx.dt
-    due = st["acc"] >= 1.0 or st["born"].max() < 0.0
-    if due:
-        st["acc"] = max(0.0, st["acc"] - 1.0)
-    if (ctx.onsets or due) and (ctx.t - st["born"].max()) > 0.12:
+    if ctx.onsets and (ctx.t - st["born"].max()) > 0.12:
         slot = int(np.argmin(st["born"]))
         st["born"][slot] = ctx.t
-        strength = ctx.onset_strength if ctx.onsets else min(1.0, ctx.energy * 1.4)
-        st["amp"][slot] = float(np.clip(0.35 + strength * 0.9, 0.0, 1.0))
+        st["amp"][slot] = float(np.clip(0.35 + ctx.onset_strength * 0.9, 0.0, 1.0))
 
     lap = 0.85
     band_i = np.arange(n, dtype=np.float32)
@@ -430,64 +516,85 @@ def jp_pulse(ctx: Ctx):
         chase = np.maximum(chase, np.float32(amp) * np.clip(1.0 - d / 1.6, 0.0, 1.0))
 
     # ── the radial half, built once per size ─────────────────────────────────
-    # Which bulb each dot is part of, and whether it is on one at all. Nothing
-    # here depends on the audio or the spin, so it is geometry, not a frame.
     def radial():
         segs = float(_RING_SEGS)
         r0 = max_r * 0.26
         r1 = max_r * 0.94
+        pitch = (r1 - r0) / segs                       # dots per bulb
         s = (dist - np.float32(r0)) * np.float32(segs / (r1 - r0))
         floor_s = np.floor(s)
-        ok = ((s - floor_s) < np.float32(0.60)) & (s >= np.float32(0.0)) & (s < np.float32(segs))
-        idx0 = (turn * np.float32(steps)).astype(np.int32) & (steps - 1)
+        f = s - floor_s
+        inside = (s >= np.float32(0.0)) & (s < np.float32(segs))
+        ok = inside & (f < np.float32(0.60))
+        # at least a dot deep, or a small terminal loses the thin arcs entirely
+        thin = inside & (f < np.float32(min(0.6, max(0.22, 1.05 / max(pitch, 1e-6)))))
+        yy, xx = np.indices(dist.shape)
+        # Every other dot, on a ladder deep enough for a thin arc to be thinner
+        # than a lit one. Under three dots a bulb it is not — thin and solid
+        # are the same depth — so the unlit arc thins by dropping to one dot in
+        # four instead, or at 60x20 it was half as dense as a lit bulb and the
+        # lit spokes did not stand out.
+        if pitch >= 3.0:
+            sparse = (yy + xx) % 2 == 0
+        else:
+            sparse = (yy % 2 == 0) & (xx % 2 == 0)
         return {
             "bulb": np.where(ok, floor_s, np.float32(-1.0)).astype(np.int16),
             "ok": ok,
+            "thin": thin,
+            "dotted": thin & sparse,
             # hot at the outer end of the spoke, which is the ring's version
             # of the ladder being hot at the top
             "warm": (np.float32(_LIT_FLOOR) + np.clip(s * np.float32(1.0 / segs), 0.0, 1.0)
                      * np.float32(1.0 - _LIT_FLOOR)).astype(np.float32),
-            "idx0": idx0,
+            "idx0": (turn * np.float32(steps)).astype(np.int32) & (steps - 1),
         }
 
     geo = ctx.scratch("jp_dial", radial)
 
     # ── the angular half, as a 512-entry table ───────────────────────────────
     # ``-1`` marks the gutter between two spokes, so one gather answers both
-    # "is this dot inside a spoke" and "how far up that spoke is lit".
+    # "is this dot inside a spoke" and "how far up that spoke is lit". A peak
+    # at or under the quiet floor is ``-1`` too, so silence draws no peak arcs
+    # — it used to light a full hot ring at the hub.
     lv = ctx.display_bands(n).astype(np.float32)
     drive = np.clip(lv + chase * np.float32(0.55) + np.float32(ctx.pulse * 0.06), 0.0, 1.0)
-    top_b = np.floor(drive * _RING_SEGS).astype(np.int16)
-    pk_b = np.floor(np.clip(ctx.display_peaks(n).astype(np.float32), 0.0, 0.999)
-                    * _RING_SEGS).astype(np.int16)
+    top_b = np.where(drive > _QUIET, np.floor(drive * _RING_SEGS), 0).astype(np.int16)
+    pk = ctx.display_peaks(n).astype(np.float32)
+    pk_b = np.where(pk > _QUIET,
+                    np.floor(np.clip(pk, 0.0, 0.999) * _RING_SEGS), -1).astype(np.int16)
 
     pos = np.arange(steps, dtype=np.float32) * np.float32(n / steps)
     band = pos.astype(np.int32)
     gut = pos - band
     spoke = (gut > np.float32(0.16)) & (gut < np.float32(0.84))
     top_a = np.where(spoke, top_b[band], -1).astype(np.int16)
-    pk_a = np.where(spoke, pk_b[band], -1).astype(np.int16)
+    # a peak in the same bulb as the level is part of the bar, not above it
+    pk_a = np.where(spoke & (pk_b[band] > top_b[band]), pk_b[band], -1).astype(np.int16)
 
     shift = int(st["spin"] * steps) & (steps - 1)
     idx = (geo["idx0"] + shift) & (steps - 1)
     reach = top_a[idx]
 
-    # The whole ladder is drawn, unlit bulbs included, exactly as on the flat
-    # panel — that is what makes this read as the same instrument bent round
-    # rather than as another ring mode. The dots are the dial; the rest only
-    # decides how hot each one is.
-    dial = geo["ok"] & (reach >= 0)
-    codes = pack_braille(dial)
-
-    # Filled rather than selected: an unlit bulb and an empty cell both want
-    # the ramp floor, so the ``where`` that used to pick between them was
-    # 320,000 elements of branching to produce a constant — 0.48 ms of this
-    # mode's 4.7. A cell with no dots in it paints nothing whatever its index
-    # says (see tests/test_blank_runs.py), so filling the whole grid is not
-    # merely cheaper, it is the same picture.
     bulb = geo["bulb"]
-    heat = np.full(dial.shape, np.float32(_IDLE), dtype=np.float32)
-    np.copyto(heat, geo["warm"], where=dial & (bulb < reach))
-    np.copyto(heat, np.float32(1.0), where=dial & (bulb == pk_a[idx]))
-    cidx = ctx.ramp(cell_max(heat))
+    lit = geo["ok"] & (bulb < reach)
+    peak = geo["thin"] & (bulb == pk_a[idx])
+    # Unlit bulbs are a dotted centreline down each spoke, at every size. A
+    # full-width dotted arc per bulb was a dot field the size of the dial, and
+    # live in the terminal a bass hit's two or three active spokes did not
+    # stand out of it — first at 60x20 on every theme, then at 120x40 on
+    # flexoki-light, where the lit and unlit colours are both olive on cream.
+    # A centreline still shows where every spoke and bulb is, and is too
+    # little ink to compete with a spoke that is lit, whatever the ramp.
+    centre = (np.abs(gut - np.float32(0.5)) < np.float32(0.06))[idx]
+    unlit = geo["dotted"] & centre & (reach >= 0) & ~(bulb < reach)
+    codes = pack_braille(lit | peak | unlit)
+
+    # A cell holding any lit or peak dot takes that colour; a cell holding
+    # only unlit dots takes the recede colour. A cell with no dots paints
+    # nothing whatever its index says (see tests/test_blank_runs.py).
+    heat = np.full(bulb.shape, np.float32(-1.0), dtype=np.float32)
+    np.copyto(heat, geo["warm"], where=lit | peak)
+    hot = cell_max(heat)
+    cidx = np.where(hot < 0.0, recede_index(ctx.palette), ctx.ramp(hot)).astype(np.int32)
     return codes, cidx

@@ -101,12 +101,13 @@ SELF_ANIMATING = {
     # whole distinction from Dither next to it
     "Dither Storm", "Dither Storm Extreme",
     # a trail shed by the crest goes on climbing and fading after the bar
-    # that shed it stopped moving (JP Bars); the sandpile keeps taking
-    # sand and a collapse chains into its neighbours over the following
-    # frames whatever the spectrum does (JP Drift); the dial keeps
-    # rotating and a launched chaser runs once round it before fading
-    # (JP Pulse).
-    "JP Bars", "JP Drift", "JP Pulse",
+    # that shed it stopped moving (JP Bars); the dial keeps rotating and
+    # a launched chaser runs once round it before fading (JP Pulse).
+    # JP Drift is deliberately *not* here: its pile opens at the height
+    # it settles at, and a band below the avalanche level (≈ 0.68, above the
+    # 0.6 this check holds) stays at that height — a frozen spectrum is a
+    # frozen picture until it is loud enough to topple.
+    "JP Bars", "JP Pulse",
 }
 
 #: Modes driven by the waveform rather than the band levels.
