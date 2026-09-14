@@ -350,6 +350,11 @@ _RENAMED = {
     "Kaleidoscope Ultra": "Kaleidoscope Ultra (o)",
     "Valentine Fine": "Valentine (o)",
     "Maelstrom Fine": "Maelstrom (o)",
+    # JP modes that were cut rather than renamed. A config naming one
+    # lands on the family's own meter instead of silently on whatever the app
+    # had, which is the closest picture to what that person chose.
+    "JP Keys": "JP Bars",
+    "JP Sweep": "JP Bars",
 }
 
 #: The suffix each cell geometry is shown with.

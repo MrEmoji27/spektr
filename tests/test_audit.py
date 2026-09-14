@@ -105,9 +105,7 @@ SELF_ANIMATING = {
     # sand and a collapse chains into its neighbours over the following
     # frames whatever the spectrum does (JP Drift); the dial keeps
     # rotating and a launched chaser runs once round it before fading
-    # (JP Pulse). JP Keys is deliberately *not* here: with no roll
-    # of its own it is a bar chart, and its release tail has already reached
-    # the level by the second frame of a held note.
+    # (JP Pulse).
     "JP Bars", "JP Drift", "JP Pulse",
 }
 

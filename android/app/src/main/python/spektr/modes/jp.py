@@ -1,10 +1,10 @@
-"""The JP family — one bar graph, four machines around it.
+"""The JP family — one bar graph, three machines around it.
 
 Every mode here is the *same* segmented LED meter: a column per band, a fixed
 ladder of bulbs per column, the unlit bulbs drawn rather than left blank. That
-ladder is :func:`bar_panel` and all four modes draw it. What differs is the
-mode each one is *blended with*: ``Keys``' note roll, ``Dune``'s sandpile, a
-piano keyboard, and ``Radial``'s circle.
+ladder is :func:`bar_panel` and all three modes draw it. What differs is the
+mode each one is *blended with*: ``Keys``' note roll, ``Dune``'s sandpile, and
+``Radial``'s circle.
 
 Two rules keep this a family rather than a shelf of near-duplicates, and both
 were learned by breaking them.
@@ -13,12 +13,14 @@ were learned by breaking them.
 legible — the first version of this file lost the bars entirely in three of
 the four and had to be rewritten.
 
-**The partner has to be a real mechanic, not a decoration.** The fourth mode
-used to be a scan light sweeping the panel, and it was cut: ``Sonar`` already
-owns the travelling sweep with fading returns, and what was left after that
-was a bar chart with a line moving over it. If a new JP mode cannot be
-named as "``Bars`` × *something that already exists*", it is a clone of
-``Bars`` and it should not be added.
+**The partner has to be a real mechanic, not a decoration.** A scan light
+sweeping the panel was cut because ``Sonar`` already owns the travelling sweep,
+and what was left was a bar chart with a line moving over it. JP Keys was
+cut for the same reason from the other side: its partner was a piano keyboard,
+which is not a mode, and the keys implied note names that 32 log-spaced FFT
+bands cannot give. If a new JP mode cannot be named as "``Bars`` ×
+*something that already exists*", it is a clone of ``Bars`` and it should not
+be added.
 
 Against the flat spectrum group they sit next to: ``Bars`` draws smooth
 fractional blocks and ``Ladder`` a contiguous stack, both of which show only
@@ -42,7 +44,6 @@ from . import (
 
 _LED = ord("▆")          # a lit bulb
 _OFF = ord("▁")          # an unlit one: the dark base of the same bulb
-_FULL = ord("█")
 _HALF_DOWN = ord("▄")   # a trail bulb: lighter than lit, heavier than unlit
 
 #: Where an unlit bulb and the *foot* of a lit ladder sit on the ramp.
@@ -61,13 +62,6 @@ _HALF_DOWN = ord("▄")   # a trail bulb: lighter than lit, heavier than unlit
 #: the gradient from an unlit one.
 _IDLE = 0.0
 _LIT_FLOOR = 0.22
-
-#: After which white key of each seven-key octave a black key sits: C# after C,
-#: D# after D, F# after F, G# after G, A# after A. There is deliberately no
-#: entry for 2 (E) or 6 (B) — that is the point of the pattern, and the first
-#: version of this file had ``[0, 2, 4, 5, 6]`` here, which put black keys
-#: between E–F and B–C and none between C–D.
-_BLACK_AFTER = np.array([0, 1, 3, 4, 5], dtype=np.int32)
 
 #: Concurrent chaser slots on the ring. Two is enough to overlap a fast pair
 #: of kicks (see particles.pulse for the same policy).
@@ -358,83 +352,6 @@ def jp_drift(ctx: Ctx):
     # pins to the top of the ramp for as long as the flash lasts.
     heat = np.where(active, 1.0 + st["flash"][col_band] * 1.6, 0.0)
     return bar_panel(ctx, h, levels, active, heat=heat)
-
-
-@mode("JP Keys", group="jp",
-      blurb="the meter standing on a piano — each bar rises out of the key it belongs to")
-def jp_keys(ctx: Ctx):
-    """A bar graph whose axis is a keyboard, not a ruler.
-
-    ``Keys`` (scenes.py) is a note roll: a struck band spawns something that
-    scrolls away and the keyboard is a two-row strip with no black keys. This
-    is the other half of that idea — the keyboard is a real one, with the
-    5-black/7-white octave pattern and the blacks set into the back of the
-    whites, and what stands on it is the family's ladder, so a bar is read as
-    "how hard is this key being held" rather than as a bar at position *i*.
-
-    The keys are driven by a level with a release tail rather than by the raw
-    band, so a key that is let go decays over about a third of a second
-    instead of snapping shut on the next quiet frame. On a held note the tail
-    has already reached the level, which is why this mode is not in the
-    audit's self-animating set: it is a bar chart, and a bar chart of a
-    constant signal is supposed to be constant.
-    """
-    w, h = ctx.w, ctx.h
-    if w < 16 or h < 9:
-        return empty(w, h)
-
-    n = min(ctx.n_display, max(4, w // 3))
-    col_band, active = band_columns(w, n)
-    lv = ctx.display_bands(n)
-
-    st = ctx.scratch("jp_keys", lambda: {"press": np.zeros(n, dtype=np.float64)})
-    if st["press"].shape[0] != n:
-        st["press"] = np.zeros(n, dtype=np.float64)
-    st["press"] = np.maximum(st["press"] * float(np.exp(-ctx.dt / 0.30)), lv)
-    press = st["press"]
-
-    # Three rows of keyboard: the black keys occupy the back two, the whites
-    # all three, and the blacks are punched into the whites rather than drawn
-    # above them, which is what sets them behind the front edge of the keys.
-    top = h - 3
-    codes = np.full((h, w), SPACE, dtype=np.int32)
-    cidx = np.zeros((h, w), dtype=np.int32)
-
-    bars, bar_cidx = bar_panel(ctx, top, np.where(active, press[col_band], 0.0), active)
-    codes[:top] = bars
-    cidx[:top] = bar_cidx
-
-    white = ctx.ramp(np.clip(press[col_band], 0.0, 1.0))
-    idle = ctx.palette.index(0.34)
-    down = active & (press[col_band] > 0.16)
-    for row in (h - 3, h - 2, h - 1):
-        codes[row, active] = _FULL
-        cidx[row, active] = idle
-        cidx[row, down] = white[down]
-
-    # A black key sits over the boundary between two white keys, and only
-    # between the pairs that have one. Its level is the mean of the two it
-    # divides, so it lights with the region rather than being decoration.
-    run0 = np.concatenate(([True], col_band[1:] != col_band[:-1])) & active
-    starts = np.flatnonzero(run0)
-    if starts.size >= 2:
-        band_at = col_band[starts]
-        adjacent = band_at[1:] == band_at[:-1] + 1
-        pair = adjacent & np.isin(band_at[:-1] % 7, _BLACK_AFTER)
-        edge = starts[1:][pair] - 1                  # the gutter column
-        left = band_at[:-1][pair]
-        if edge.size:
-            span = max(1, min(3, int(np.min(np.diff(starts))) - 1))
-            off = np.arange(span) - (span - 1) // 2
-            cols = np.clip((edge[:, None] + off[None, :]).ravel(), 0, w - 1)
-            blv = np.repeat((press[left] + press[left + 1]) * 0.5, span)
-            bhot = np.where(blv > 0.16, ctx.ramp(np.clip(blv, 0.0, 1.0)),
-                            ctx.palette.index(_IDLE))
-            codes[h - 3, cols] = _FULL
-            codes[h - 2, cols] = _HALF_DOWN
-            cidx[h - 3, cols] = bhot
-            cidx[h - 2, cols] = bhot
-    return codes, cidx
 
 
 @mode("JP Pulse", group="jp",
