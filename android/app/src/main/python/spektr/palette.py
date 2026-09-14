@@ -754,7 +754,16 @@ class Palette:
         rgb_int = np.clip(np.rint(self.rgb), 0, 255).astype(np.int64)
         self.hexes = [f"#{r:02x}{g:02x}{b:02x}" for r, g, b in rgb_int]
         self.colors = [Color.from_rgb(int(r), int(g), int(b)) for r, g, b in rgb_int]
-        self.styles = [Style.from_color(color=c) for c in self.colors]
+        # Foreground styles carry the theme's background as well. Textual
+        # draws a line from ``render_line`` exactly as it is handed over — the
+        # widget's ``styles.background`` only fills padding — so a style with
+        # no bgcolor went to the terminal as "default background", and every
+        # visualizer cell showed the terminal's own colour scheme (at whatever
+        # opacity the terminal runs) instead of the theme. Measured on Windows
+        # Terminal with Catppuccin Mocha at 80% opacity: gruvbox rendered on
+        # #1e1e2e and flexoki-light on a dark background, not on cream.
+        bg = Color.parse(th.bg or "#000000")
+        self.styles = [Style.from_color(color=c, bgcolor=bg) for c in self.colors]
         self.bg_styles = [Style.from_color(bgcolor=c) for c in self.colors]
         # Combined fg-on-bg styles, filled on demand and dropped when the ramp
         # changes. Building all RAMP_STEPS**2 of them up front would be 4096
