@@ -170,7 +170,7 @@ to diverge from, and a harder onset throws a brighter, longer, faster one.
 It has company now: **Constellations** grows figures by drawing one line per
 beat, **Star Trails** spins up with percussion while arcs accumulate around a
 fixed pole, and **Supernova** spends its whole budget on rare, hard hits —
-a shell that expands for five seconds and a core that glows for twenty.
+a shell that expands for five seconds and a core that glows on after it.
 
 Vinyl, Rain, Snow and Ember are the lofi group — a
 shared *look* (warm objects, soft edges, nothing strobing) rather than a

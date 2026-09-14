@@ -21,7 +21,7 @@ from typing import Callable
 import numpy as np
 
 from ..analysis import resample_bands
-from ..palette import Palette
+from ..palette import Palette, _to_linear, hex_to_rgb
 from ..render import SPACE
 
 Codes = np.ndarray
@@ -539,6 +539,40 @@ def empty(w: int, h: int) -> tuple[np.ndarray, np.ndarray]:
 # function, which is how ``Kaleidoscope`` ended up with ``max(1.0, cy - 1.0)``
 # in one place and ``max(cy - 1.0, 1.0)`` in another — the same number by luck
 # rather than by construction.
+
+_LUMA = np.array([0.2126, 0.7152, 0.0722])
+
+
+def bg_contrast(palette: Palette) -> np.ndarray:
+    """WCAG contrast of every ramp entry against the theme's own background.
+
+    A theme's ramp is a hue gradient, not a brightness one: on gruvbox the low
+    end is the most visible colour on it and on plasma the low end is nearly
+    the background. A mode that wants something to *recede* or to *stand out*
+    has to ask this rather than assume a low index is dim. Computed per call,
+    because an animated theme's ramp moves every frame; it is 64 entries.
+    """
+    lum = _to_linear(np.asarray(palette.rgb, dtype=np.float64)) @ _LUMA
+    bg = hex_to_rgb(palette.theme.bg or "#000000")
+    lb = float(_to_linear(np.array(bg, dtype=np.float64)) @ _LUMA)
+    return (np.maximum(lum, lb) + 0.05) / (np.minimum(lum, lb) + 0.05)
+
+
+def contrast_ramp(palette: Palette, values, faint: float = 1.8) -> np.ndarray:
+    """Ramp indices for 0..1 *brightness*, measured against the background.
+
+    0 lands on the entry whose contrast is closest to ``faint`` — visible, but
+    the quietest thing the theme can show — and 1 on the highest-contrast
+    entry; values between walk the ramp from one to the other. Walking the
+    ramp keeps neighbouring values neighbouring colours, and across the 55
+    built-ins contrast never steps backwards along that walk.
+    """
+    cr = bg_contrast(palette)
+    lo = int(np.argmin(np.abs(cr - faint)))
+    hi = int(np.argmax(cr))
+    v = np.clip(np.asarray(values, dtype=np.float32), 0.0, 1.0)
+    return np.rint(lo + (hi - lo) * v).astype(np.int32)
+
 
 def polar_grid(ctx: Ctx):
     """``(dist, turn, max_r)`` over the dot grid, cached per size.

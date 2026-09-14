@@ -40,11 +40,12 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..palette import RAMP_STEPS, _to_linear, hex_to_rgb
+from ..palette import RAMP_STEPS
 from ..render import SPACE, cell_max, pack_braille
 from . import (
     Ctx,
     band_columns,
+    bg_contrast,
     empty,
     mode,
     polar_grid as _polar,
@@ -157,12 +158,7 @@ def recede_index(palette) -> int:
     a theme whose ramp fades into its background. Recomputed per call, because
     an animated theme's ramp moves every frame; it is 64 entries.
     """
-    lin = _to_linear(np.asarray(palette.rgb, dtype=np.float64))
-    lum = lin @ np.array([0.2126, 0.7152, 0.0722])
-    bg = _to_linear(np.array(hex_to_rgb(palette.theme.bg or "#000000"), dtype=np.float64))
-    lb = float(bg @ np.array([0.2126, 0.7152, 0.0722]))
-    ratio = (np.maximum(lum, lb) + 0.05) / (np.minimum(lum, lb) + 0.05)
-    return int(np.argmin(np.abs(ratio - _RECEDE_CONTRAST)))
+    return int(np.argmin(np.abs(bg_contrast(palette) - _RECEDE_CONTRAST)))
 
 
 def bulb_rows(rows: int) -> np.ndarray:

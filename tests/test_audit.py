@@ -281,6 +281,14 @@ def check_output_sanity() -> list[str]:
 #: anything of its own.
 _RAMP_EXEMPT = ("None",)
 
+#: Modes whose field is *brightness*, mapped through ``contrast_ramp``: they
+#: walk only the stretch of the ramp between the theme's quietest and loudest
+#: colour against its background, which on gruvbox is 32 steps of 64. Asking
+#: them to span half the ramp asks for colours they have deliberately given up.
+#: The same failure — a picture collapsed into one colour — is still checked,
+#: in the unit that applies: they must cover most of that contrast range.
+_CONTRAST_MAPPED = ("Shooting Star", "Constellations", "Star Trails", "Supernova")
+
 
 def check_ramp_usage() -> list[str]:
     """A mode has to spread its picture over the ramp it is handed.
@@ -320,6 +328,18 @@ def check_ramp_usage() -> list[str]:
                     if arr is not None:
                         seen.update(np.unique(np.asarray(arr)).tolist())
         span = max(seen) - min(seen)
+        if m.name in _CONTRAST_MAPPED:
+            from spektr.modes import bg_contrast, contrast_ramp
+
+            cr = bg_contrast(PAL)
+            full = cr.max() - cr[int(contrast_ramp(PAL, 0.0))]
+            used = cr[sorted(seen)].max() - cr[sorted(seen)].min()
+            if used < 0.7 * full or len(seen) < 6:
+                bad.append(
+                    f"{m.name} uses {used:.2f} of the theme's {full:.2f} contrast range "
+                    f"in {len(seen)} steps — its faint and bright are the same colour"
+                )
+            continue
         if span < 32 or len(seen) < 6:
             bad.append(
                 f"{m.name} draws in {len(seen)} of {RAMP_STEPS} ramp steps, "

@@ -23,7 +23,7 @@ import math
 import numpy as np
 
 from ..render import cell_max, noise, pack_braille
-from . import Ctx, empty, mode
+from . import Ctx, contrast_ramp, empty, mode
 
 #: Fixed stars per dot cell. Sparse on purpose: a sky is mostly nothing, and
 #: past a certain density the eye stops reading stars and starts reading haze.
@@ -34,6 +34,27 @@ _STAR_DENSITY = 1.0 / 260.0
 #: only thing a shooting star has to say. Sized so a full beat cluster plus
 #: the ambient strays fit without evicting anybody mid-flight.
 _METEOR_CAP = 26
+
+#: Onset strengths that throw something. At or above ``_METEOR_HARD`` a hit
+#: always breaks a cluster loose; between the two it may throw one meteor;
+#: below ``_METEOR_MEDIUM`` — the hats, the ghost notes — it throws nothing.
+_METEOR_HARD = 0.70
+_METEOR_MEDIUM = 0.50
+
+
+def _sky_colour(ctx: Ctx, field: np.ndarray) -> np.ndarray:
+    """Cell colours for a sky field, where the field value means *brightness*.
+
+    Every mode here encodes faint and bright as a number — a dim star, a
+    fading trail, the galactic band against a shell or a meteor head — and
+    the ramp does not: it is a hue gradient, and on gruvbox its low end is the
+    most visible colour it has. Run through ``ctx.ramp``, the faint things came
+    out as loud as the events, and on screen the band was a yellow slab and a
+    star-trail exposure a wall. ``contrast_ramp`` measures the ramp against the
+    theme's background instead, so 0 lands on the quietest visible colour and
+    1 on the loudest, on every theme.
+    """
+    return contrast_ramp(ctx.palette, cell_max(field))
 
 
 def _star_twinkle(st: dict, ctx: Ctx) -> np.ndarray:
@@ -235,7 +256,7 @@ def shooting_star(ctx: Ctx):
     # equal level a busy snare-and-hat groove should cross more sky than a
     # held pad, which is the difference between energy (how much) and drive
     # (how attacked).
-    st["acc"] += (0.10 + ctx.energy * 0.20 + ctx.drive * 0.18) * ctx.dt
+    st["acc"] += (0.06 + ctx.energy * 0.14) * ctx.dt
     want = int(st["acc"])
     if want:
         st["acc"] -= want
@@ -246,14 +267,27 @@ def shooting_star(ctx: Ctx):
     # meteor is an event; a cluster falling together is an event you tell
     # someone about, which is the whole register this mode lives in. The
     # harder the hit, the more fragments come away (3..6).
+    # What a hit throws follows how hard it was, and a hard one always throws.
+    # This used to be a strength-weighted coin toss for every onset, hats
+    # included: in the live terminal a groove's kicks and snares went by with
+    # the sky mostly empty, and whether any given hit had thrown something was
+    # a guess. Now a hard hit (``_METEOR_HARD`` and up) always breaks a cluster
+    # loose, a medium one throws a single meteor about half the time, and the
+    # quiet onsets a hi-hat pattern lands several times a bar throw nothing —
+    # they would turn a shower into weather. A short refractory keeps a flam
+    # or a double-detected hit from throwing twice.
     beat = False
-    if ctx.onsets:
-        # Harder hits are likelier to break a cluster loose at all. The floor
-        # stays low so a quiet crisp hit is still often just a stray, but a
-        # full-strength hit now wins admission almost half the time rather
-        # than less than a third — which is the difference between "often
-        # throws" and "might throw" on the material that should throw hardest.
-        beat = bool(rng.random() < 0.05 + 0.42 * min(1.0, ctx.onset_strength))
+    lone = False
+    if ctx.onsets and ctx.t - st.get("thrown", -9.0) >= 0.18:
+        hit = float(ctx.onset_strength)
+        if hit >= _METEOR_HARD:
+            beat = True
+        elif hit >= _METEOR_MEDIUM and rng.random() < 0.5:
+            lone = True
+        if beat or lone:
+            st["thrown"] = ctx.t
+    if lone:
+        want += 1
 
     if want:
         free = np.flatnonzero(st["my"] < 0.0)[:want]
@@ -383,10 +417,15 @@ def shooting_star(ctx: Ctx):
         st["my"][alive] += st["mvy"][alive] * ctx.dt
         st["mx"][alive] += st["mvx"][alive] * ctx.dt
         st["mage"][alive] += ctx.dt
+        # Off the grid only counts as gone when the meteor is heading further
+        # out. A cluster's trailing fragments are *placed* off-screen, behind
+        # the entry point, so the train crosses together — and a plain bounds
+        # test killed them on their first frame: a hard hit meant to break
+        # three to six fragments loose put two on screen.
         dead = alive & (
             (st["mage"] > st["mlife"])
-            | (st["my"] < -4) | (st["my"] > dr + 4)
-            | (st["mx"] < -4) | (st["mx"] > dc + 4)
+            | ((st["my"] < -4) & (st["mvy"] <= 0)) | ((st["my"] > dr + 4) & (st["mvy"] >= 0))
+            | ((st["mx"] < -4) & (st["mvx"] <= 0)) | ((st["mx"] > dc + 4) & (st["mvx"] >= 0))
         )
         if dead.any():
             st["ay"][dead] = st["my"][dead]
@@ -491,7 +530,7 @@ def shooting_star(ctx: Ctx):
     # against what was already there, so no full-grid clip is needed.
     dots = field > 0.04
     codes = pack_braille(dots)
-    cidx = ctx.ramp(cell_max(field))
+    cidx = _sky_colour(ctx, field)
     return codes, cidx
 
 
@@ -514,7 +553,7 @@ _CHART_DENSITY = 1.0 / 200.0
 #: How long a drawn edge survives, seconds, and how many live at once.
 #: The cap is sized for a busy build racing ahead of the fade, since the
 #: whole point of the change is that music visibly outruns the sky.
-_EDGE_TAU = 12.0
+_EDGE_TAU = 9.0
 _EDGE_CAP = 36
 
 #: Edge-drawing rate, edges per second. The base keeps a constellation on
@@ -522,11 +561,22 @@ _EDGE_CAP = 36
 #: and the energy/drive terms are what make music *speed it up*: a loud,
 #: percussive passage draws several times as fast. An onset drops an extra
 #: edge on top the moment it lands, which is the hard-hit burst.
-_CHART_BASE = 0.55
-_CHART_ENERGY = 1.1
-_CHART_DRIVE = 1.6
-#: Whole edges dropped the moment an onset lands, on top of the accumulator.
-_CHART_ONSET = 2
+_CHART_BASE = 0.12
+_CHART_ENERGY = 0.35
+#: Whole edges dropped the moment an onset lands, on top of the accumulator:
+#: one for a medium hit, two for a hard one. Beats are what draw a figure; the
+#: accumulator is only the slow hand that keeps a quiet sky from being bare.
+_CHART_ONSET = 1
+_CHART_ONSET_HARD = 0.75
+
+#: A figure is a handful of stars, not a wire: it grows to at most this many
+#: edges, only ever to one of the ``_CHART_NEAREST`` nearest stars it has not
+#: already used, and then the next figure starts somewhere else. Before these
+#: rules a chain hopped anywhere inside a 48-dot reach and revisited its own
+#: stars freely; on screen it tangled into knots and long crossing wires, and
+#: at the cap it stayed a knot for the whole fade.
+_CHART_FIGURE_EDGES = 6
+_CHART_NEAREST = 3
 
 #: Seconds over which the first edge of a new figure fades in, so the
 #: handoff from one constellation to the next is a dissolve rather than a
@@ -559,6 +609,10 @@ def _chart(dr: int, dc: int) -> dict:
         "acc": 0.0,
         #: True when the next edge starts a brand-new figure, so it fades in.
         "fresh": True,
+        #: Stars already used by the figure being drawn, and how many edges
+        #: it has, so a figure never doubles back through itself.
+        "used": set(),
+        "fig_edges": 0,
         "rng": rng,
     }
 
@@ -573,7 +627,7 @@ def constellations(ctx: Ctx):
     anything plays. Music is the *speed*: energy and drive multiply how fast
     the surveyor draws, so a quiet passage builds a figure slowly and a loud
     percussive one races through it. A landed onset adds a burst of edges on
-    the beat. The figures fade over about twelve seconds, so a long silence
+    the beat. The figures fade over about nine seconds, so a long silence
     still dissolves back toward a sparse skeleton, but never to a bare sky.
     When a chain runs out of neighbours it restarts elsewhere, and the first
     edge of the new figure eases in — the subtle handoff between
@@ -603,47 +657,56 @@ def constellations(ctx: Ctx):
     # burst on top of an already-fast groove. The chain rules are unchanged:
     # every edge extends the last, and a figure that runs out of neighbours
     # restarts elsewhere.
-    rate = (_CHART_BASE + _CHART_ENERGY * ctx.energy
-            + _CHART_DRIVE * ctx.drive) * ctx.dt
+    rate = (_CHART_BASE + _CHART_ENERGY * ctx.energy) * ctx.dt
     st["acc"] += rate
     marks = int(st["acc"])
     st["acc"] -= marks
-    if ctx.onsets:
-        marks += _CHART_ONSET
+    if ctx.onsets and ctx.onset_strength >= 0.5:
+        marks += _CHART_ONSET + int(ctx.onset_strength >= _CHART_ONSET_HARD)
     if marks:
         sy, sx = st["sy"], st["sx"]
-        reach = min(dr, dc) * 0.30
+        reach = min(dr, dc) * 0.22
+        rng = st["rng"]
         for stamp in range(marks):
-            if st["tail"] is None:
-                st["tail"] = int(st["rng"].integers(0, sy.size))
-            else:
-                t = st["tail"]
+            t = st["tail"]
+            done = st["fig_edges"] >= _CHART_FIGURE_EDGES
+            if t is not None and not done:
                 dx = sx.astype(np.int32) - sx[t]
                 dy = sy.astype(np.int32) - sy[t]
-                near = np.flatnonzero((dx * dx + dy * dy <= reach * reach))
-                near = near[near != t]
-                if near.size:
-                    k = int(st["rng"].choice(near))
+                d2 = dx * dx + dy * dy
+                cand = np.flatnonzero(d2 <= reach * reach)
+                cand = np.array([c for c in cand if c != t and c not in st["used"]], dtype=np.int64)
+                if cand.size:
+                    # The nearest few, not anything in reach: nearest-neighbour
+                    # steps keep a figure compact and stop it crossing itself.
+                    cand = cand[np.argsort(d2[cand])[:_CHART_NEAREST]]
+                    k = int(rng.choice(cand))
                     # Strength is the onset's own, but never below a floor: a
-                    # figure drawn by the silent base rate has to read, so
-                    # only a hard hit can push a line actually brighter than
-                    # the quiet state. This is what keeps the always-on
-                    # figure from being the dimmest thing on screen.
+                    # figure drawn by the quiet accumulator still has to read.
                     s = max(0.55, float(np.clip(ctx.onset_strength, 0.0, 1.0)))
                     st["edges"].append([
                         float(sx[t]), float(sy[t]), float(sx[k]), float(sy[k]),
                         ctx.t, s, float(st["fresh"]),
                     ])
+                    st["used"].add(k)
                     st["tail"] = k
                     st["fresh"] = False
-                else:
-                    # Nowhere to grow from here. Restart the chain at a random
-                    # star rather than leaping: the silence between the two
-                    # marks is what makes the next line read as a new figure
-                    # instead of a wire strung across the chart. The first
-                    # edge of the new figure fades in, the subtle handoff.
-                    st["tail"] = int(st["rng"].integers(0, sy.size))
-                    st["fresh"] = True
+                    st["fig_edges"] += 1
+                    continue
+            # The figure is finished, or cannot grow: start the next one at a
+            # star away from everything still on screen, so figures sit apart
+            # instead of knotting into each other.
+            live = st["edges"]
+            pick = int(rng.integers(0, sy.size))
+            if live:
+                ex = np.array([[e[0], e[1]] for e in live] + [[e[2], e[3]] for e in live])
+                trial = rng.integers(0, sy.size, 12)
+                far = [((ex[:, 0] - sx[i]) ** 2 + (ex[:, 1] - sy[i]) ** 2).min() for i in trial]
+                pick = int(trial[int(np.argmax(far))])
+            st["tail"] = pick
+            st["used"] = {pick}
+            st["fig_edges"] = 0
+            st["fresh"] = True
 
     # ── fade and draw ──
     if st["edges"]:
@@ -675,7 +738,7 @@ def constellations(ctx: Ctx):
 
     dots = field > 0.04
     codes = pack_braille(dots)
-    cidx = ctx.ramp(cell_max(field))
+    cidx = _sky_colour(ctx, field)
     return codes, cidx
 
 
@@ -703,8 +766,10 @@ _TRAIL_TAU = 3.2
 #: pad, groove and loud beats at several sizes: the silent sky is unchanged,
 #: and a driven one goes from 85% of the screen lit to 39%, still reading as
 #: separate curves. Lower it for a sparser sky; above ~1.4 the arcs start to
-#: touch and the picture closes up again.
-_TRAIL_FILL = 1.0
+#: touch and the picture closes up again. Held at 0.65: at 1.0 a driven sky
+#: still covered about 40% of the cells in the live terminal and pad, groove and
+#: drop were indistinguishable walls of arcs.
+_TRAIL_FILL = 0.65
 
 #: Most sub-steps the swept arc is sampled at in one frame. A star is stamped
 #: along the arc it travelled this frame rather than at the single point it
@@ -744,8 +809,15 @@ _TRAIL_BEAT = 0.06
 #: out twice as dense as at 24 fps, which made the picture a property of the
 #: terminal rather than of the track. Everything else here already scales by
 #: ``ctx.dt``; this now does too.
-_TRAIL_BLUR_BASE = 0.9        # the sidereal floor's own blur, per second
-_TRAIL_BLUR_GAIN = 7.0        # extra blur per second, per rad/s above the floor
+#:
+#: There is no blur at the sidereal floor. There used to be 0.9 per second of
+#: it, which over a three-second exposure diffused every arc about a dot and a
+#: half either side; with the marks max-stamped on top, the smeared edges stayed
+#: above the film's threshold and in the live terminal every arc was three or
+#: four dots thick — pad, groove and drop all read as the same wall of rings,
+#: and it was still a wall five seconds after the music stopped.
+_TRAIL_BLUR_BASE = 0.0        # the sidereal floor's own blur, per second
+_TRAIL_BLUR_GAIN = 3.5        # blur per second, per rad/s above the floor
 
 #: Star count scales with the *radius* available rather than the area: what
 #: separates arcs from each other is angular spacing, and spacing comes from
@@ -937,13 +1009,16 @@ def star_trails(ctx: Ctx):
     # moves against.
     pole_val = 0.75 + 0.25 * lift
     ix, iy = int(st["pole_x"]), int(st["pole_y"])
-    dots = acc > 0.04
+    # A slightly higher film threshold than the other skies: every star here
+    # becomes a line, so the faintest tails are what turn a set of arcs into
+    # haze, and they are the first thing to let go.
+    dots = acc > 0.07
     if 0 <= iy < dr and 0 <= ix < dc:
         dots[iy, ix] = True
         acc[iy, ix] = max(acc[iy, ix], pole_val)
 
     codes = pack_braille(dots)
-    cidx = ctx.ramp(cell_max(acc))
+    cidx = _sky_colour(ctx, acc)
     return codes, cidx
 
 
@@ -953,11 +1028,11 @@ def star_trails(ctx: Ctx):
 _NOVA_DENSITY = 1.0 / 300.0
 
 #: Flash duration, shell lifetime, and remnant decay. The shell is the show
-#: (~5.5 s); the core it leaves behind glows on for about three times that,
+#: (~5.5 s); the core it leaves behind glows on for about twice that,
 #: which is what makes the sky remember the event after it has passed.
 _NOVA_FLASH_S = 0.30
 _NOVA_SHELL_S = 5.5
-_NOVA_LIFE_S = 18.0
+_NOVA_LIFE_S = 12.0
 
 #: A nova fires on a hard onset — but only sometimes, and only when the sky
 #: is clear. Rarity is the entire effect: a supernova every bar is fireworks.
@@ -982,9 +1057,15 @@ def _night(dr: int, dc: int) -> dict:
     cy, cx = dr / 2.0, dc / 2.0
     yy, xx = np.mgrid[0:dr, 0:dc].astype(np.float32)
     dperp = np.abs((xx - cx) * math.sin(ang) - (yy - cy) * math.cos(ang))
-    sigma = 0.07 * min(dr, dc) + 1.5
+    sigma = 0.055 * min(dr, dc) + 1.5
     band = np.exp(-(dperp * dperp) / (2.0 * sigma * sigma))
-    grain = noise((dr, dc), 556) < 0.55
+    # Grain keeps under a fifth of the band's dots, over a narrower band. At
+    # a half the band lit a quarter of every cell on screen, and in the live
+    # terminal it was a slab across the sky rather than a suggestion of one.
+    # Colour alone cannot push it back: on a theme like gruvbox even the
+    # quietest colour on the ramp stands well clear of the background, so the
+    # band has to recede by carrying less ink.
+    grain = noise((dr, dc), 556) < 0.18
     band = np.where(grain, band * (0.35 + 0.65 * noise((dr, dc), 555)), 0.0)
     band = (band * 0.11).astype(np.float32)
     return {
@@ -994,7 +1075,11 @@ def _night(dr: int, dc: int) -> dict:
         "tw": np.ones(n, dtype=np.float32),
         "tw_tick": -1,
         "band": band,
-        "next": float(rng.uniform(4.0, 8.0)),
+        # The first idle event is a long way off. It used to be four to eight
+        # seconds, so the mode's first catastrophe landed on its own clock —
+        # in the middle of a pad, or of silence — before any hit had asked
+        # for one, which is exactly the thing the mode exists not to do.
+        "next": float(rng.uniform(25.0, 40.0)),
         "ev": None,
         "rng": rng,
     }
@@ -1008,14 +1093,16 @@ def supernova(ctx: Ctx):
     This is the family bargain taken to its limit. Shooting Star spends its
     budget on frequent small motions; Supernova spends all of it on a single
     occurrence — a hard hit tears a hole in the sky, a shell expands across
-    it for five-odd seconds, and the core it leaves glows for twenty more
+    it for five-odd seconds, and the core it leaves glows for several more
     while the field drifts back to sleep.
 
     Two guards keep it rare enough to mean something. Strength: only hits
     the detector scores above ``_NOVA_STRENGTH`` may fire one, and even then
     only win a draw. Concurrency: one event at a time — a second blast
     during the first shell would halve both, and the mode says nothing the
-    rest of the time anyway. Between events the sky is not idle filler:
+    rest of the time anyway. The idle clock that also fires one is a long
+    fallback — tens of seconds — so a catastrophe answers a hit, not a timer.
+    Between events the sky is not idle filler:
     variable stars twinkle on their own clock, and a faint galactic band
     gives the shell somewhere to expand across.
 
@@ -1068,8 +1155,8 @@ def supernova(ctx: Ctx):
             # groove that keeps landing beats fires more often than a held
             # drone without ever coming close to a fixed bar. Floor kept at
             # 0.20 so even the busiest stretch stays a wait, not a metronome.
-            st["next"] = ctx.t + st["rng"].uniform(9.0, 20.0) \
-                * max(0.20, 1.35 - ctx.drive - 0.35 * ctx.pulse)
+            st["next"] = ctx.t + st["rng"].uniform(25.0, 45.0) \
+                * max(0.35, 1.35 - ctx.drive - 0.35 * ctx.pulse)
 
     # ── the event ──
     if ev is not None:
@@ -1111,5 +1198,5 @@ def supernova(ctx: Ctx):
 
     dots = field > 0.04
     codes = pack_braille(dots)
-    cidx = ctx.ramp(cell_max(field))
+    cidx = _sky_colour(ctx, field)
     return codes, cidx
