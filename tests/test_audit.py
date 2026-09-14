@@ -108,6 +108,9 @@ SELF_ANIMATING = {
     # 0.6 this check holds) stays at that height — a frozen spectrum is a
     # frozen picture until it is loud enough to topple.
     "JP Bars", "JP Pulse",
+    # both ring streams drift at a floor speed whether or not anything plays,
+    # so a frozen spectrum still carries rings out and in (Crosscurrent)
+    "Crosscurrent",
 }
 
 #: Modes driven by the waveform rather than the band levels.
@@ -291,7 +294,7 @@ _RAMP_EXEMPT = ("None",)
 #: The value is the faint end each one asks ``contrast_ramp`` for.
 _CONTRAST_MAPPED = {
     "Shooting Star": 1.8, "Constellations": 1.8, "Star Trails": 1.8, "Supernova": 1.8,
-    "Tunnel": 3.0, "Tunnel In": 3.0,
+    "Tunnel": 3.0, "Tunnel In": 3.0, "Crosscurrent": 3.0,
 }
 
 

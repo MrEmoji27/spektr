@@ -9,7 +9,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-00c853)](https://github.com/MrEmoji27/spektr/blob/main/LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20·%20Linux%20·%20macOS-546e7a)](#how-it-captures-audio)
-[![Modes](https://img.shields.io/badge/render%20modes-60-ff6d00)](#modes)
+[![Modes](https://img.shields.io/badge/render%20modes-61-ff6d00)](#modes)
 [![Themes](https://img.shields.io/badge/themes-55-7c4dff)](#themes)
 [![Built with Textual](https://img.shields.io/badge/built%20with-Textual-5e35b1)](https://textual.textualize.io/)
 
@@ -23,7 +23,7 @@ spektr draws it: overlapped FFTs across 32 log-spaced bands (settable) from 50 H
 out the way cava does it, rendered with braille sub-characters so the picture moves at
 four times the vertical resolution of a text cell.
 
-**Sixty render modes. Fifty-five themes. 60 fps, or your display's.**
+**Sixty-one render modes. Fifty-five themes. 60 fps, or your display's.**
 
 There is an **Android build** too — the same engine, on a tablet, as an ambient
 display for the desk. It is a second screen, not a second product: see
@@ -116,6 +116,7 @@ Listed in the order the picker cycles them.
 | **Bars** | the classic — bars with peak markers | **Keys** | a lit keyboard; struck bands scroll away as notes |
 | **Bricks** | chunky, no partial cells | **Tunnel** | flying down a pipe, ribbed by the beat |
 | **Columns** | gapless, interpolated across the full width | **Tunnel In** | rings thrown out of the centre on the beat, rushing past you |
+| | | **Crosscurrent** | two streams in one tunnel — round rings rushing out, octagons drawn in, sparking where they cross |
 | **Ladder** | segmented LED stack | **Warp** | starfield, accelerating with the music |
 | **Mirror** | grows out from the centre line | **Matrix** | digital rain, falling faster when it's loud |
 | **Readout** | scrolling numeric ticker, band levels as plain digits | **Boot** | an old PC waking up — BIOS POST, a boot log, a blinking cursor |
@@ -178,8 +179,8 @@ shared reactivity budget. Each one maps real band data into its geometry,
 so what the music changes is what the object is doing, not just how bright
 the picture is.
 
-A sixty-first entry, **None**, is registered as the off switch — it draws nothing.
-That is why the test output counts 61 against the sixty listed here — and 73
+A sixty-second entry, **None**, is registered as the off switch — it draws nothing.
+That is why the test output counts 62 against the sixty-one listed here — and 74
 in total, because the twelve subcell variants below are registered whether or not
 the setting that offers them is on.
 
