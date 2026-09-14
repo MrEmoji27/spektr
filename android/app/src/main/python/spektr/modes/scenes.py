@@ -13,14 +13,13 @@ from ..render import (
     cell_max,
     frac,
     noise,
-    noise_below,
-    noise_level,
     pack_braille,
 )
 from . import (
     Ctx,
     angular_bands as _angular_bands,
     band_columns,
+    contrast_ramp,
     empty,
     mode,
     polar_grid as _polar,
@@ -422,94 +421,124 @@ def _tunnel(ctx, inward: bool):
 
     dist, turn, max_r = _polar(ctx)
 
-    # The corridor itself does not move. Depth is a function of distance from
-    # the centre, the spokes are a function of angle and depth, the fade is a
-    # function of distance, and none of those three has a time term in it —
-    # what moves is the rib phase sliding along a fixed depth axis and the
-    # per-band brightness. Recomputing the fixed part every frame cost about a
-    # fifth of the mode: at 400x100 the depth divide, the spoke ``frac`` and
-    # the fade clip together measured 2.1 ms of a 15.8 ms frame, on 320,000
-    # dots that produce the same numbers every time.
+    # Wireframe, in dot units. Every line in the corridor is a *stroke* — a set
+    # of dots within a half-width of an ideal curve, measured in real braille
+    # dots, not in the stretched coordinates ``_polar`` hands back. The picture
+    # used to be built from bands of those coordinates instead, and on screen
+    # that showed as uneven weight and broken contours, measured at 188x50:
     #
-    # One scratch entry, not five: the audit caps a mode at four keys, and
-    # these five arrays have exactly the same lifetime — they are all
-    # "everything about a corridor of this size".
+    # * spokes whose width was quantised from a one-dot hairline to a three-
+    #   and four-dot band at a single radius (46-56 abrupt steps over four
+    #   spokes) and, because the stretch compresses x by the window's aspect,
+    #   drew horizontal strokes several times heavier than vertical ones;
+    # * rings that were a fixed *fraction* of one depth period — near the rim a
+    #   period is tens of dots, so a loud ring was a filled annulus (79% of lit
+    #   dots in solid 5x5 blocks) with a per-frame dither punching holes in it;
+    # * near the centre the same fraction was under a dot, and ring and dither
+    #   together left 60-odd specks under six dots each;
+    # * the dither re-rolled every frame, reversing 2-8% of lit dots each frame.
+    #
+    # So: the distance from a dot to its nearest ring and spoke is taken in
+    # dots, using the gradient of the stretched distance so an elliptical
+    # contour is the same weight all the way round; each stroke has a
+    # half-width in dots with a gentle taper toward the viewer; a ring too
+    # close to its neighbours to resolve is not drawn at all, fading in colour
+    # before it goes; and there is no dither — depth is carried by colour.
+    #
+    # The corridor itself does not move, so everything that depends only on
+    # where a dot is lives in one cached entry per size. What moves per frame is
+    # the rib phase sliding along the depth axis and the per-band level.
     def build():
-        depth = max_r / np.maximum(dist, 0.9)
-        near = np.clip(dist / max_r, 0.0, 1.0)
-        # The spokes are straight lines through the vanishing point, drawn as
-        # a band around each of 16 radial lines rather than as a wedge of
-        # angle. Three things used to bend and break them in the middle, where
-        # the eye expects them to converge most cleanly:
-        #
-        # * a ``depth * 0.03`` twist on the angle. Depth is ``max_r / dist``,
-        #   so the offset grows without bound toward the centre — about 5
-        #   degrees ten dots out and 18 degrees three dots out, against a spoke
-        #   two degrees wide — and the inner third of every spoke drifted
-        #   sideways into a curve;
-        # * a fixed *angular* width, which inside about 28 dots of the centre
-        #   is less than a dot wide and sampled into broken dashes;
-        # * the depth dither, which kept a quarter to half of the dots near
-        #   the centre and scattered what was left of the lines.
-        #
-        # So: no twist; a width that is the wedge where the wedge is wide and
-        # never under a dot where it is not; the dither on the ribs only; and
-        # a small hole at the vanishing point, where sixteen lines a dot apart
-        # would otherwise fuse into a blob.
-        a = frac(turn * 16.0)
-        off = np.minimum(a, 1.0 - a) * np.float32(2.0 * math.pi / 16.0)
-        perp = dist * np.sin(off)
-        wedge = dist * np.float32(math.sin(0.045 * 2.0 * math.pi / 16.0))
-        walls = perp <= np.maximum(wedge, np.float32(0.6))
-        hole = np.float32(max(1.5, 0.07 * max_r))
+        cy, cx = dr / 2.0, dc / 2.0
+        s = np.float32(cy / max(cx, 1.0))              # _polar's x stretch
+        yy = (np.arange(dr, dtype=np.float32) - np.float32(cy))[:, None]
+        xx = (np.arange(dc, dtype=np.float32) - np.float32(cx))[None, :]
+        safe = np.maximum(dist, np.float32(0.5))
+        near = np.clip(dist / np.float32(max_r), 0.0, 1.0)
+
+        # Rings sit where depth * 0.55 crosses a whole number, i.e. at
+        # dist = 0.55 max_r / m. The distance to the nearest one, in dots, is
+        # the depth error divided by how fast depth changes per dot here.
+        grad = np.sqrt((s * s) * (xx * s) ** 2 + yy * yy) / safe
+        per_dot = np.float32(0.55 * max_r) * grad / (safe * safe)
+        # Too close to the next ring to resolve: spacing under about three and
+        # a half dots in the tightest direction. Tested per frame, below, on
+        # each ring's *centre line*, so a ring is drawn all the way round or
+        # not at all; a per-dot test clipped a loud ring that straddled the
+        # radius and left its outer edge behind as a scatter of single dots.
+        cut = np.float32(math.sqrt(3.5 * 0.55 * max_r))
+        ring_fade = np.clip((dist - cut) / cut, 0.0, 1.0)
+
+        # Spokes: sixteen straight lines through the centre. The nearest one's
+        # direction, taken from the stretched angle and mapped back to dots,
+        # gives an exact perpendicular distance in dots.
+        k = np.rint(turn * np.float32(16.0)) * np.float32(2.0 * math.pi / 16.0)
+        ux, uy = np.cos(k) / s, np.sin(k)
+        norm = np.sqrt(ux * ux + uy * uy)
+        perp = np.abs(xx * uy - yy * ux) / norm
+        # Neighbouring spokes are dist * 2pi/16 apart; inside the radius where
+        # that is under three dots they would fuse, which is the vanishing point.
+        hole = np.float32(min(0.25 * max_r, max(0.07 * max_r, 3.0 / (2.0 * math.pi / 16.0))))
+        walls = (perp <= np.float32(0.55) + np.float32(0.45) * near) & (dist > hole)
+        spoke_value = np.where(
+            walls, np.float32(0.25) + np.float32(0.35) * np.clip((dist - hole) / np.float32(0.8 * max_r), 0.0, 1.0),
+            np.float32(0.0)).astype(np.float32)
+
         return {
-            # Pre-scaled: the rib phase is subtracted from this every frame,
-            # and the multiply was a full pass over the dot grid for a
-            # constant.
-            "depth055": depth * np.float32(0.55),
-            "walls": walls & (dist > hole),
-            "far": dist > 1.5,
-            "near": near,
-            # The dither threshold rises with distance so the far end thins
-            # out. Held in the integer space the hash already lives in — see
-            # render.noise_level — so the per-frame dither is a comparison and
-            # nothing else.
-            "dither": noise_level(0.25 + near * np.float32(0.85)),
+            "depth055": (np.float32(max_r) / np.maximum(dist, np.float32(0.9)) * np.float32(0.55)).astype(np.float32),
+            # half-width in dots: a one-to-two-dot stroke, a touch heavier
+            # toward the viewer, and heavier again when its band is loud
+            "ring_base": (per_dot * (np.float32(0.55) + np.float32(0.30) * near)).astype(np.float32),
+            "ring_loud": (per_dot * np.float32(1.10)).astype(np.float32),
+            "ring_depth_cut": float(0.55 * max_r / cut),
+            "ring_value": (ring_fade * (np.float32(0.25) + np.float32(0.75) * near)).astype(np.float32),
+            "walls": walls,
+            "spoke_value": spoke_value,
         }
 
     geo = ctx.scratch("tunnel_geo", build)
-    near = geo["near"]
 
     n = min(16, ctx.n_display)
-    nrg = _angular_bands(ctx, turn, n, ctx.t * 0.024)
+    nrg = _angular_bands(ctx, turn, n, ctx.t * 0.024).astype(np.float32, copy=False)
 
     speed = 0.6 + ctx.energy * 2.4
     phase = ctx.scratch("tunnel{}_phase".format("_in" if inward else ""), lambda: {"v": 0.0})
     phase["v"] += speed * max(ctx.dt, 0.0)
     direction = -1 if inward else 1
-    rings = frac(geo["depth055"] - direction * phase["v"])
-    ribs = rings < (0.10 + 0.22 * nrg)
 
-    # In place from here down. Every one of these is a 320,000-element array,
-    # so a temporary is 1.3 MB of allocation and a pass over it; ``ribs`` is
-    # already a fresh array nothing else holds, which makes it the buffer.
-    np.bitwise_and(ribs, geo["far"], out=ribs)
-    # Dither the ribs only: it is what thins the far end of the corridor, and
-    # applied to the spokes it broke them into scattered dots at the centre.
-    np.bitwise_and(ribs, noise_below((dr, dc), ctx.frame, geo["dither"]), out=ribs)
-    np.bitwise_or(ribs, geo["walls"], out=ribs)
-    lit = ribs
+    # distance, in depth units, to the nearest ring
+    shift = np.float32(direction * (phase["v"] % 1.0))
+    f = geo["depth055"] - shift
+    centre = np.rint(f)
+    np.subtract(f, centre, out=f)
+    np.abs(f, out=f)
+    reach = geo["ring_loud"] * nrg
+    reach += geo["ring_base"]
+    # never more than a seventh of the way to the next ring either side, so a
+    # loud ring near the vanishing point of a small terminal stays a line and
+    # does not swell into the gap
+    np.minimum(reach, np.float32(0.14), out=reach)
+    ribs = f <= reach
+    # the ring this dot belongs to sits at depth ``centre + shift``; draw it
+    # only if that ring is wide enough to resolve
+    centre += shift
+    np.bitwise_and(ribs, centre <= np.float32(geo["ring_depth_cut"]), out=ribs)
 
+    lit = ribs | geo["walls"]
     codes = pack_braille(lit)
-    # Same product, one buffer: multiplication commutes exactly in IEEE, so
-    # starting from the only fresh array here and folding the rest in place is
-    # bit-identical to ``near * (0.4 + 0.6 * nrg) * lit`` and allocates two
-    # fewer dot-grid temporaries.
-    shade = nrg * np.float32(0.6)
-    shade += np.float32(0.4)
-    shade *= near
-    shade *= lit
-    return codes, ctx.ramp(cell_max(shade))
+
+    # Brightness: rings by depth and by their band's level, spokes by depth.
+    # Where a ring crosses a spoke the brighter one wins rather than the two
+    # adding, so an intersection is not a heavier blob than either line.
+    shade = nrg * np.float32(0.55)
+    shade += np.float32(0.45)
+    shade *= geo["ring_value"]
+    shade *= ribs
+    np.maximum(shade, geo["spoke_value"], out=shade)
+    # The faint end sits higher than the skies' does: these are lines, and a
+    # far line at the quietest colour a theme can show read as missing rather
+    # than as distant.
+    return codes, contrast_ramp(ctx.palette, cell_max(shade), faint=3.0)
 
 
 @mode("Tunnel", group="scenes", blurb="flying down a pipe, ribbed by the beat")

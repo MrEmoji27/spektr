@@ -1,31 +1,40 @@
-"""Tunnel's spokes are straight lines into the vanishing point.
+"""Tunnel is a wireframe: thin, even strokes into a vanishing point.
 
-The corridor is sixteen radial lines and a train of rings. In the live
-terminal the lines broke up exactly where they should read cleanest — the
-inner third, converging on the centre — into a curve and then a scatter of
-dots. Three separate terms did it, and none of them was intended curvature:
+Two rounds of this, both found by looking at the terminal rather than at the
+arithmetic.
 
-* a ``depth * 0.03`` twist on the spoke angle, with depth ``max_r / dist``, so
-  the sideways offset grew without bound toward the centre (about 5 degrees
-  ten dots out, against a spoke two degrees wide);
-* a fixed angular width, under a dot wide inside about 28 dots of the centre;
-* the depth dither, applied to the spokes as well as the rings.
+The first was straightness. The spokes bent and scattered in the inner third:
+a ``depth * 0.03`` twist on the angle grew without bound toward the centre, a
+fixed angular width fell under a dot, and the depth dither thinned the lines.
 
-The window-ratio stretch of the shared polar grid is linear, so it makes the
-corridor elliptical and cannot bend a line; it is not part of this.
+The second was line quality, measured on the rendered braille at 188x50 (the
+size of the screenshot that raised it). The corridor was built from bands of
+the stretched polar coordinates, so:
 
-These are measured on the rendered braille, unpacked back to dots, because the
-picture is what went wrong.
+* a spoke's width was quantised from a one-dot hairline to a three- or
+  four-dot band at a single radius, and the window's x stretch made
+  horizontal strokes heavier than vertical ones;
+* a ring was a fixed fraction of one depth period — tens of dots near the rim,
+  so a loud ring was a filled annulus (79% of lit dots in solid 5x5 blocks)
+  with a per-frame dither punching holes in it;
+* near the centre that fraction was under a dot, and the dither left 60-odd
+  specks of fewer than six dots.
+
+These are measured on the braille unpacked back to dots, because the picture
+is what went wrong, and a geometry test that passes is not the same thing as
+lines that read.
 """
 
 from __future__ import annotations
 
 import math
 import sys
+from collections import deque
 from pathlib import Path
 
 import numpy as np
 import pytest
+from numpy.lib.stride_tricks import sliding_window_view
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -35,8 +44,11 @@ from spektr.modes import Ctx  # noqa: E402
 from spektr.palette import BUILTIN, Palette  # noqa: E402
 from spektr.render import BRAILLE_BASE  # noqa: E402
 
-PAL = Palette(BUILTIN["gruvbox"])
+PAL = Palette(BUILTIN["hackerman"])
+MODES = ["Tunnel", "Tunnel In"]
+SIZES = [(188, 50), (120, 40), (60, 20)]
 _BITS = [(0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1), (3, 0), (3, 1)]
+_X = np.linspace(0.0, 1.0, N_BANDS)
 
 
 def _dots(codes: np.ndarray) -> np.ndarray:
@@ -48,71 +60,202 @@ def _dots(codes: np.ndarray) -> np.ndarray:
     return d
 
 
-def _frames(name, w, h, frames=12, energy=0.0):
+def _play(name, w, h, frames=30, energy=0.0):
+    """Render a passage; return the state and the dot grids of every frame."""
     fn = M.get(name).fn
     state: dict = {}
-    bands = np.full(N_BANDS, energy)
+    out = []
     for f in range(frames):
+        bands = np.clip(energy * (0.7 + 0.3 * np.sin(f * 0.2 + _X * 6)), 0, 1)
         ctx = Ctx(w=w, h=h, bands=bands, peaks=bands, bands_l=bands, bands_r=bands,
                   wave=np.zeros(512), stereo=np.zeros((512, 2)), frame=f, t=f / 60, dt=1 / 60,
-                  energy=energy, silent=energy == 0.0, palette=PAL, state=state)
-        yield _dots(fn(ctx)[0])
+                  energy=float(bands.mean()), silent=energy == 0.0, palette=PAL, state=state)
+        out.append(_dots(fn(ctx)[0]))
+    return state, out
 
 
-def _spoke_inner_third(d: np.ndarray):
-    """Per spoke, over the inner third: continuity and the offset of the line."""
+def _geo(state):
+    return next(v for k, v in state.items() if k[0] == "tunnel_geo")
+
+
+def _components(d: np.ndarray) -> np.ndarray:
     dr, dc = d.shape
+    seen = np.zeros(d.shape, dtype=bool)
+    sizes = []
+    for y0, x0 in zip(*np.nonzero(d)):
+        if seen[y0, x0]:
+            continue
+        seen[y0, x0] = True
+        q, n = deque([(y0, x0)]), 0
+        while q:
+            y, x = q.popleft()
+            n += 1
+            for dy in (-1, 0, 1):
+                for dx in (-1, 0, 1):
+                    yy, xx = y + dy, x + dx
+                    if 0 <= yy < dr and 0 <= xx < dc and d[yy, xx] and not seen[yy, xx]:
+                        seen[yy, xx] = True
+                        q.append((yy, xx))
+        sizes.append(n)
+    return np.array(sizes)
+
+
+@pytest.mark.parametrize("energy", [0.0, 0.7])
+@pytest.mark.parametrize("size", SIZES)
+@pytest.mark.parametrize("name", MODES)
+def test_no_scattered_fragments_and_no_heavy_blocks(name, size, energy):
+    _, frames = _play(name, *size, frames=24, energy=energy)
+    for d in frames[-6:]:
+        sizes = _components(d)
+        assert int((sizes < 6).sum()) == 0, f"{name} {size}: {int((sizes < 6).sum())} specks of under six dots"
+        win = sliding_window_view(np.pad(d, 2), (5, 5)).sum(axis=(-1, -2))
+        heavy = float((win[d] >= 18).mean())
+        # 37-79% before, depending on size and level; the wireframe's worst
+        # measured case is under 9%, a loud ring crossing spoke stubs at 60x20
+        assert heavy < 0.10, f"{name} {size}: {100 * heavy:.0f}% of lit dots sit in solid blocks"
+
+
+@pytest.mark.parametrize("size", SIZES)
+@pytest.mark.parametrize("name", MODES)
+def test_spokes_are_thin_even_strokes_with_a_gentle_taper(name, size):
+    state, _ = _play(name, *size, frames=2)
+    walls = _geo(state)["walls"]
+    dr, dc = walls.shape
     cx, cy = dc / 2.0, dr / 2.0
-    xs_ = cy / max(cx, 1.0)
-    max_r = min(cy, cx * xs_)
-    cont, offsets = [], []
+    s = cy / cx
     for k in range(16):
         th = k / 16 * 2 * math.pi
-        ux, uy = math.cos(th), math.sin(th)
-        hits = steps = 0
-        for r in np.arange(0.07 * max_r + 1.0, 0.35 * max_r, 1.0):
-            gx, gy = cx + r * ux / xs_, cy + r * uy
-            ys, xs = np.mgrid[int(gy) - 2:int(gy) + 3, int(gx) - 3:int(gx) + 4]
-            ok = (ys >= 0) & (ys < dr) & (xs >= 0) & (xs < dc)
-            ys, xs = ys[ok], xs[ok]
-            lit = d[ys, xs]
-            steps += 1
-            if lit.any():
-                perp = np.abs((xs[lit] - cx) * xs_ * uy - (ys[lit] - cy) * ux)
-                hits += int((perp <= 1.2).any())
-                offsets.append(float(perp.min()))
-        cont.append(hits / max(steps, 1))
-    return float(np.mean(cont)), float(np.percentile(offsets, 90))
+        ux, uy = math.cos(th) / s, math.sin(th)
+        norm = math.hypot(ux, uy)
+        ux, uy = ux / norm, uy / norm
+        px, py = -uy, ux
+        widths = []
+        for r in np.arange(0.0, 2.0 * max(cx, cy), 1.0):
+            x0, y0 = cx + ux * r, cy + uy * r
+            if not (2 <= x0 < dc - 2 and 2 <= y0 < dr - 2):
+                break
+            cells = {(int(round(y0 + py * t)), int(round(x0 + px * t))) for t in np.arange(-4, 4.01, 0.25)}
+            wd = sum(1 for y, x in cells if 0 <= y < dr and 0 <= x < dc and walls[y, x])
+            if wd:
+                widths.append(wd)
+        # Near the vanishing point the neighbouring spokes are closer than the
+        # +-4 dot window measures across, so their dots would count as width;
+        # judge each spoke from where its neighbours are clear of the window.
+        widths = np.array(widths[12:])
+        assert widths.size > 5, f"spoke {k} is missing"
+        assert widths.max() <= 4, f"spoke {k} swells to {widths.max()} dots"
+        # consecutive samples a dot apart never jump by more than a dot
+        assert np.all(np.abs(np.diff(widths)) <= 2), f"spoke {k} changes weight abruptly: {widths.tolist()}"
+
+
+@pytest.mark.parametrize("size", SIZES)
+@pytest.mark.parametrize("name", MODES)
+def test_rings_are_even_all_the_way_round_and_none_is_too_small(name, size):
+    state, frames = _play(name, *size, frames=20, energy=0.3)
+    geo = _geo(state)
+    d = frames[-1]
+    rings = d & ~geo["walls"]
+    dr, dc = d.shape
+    cx, cy = dc / 2.0, dr / 2.0
+    s = cy / cx
+    ys, xs = np.nonzero(rings)
+    if ys.size == 0:
+        pytest.skip("no ring on screen this frame")
+    dist = np.hypot((xs - cx) * s, ys - cy)
+    max_r = max(1.0, cy - 1.0)
+    cut = math.sqrt(3.5 * 0.55 * max_r)
+    assert dist.min() >= cut - 1.0, "a ring was drawn inside the radius where rings cannot be resolved"
+    # stroke thickness of the ring, measured along vertical and horizontal cuts
+    thick = []
+    col = rings[:, int(cx) + 3]
+    row = rings[int(cy) + 3, :]
+    for line in (col, row):
+        run = 0
+        for v in line:
+            if v:
+                run += 1
+            elif run:
+                thick.append(run)
+                run = 0
+    thick = np.array(thick)
+    assert thick.max() <= 4, f"{name} {size}: a ring stroke is {thick.max()} dots thick"
 
 
 @pytest.mark.parametrize("size", [(120, 40), (60, 20)])
-@pytest.mark.parametrize("name", ["Tunnel", "Tunnel In"])
-def test_the_spokes_stay_straight_and_unbroken_into_the_centre(name, size):
-    for d in _frames(name, *size, frames=6):
-        continuity, offset = _spoke_inner_third(d)
-        assert continuity > 0.95, f"{name} spokes are broken near the centre ({continuity:.2f})"
-        assert offset < 0.3, f"{name} spokes wander off their line near the centre ({offset:.2f} dots)"
+@pytest.mark.parametrize("name", MODES)
+def test_the_spokes_stay_straight_and_unbroken(name, size):
+    state, frames = _play(name, *size, frames=6)
+    walls = _geo(state)["walls"]
+    d = frames[-1]
+    dr, dc = d.shape
+    cx, cy = dc / 2.0, dr / 2.0
+    s = cy / cx
+    for k in range(16):
+        th = k / 16 * 2 * math.pi
+        ux, uy = math.cos(th) / s, math.sin(th)
+        norm = math.hypot(ux, uy)
+        ux, uy = ux / norm, uy / norm
+        radii = [r for r in np.arange(0.0, 2.0 * max(cx, cy), 1.0)
+                 if 0 <= cx + ux * r < dc and 0 <= cy + uy * r < dr]
+        on = [r for r in radii if walls[int(cy + uy * r), int(cx + ux * r)]
+              or walls[min(dr - 1, int(round(cy + uy * r))), min(dc - 1, int(round(cx + ux * r)))]]
+        assert on, f"spoke {k} missing"
+        first = min(on)
+        span = [r for r in radii if r >= first]
+        # every step outward from where the spoke starts lands on or beside it
+        gaps = 0
+        for r in span:
+            y, x = cy + uy * r, cx + ux * r
+            ys_, xs_ = np.mgrid[int(y) - 1:int(y) + 2, int(x) - 1:int(x) + 2]
+            ok = (ys_ >= 0) & (ys_ < dr) & (xs_ >= 0) & (xs_ < dc)
+            gaps += not d[ys_[ok], xs_[ok]].any()
+        assert gaps == 0, f"spoke {k} of {name} has {gaps} gaps along its length"
 
 
-@pytest.mark.parametrize("name", ["Tunnel", "Tunnel In"])
+@pytest.mark.parametrize("name", MODES)
 def test_the_spokes_do_not_shimmer(name):
-    """The spokes are geometry: frame to frame they must not change at all.
+    """The spokes are geometry: frame to frame they must not change at all."""
+    state, frames = _play(name, 120, 40, frames=8)
+    walls = _geo(state)["walls"]
+    for d in frames:
+        assert np.array_equal(d & walls, walls), "a spoke dot was dropped"
 
-    The dither used to be applied to them, which re-rolled which spoke dots
-    were drawn every frame; only the rings may thin out with depth.
-    """
+
+def _frame_at_phase(name, w, h, level, phase=0.37):
+    """One frame with the rings pinned at a phase, so only the level differs."""
     fn = M.get(name).fn
     state: dict = {}
-    z = np.zeros(N_BANDS)
-    walls = None
-    for f in range(8):
-        ctx = Ctx(w=120, h=40, bands=z, peaks=z, bands_l=z, bands_r=z, wave=np.zeros(512),
-                  stereo=np.zeros((512, 2)), frame=f, t=f / 60, dt=1 / 60, energy=0.0,
-                  silent=True, palette=PAL, state=state)
-        d = _dots(fn(ctx)[0])
-        geo = next(v for k, v in state.items() if k[0] == "tunnel_geo")
-        spokes = d & geo["walls"]
-        if walls is not None:
-            assert np.array_equal(spokes, walls), "spoke dots changed between frames"
-        walls = spokes
-        assert np.array_equal(spokes, geo["walls"]), "a spoke dot was dropped"
+    bands = np.full(N_BANDS, level)
+    ctx = Ctx(w=w, h=h, bands=bands, peaks=bands, bands_l=bands, bands_r=bands,
+              wave=np.zeros(512), stereo=np.zeros((512, 2)), frame=0, t=0.0, dt=0.0,
+              energy=level, silent=level == 0.0, palette=PAL, state=state)
+    fn(ctx)
+    next(v for k, v in state.items() if k[0].endswith("phase"))["v"] = phase
+    return _dots(fn(ctx)[0]), _geo(state)["walls"]
+
+
+@pytest.mark.parametrize("size", SIZES)
+@pytest.mark.parametrize("name", MODES)
+def test_loud_bands_draw_heavier_rings(name, size):
+    """The audio still shows: at the same ring position a loud band's ring is
+    visibly heavier. (Speed follows the level too, so comparing two passages
+    would compare rings in different places.)"""
+    quiet, walls = _frame_at_phase(name, *size, 0.1)
+    loud, _ = _frame_at_phase(name, *size, 0.9)
+    q = int((quiet & ~walls).sum())
+    lo = int((loud & ~walls).sum())
+    assert lo > 1.5 * q, f"{name} {size}: loud rings carry {lo} dots against {q} when quiet"
+
+
+@pytest.mark.parametrize("name", MODES)
+def test_a_loud_small_tunnel_stays_a_line_drawing(name):
+    """At full level on a small terminal, loud rings near the vanishing point
+    are capped to a fraction of the gap to the next ring. Without the cap the
+    mean share of lit dots in solid 5x5 blocks measured 14-16% here; with it,
+    10-12%. (The same measure was 64% before the wireframe.)"""
+    _, frames = _play(name, 60, 20, frames=40, energy=1.0)
+    heavy = []
+    for d in frames[-20:]:
+        win = sliding_window_view(np.pad(d, 2), (5, 5)).sum(axis=(-1, -2))
+        heavy.append(float((win[d] >= 18).mean()))
+    assert np.mean(heavy) < 0.135, f"{name}: {100 * np.mean(heavy):.1f}% of lit dots in solid blocks at full level"

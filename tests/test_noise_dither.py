@@ -95,4 +95,8 @@ def test_tunnel_geometry_is_cached_not_rebuilt():
     reg["Tunnel"].fn(ctx(1))
     assert state[key] is first, "the corridor was rebuilt on a plain frame"
     assert first["depth055"].dtype == np.float32
-    assert first["dither"].dtype == np.uint32
+    # The corridor is a wireframe now and draws no dither at all; what it
+    # caches per size is the stroke geometry, all of it float32.
+    for field in ("ring_base", "ring_loud", "ring_value", "spoke_value"):
+        assert first[field].dtype == np.float32, field
+    assert "dither" not in first

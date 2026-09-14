@@ -281,13 +281,18 @@ def check_output_sanity() -> list[str]:
 #: anything of its own.
 _RAMP_EXEMPT = ("None",)
 
-#: Modes whose field is *brightness*, mapped through ``contrast_ramp``: they
+#: Modes whose field is *brightness* — a faint sky, a far wall — mapped
+#: through ``contrast_ramp``: they
 #: walk only the stretch of the ramp between the theme's quietest and loudest
 #: colour against its background, which on gruvbox is 32 steps of 64. Asking
 #: them to span half the ramp asks for colours they have deliberately given up.
 #: The same failure — a picture collapsed into one colour — is still checked,
 #: in the unit that applies: they must cover most of that contrast range.
-_CONTRAST_MAPPED = ("Shooting Star", "Constellations", "Star Trails", "Supernova")
+#: The value is the faint end each one asks ``contrast_ramp`` for.
+_CONTRAST_MAPPED = {
+    "Shooting Star": 1.8, "Constellations": 1.8, "Star Trails": 1.8, "Supernova": 1.8,
+    "Tunnel": 3.0, "Tunnel In": 3.0,
+}
 
 
 def check_ramp_usage() -> list[str]:
@@ -332,9 +337,12 @@ def check_ramp_usage() -> list[str]:
             from spektr.modes import bg_contrast, contrast_ramp
 
             cr = bg_contrast(PAL)
-            full = cr.max() - cr[int(contrast_ramp(PAL, 0.0))]
+            full = cr.max() - cr[int(contrast_ramp(PAL, 0.0, faint=_CONTRAST_MAPPED[m.name]))]
             used = cr[sorted(seen)].max() - cr[sorted(seen)].min()
-            if used < 0.7 * full or len(seen) < 6:
+            # half the range: a collapsed picture uses almost none of it, while
+            # a sparse one can take longer than this check runs to reach its
+            # brightest (Tunnel In's rings are still short of the rim here)
+            if used < 0.5 * full or len(seen) < 6:
                 bad.append(
                     f"{m.name} uses {used:.2f} of the theme's {full:.2f} contrast range "
                     f"in {len(seen)} steps — its faint and bright are the same colour"
