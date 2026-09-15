@@ -146,8 +146,9 @@ Listed in the order the picker cycles them.
 | **JP Bars** | a segmented LED meter whose crest peels off and rises, like notes leaving a key | **JP Drift** | the meter as a sandpile — bulbs stack up, drain away, and pour into their neighbours on the beat |
 | **JP Pulse** | the meter bent into a ring — a spoke of bulbs per band, chased on the beat | | |
 
-The three **JP** modes are one *jp* group and, unusually, one
-picture: every one of them draws the same segmented LED bar graph, and what
+The three **JP** modes are inspired by Japanese car audio hardware — the
+segmented LED level meters on in-dash head units and equalisers. They are one
+*jp* group and, unusually, one picture: every one of them draws the same segmented LED bar graph, and what
 differs is the mode it is *blended with* — **Keys**' note roll, **Dune**'s
 sandpile, and **Radial**'s circle. Where **Bars** and **Ladder** show only the
 lit part of a column, these draw the unlit bulbs too: the difference between a
@@ -156,12 +157,11 @@ unlit bulbs are a faint dot, the peaks and trails are thin, and the lit bulbs
 are the only heavy ink on the panel, so the live level is what you read first.
 
 The blend has to be a real mechanic rather than a decoration, which is a rule
-with a body behind it. A JP that swept a scan light across the panel was
+with a body behind it. A JP mode that swept a scan light across the panel was
 cut, because **Sonar** already owns the travelling sweep and what was left
-after that was a bar chart with a line moving over it. **JP Keys** was
+after that was a bar chart with a line moving over it. A **Keys** variant was
 cut too: its partner was a piano keyboard, which is not a mode, and the keys
-promised note names that spectrum bands cannot deliver. A saved config naming
-either one opens **JP Bars**.
+promised note names that spectrum bands cannot deliver.
 
 **Shooting Star** opens a *cosmos* group, and it is built on a different
 bargain from everything above it: the picture is mostly empty and mostly

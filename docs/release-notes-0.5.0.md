@@ -9,7 +9,7 @@ and never write the notes themselves.
       --notes-file docs/release-notes-0.5.0.md
 -->
 
-spektr 0.5.0 adds a spinning tunnel and a family of hi-fi meters, draws every
+spektr 0.5.0 adds a spinning tunnel and a family of car-audio meters, draws every
 theme in its real colours, and — if you want it — lets your terminal's
 transparency show through again.
 
@@ -32,8 +32,9 @@ slows to a gentle drift.
 
 ### Three JP meters
 
-A new family that looks like the front panel of a stereo, with every LED drawn
-— lit or not.
+A new family inspired by Japanese car audio hardware: the segmented LED level
+meters on in-dash head units and equalisers, with every LED drawn — lit or
+not.
 
 - **JP Bars** — a segmented meter whose tops break off and float up as
   the bars rise.

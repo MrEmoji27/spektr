@@ -1,5 +1,10 @@
 """The JP family — one bar graph, three machines around it.
 
+Inspired by Japanese car audio hardware: the segmented LED level meters on the
+faceplates of in-dash head units and equalisers, where every bulb of every
+column is printed on the panel whether it is lit or not. The family takes that
+panel, not any one maker's design.
+
 Every mode here is the *same* segmented LED meter: a column per band, a fixed
 ladder of bulbs per column, the unlit bulbs drawn rather than left blank. That
 ladder is :func:`bar_panel` and all three modes draw it. What differs is the
@@ -15,7 +20,7 @@ the four and had to be rewritten.
 
 **The partner has to be a real mechanic, not a decoration.** A scan light
 sweeping the panel was cut because ``Sonar`` already owns the travelling sweep,
-and what was left was a bar chart with a line moving over it. JP Keys was
+and what was left was a bar chart with a line moving over it. A Keys mode was
 cut for the same reason from the other side: its partner was a piano keyboard,
 which is not a mode, and the keys implied note names that 32 log-spaced FFT
 bands cannot give. If a new JP mode cannot be named as "``Bars`` ×

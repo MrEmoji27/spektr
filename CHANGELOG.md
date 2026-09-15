@@ -53,11 +53,12 @@ cheaper than the static version was.
 
 ### The JP family
 
-Three modes drawn as the panel of a piece of hi-fi hardware: one shared LED
-ladder, with the unlit bulbs drawn as well as the lit ones, which is the whole
+Three modes inspired by Japanese car audio hardware — the segmented LED level
+meters on in-dash head units and equalisers — drawn as that panel: one shared
+LED ladder, with the unlit bulbs drawn as well as the lit ones, which is the whole
 difference between these and `Bars` — a bar chart with gaps in it against a
 panel with the power on. Each is that ladder blended with a mechanic already
-somewhere else in the app, and the family is held to that rule: a JP that
+somewhere else in the app, and the family is held to that rule: a JP mode that
 cannot be named "Bars × something that exists" is a clone and does not ship.
 
 * **JP Bars** takes the note roll: the crest of a rising bar sheds bulbs
@@ -79,7 +80,7 @@ brightest colour it has. In silence they go properly dark.
 Two earlier members were cut before release rather than kept to make up the
 number: a Sweep that was a scan light over a bar chart, which `Sonar` already
 does, and a Keys whose piano laid 32 log-spaced bands out on a keyboard, where
-a lit key never meant that note. A config naming either opens JP Bars.
+a lit key never meant that note.
 
 ### The theme's background, in every cell
 

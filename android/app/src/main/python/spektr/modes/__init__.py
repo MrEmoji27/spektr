@@ -350,11 +350,6 @@ _RENAMED = {
     "Kaleidoscope Ultra": "Kaleidoscope Ultra (o)",
     "Valentine Fine": "Valentine (o)",
     "Maelstrom Fine": "Maelstrom (o)",
-    # JP modes that were cut rather than renamed. A config naming one
-    # lands on the family's own meter instead of silently on whatever the app
-    # had, which is the closest picture to what that person chose.
-    "JP Keys": "JP Bars",
-    "JP Sweep": "JP Bars",
 }
 
 #: The suffix each cell geometry is shown with.
@@ -657,7 +652,7 @@ from . import lofi       # noqa: E402,F401
 from . import halftone   # noqa: E402,F401
 from . import terrain    # noqa: E402,F401
 from . import cosmos     # noqa: E402,F401
-from . import jp    # noqa: E402,F401   # the JP family
+from . import jp         # noqa: E402,F401   # the JP family
 
 
 @mode("None", group="off", blurb="nothing at all")

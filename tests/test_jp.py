@@ -337,10 +337,3 @@ def test_unlit_bulbs_stay_visible_on_every_theme(theme):
     got = ratios[K.recede_index(pal)]
     assert got >= min(1.8, max(ratios)), f"unlit bulbs at contrast {got:.2f} on {theme}"
     assert got <= max(ratios)
-
-
-def test_the_cut_modes_resolve_to_the_family_meter():
-    bars = M.get("JP Bars")
-    assert M.get("JP Keys") is bars
-    assert M.get("JP Sweep") is bars
-    assert "JP Keys" not in M.names()
