@@ -60,7 +60,9 @@ Return two `(h, w)` integer arrays:
 | `cidx` | index into the active palette ramp, `0` (cool) to `RAMP_STEPS-1` (hot) |
 
 Optionally a third array of background ramp indices, if you want to colour whole
-cells — see [Plasma](#two-colours-per-cell) below.
+cells — see [Plasma](#two-colours-per-cell) below. Use background index `0` for
+"nothing here": when someone turns on the see-through background, spektr leaves
+those cells to their terminal, and every other index keeps its colour.
 
 The decorator takes three optional arguments: `group` (which family the mode
 belongs to), `blurb` (one line, shown while the picker previews it), and

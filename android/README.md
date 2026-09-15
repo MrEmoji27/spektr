@@ -2,8 +2,8 @@
 
 The Android port is part of spektr's main repository and is merged into `main`.
 It puts the same audio visualiser engine on a tablet or another spare Android
-screen. The APK carries its own version line: Android v0.3.0 ships inside the
-spektr 0.4.5 release, and its derived Android `versionCode` is 300.
+screen. The APK carries its own version line: Android v0.4.0 ships inside the
+spektr 0.5.0 release, and its derived Android `versionCode` is 400.
 
 This is an ambient display for a big screen, not a tool. It is meant to sit on a
 desk or stand and be watched while another device does the work. It visualises
@@ -62,7 +62,7 @@ sideload it. The release APK is about 52 MB, targets 64-bit ARM only, and needs
 Android 10 or newer (`minSdk 29`). The first install may require allowing the
 browser or file manager to install an APK.
 
-The APK reports `v0.3.0`, even when downloaded from the spektr 0.4.5 release.
+The APK reports `v0.4.0`, even when downloaded from the spektr 0.5.0 release.
 Those numbers are intentionally separate: the desktop release and the Android
 port do not move at the same pace.
 

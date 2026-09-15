@@ -9,6 +9,172 @@ line because it moves at its own pace, and ships inside a spektr release: the
 APK carries the release's version number, and the heading below says which
 port version that is.
 
+## spektr 0.5.0
+
+Four new modes, and a release mostly about making the pictures that already
+existed look the way they were meant to: themes that are the theme's colour
+in any terminal, a tunnel drawn as lines rather than bands, a night sky that
+stays dark until the music says otherwise, and frames that are never shown
+half-painted. And, if you want it back, the see-through terminal.
+
+57 modes to 61. Themes stay at 55.
+
+### Crosscurrent
+
+A new tunnel, next to Tunnel In. Round rings travel out toward you and
+eight-sided rings travel in toward the vanishing point, in the same wireframe
+at the same time, and the whole wireframe turns.
+
+The streams are told apart by shape, not colour, and the crossing is the
+mechanic: wherever a round ring and an octagon coincide the round stroke
+flares, and because a circle and an octagon only meet at some angles, a
+crossing is a spark sliding round the ring. The lower half of the spectrum
+pushes the outbound stream and the upper half pulls the inbound one, each
+against its own recent level — absolute levels do not work on real music,
+where the bottom quarter of the bands had a median level of 0.00 and 0.02
+across a minute of each of two tracks.
+
+The turn follows the music. A detected tempo sets the pace at about a spoke
+gap a beat (96 bpm without one), and activity scales it on a curve, from a
+sixth of that for a steady pad to three and a half times it when everything is
+going. It eases toward its target over half a second, so the tunnel visibly
+accelerates into a busy passage and coasts out of it, and silence settles it
+to a slow turn. A band that jumps pulses the spokes in its sector, and a
+pulsing spoke strobes on the beat's sixteenth notes between a solid line and a
+dashed one whose gaps move every strobe, so the light stutters along the line
+instead of only changing colour. A strong hit sends the pulse sweeping out from
+the sector that jumped most.
+
+A turning stroke cannot be cached, and computing the whole grid every frame
+cost two thirds more than a static tunnel at 400x100. Each frame works only on
+the dots that can be on a stroke, found from sorted angle and depth indices,
+with output identical frame for frame to the whole-grid form; it is now
+cheaper than the static version was.
+
+### The JP family
+
+Three modes drawn as the panel of a piece of hi-fi hardware: one shared LED
+ladder, with the unlit bulbs drawn as well as the lit ones, which is the whole
+difference between these and `Bars` — a bar chart with gaps in it against a
+panel with the power on. Each is that ladder blended with a mechanic already
+somewhere else in the app, and the family is held to that rule: a JP that
+cannot be named "Bars × something that exists" is a clone and does not ship.
+
+* **JP Bars** takes the note roll: the crest of a rising bar sheds bulbs
+  that climb the ladder and fade, so the panel holds the level and the last
+  couple of seconds of it at once. A held note sheds nothing.
+* **JP Drift** takes `Dune`'s sandpile. Columns fill with the square of
+  the level, and past the angle of repose they wait for a beat strong enough
+  to topple them, then pour into their neighbours over a fifth of a second — so
+  bass-heavy music brings columns down on the kicks and a cascade steps across
+  the spectrum in time.
+* **JP Pulse** bends the ladder into a dial, a spoke of bulbs per band,
+  with a chaser launched on onsets.
+
+The panels are drawn in four ink weights — lit bulb, peak, trail, unlit dot —
+with the unlit colour chosen by measured contrast against the theme's
+background, because on a theme like gruvbox the bottom of the ramp is the
+brightest colour it has. In silence they go properly dark.
+
+Two earlier members were cut before release rather than kept to make up the
+number: a Sweep that was a scan light over a bar chart, which `Sonar` already
+does, and a Keys whose piano laid 32 log-spaced bands out on a keyboard, where
+a lit key never meant that note. A config naming either opens JP Bars.
+
+### The theme's background, in every cell
+
+In 0.4.5 the visualizer never actually drew the theme's background. Textual
+draws a line-API widget's cells exactly as they are handed over, the widget's
+background only fills padding, and every cell went out as a bare foreground
+colour — so the terminal painted its own scheme behind them. Logged at the
+byte level on Windows Terminal running Catppuccin Mocha: gruvbox rendered on
+`#1e1e2e`, and flexoki-light on a dark ground instead of cream. Every contrast
+decision a mode made was made against a colour that was not on screen. Every
+cell now carries the theme's background.
+
+### A see-through background, if you want it
+
+That fix is what makes a translucent terminal look solid, because a terminal
+only draws a cell translucent when the cell names no background of its own.
+So it is a setting: the settings panel's **background** row, or
+`--background terminal`, leaves empty cells to the terminal and lets Windows
+Terminal's opacity or acrylic show through. `theme (solid)` stays the default,
+because it is the only way the theme is guaranteed to be what you see. The
+cost is stated in the setting: a light theme over a dark terminal is pale
+lines on a dark ground, and modes still judge contrast against the theme's
+background.
+
+Two-colour modes paint the floor of their ramp where there is nothing — the
+dark between Radial's wedges, the plate between Chladni's lines — so those
+cells are cleared too, and a run of cells is never allowed to carry a colour
+across a cleared one. Real field colours keep their backgrounds, and the
+header, footer and panels stay solid. It applies live, with no restart.
+
+### Tunnel and Tunnel In, redrawn
+
+In a real terminal the sixteen spokes broke up exactly where they should read
+cleanest, converging on the centre, and at larger sizes the whole corridor
+read as a mess. Measured on the rendered braille, it was built from bands of
+stretched polar coordinates rather than from lines: an undocumented depth
+twist bent the spokes up to 18 degrees near the centre, their width stepped
+between one and four dots, a loud ring was a filled annulus with 79% of its
+dots in solid blocks, and a per-frame dither punched holes in everything and
+left sixty-odd specks near the centre.
+
+Both are now a wireframe of strokes with half-widths in real dots. The
+distance to a ring comes from its depth error over the local gradient, so an
+elliptical ring is the same weight all the way round, and the distance to a
+spoke is an exact perpendicular. Rings thicken with their band's level but
+never more than a seventh of the way to the next; a ring too close to its
+neighbour to resolve is not drawn. There is no dither — depth is carried by
+colour. The spokes run on into the vanishing point as hairlines that stop in a
+hierarchy, each where it would touch its neighbour, and fade to near the
+background as they go, so sixteen lines read as meeting at one dim point
+rather than as a starburst or a ring of stubs. At 188x50 the picture went from
+63-71 connected pieces to one and from 60-65 specks to none, and both modes got
+cheaper.
+
+### The cosmos family, reworked
+
+The family's bargain is a mostly dark sky with the music arriving as events,
+and inspected live every mode broke it. Faintness was a low ramp index, and a
+theme's ramp is a hue gradient, so faint stars and fading trails came out as
+loud as meteors. The sky is now coloured by measured contrast against the
+theme's background, so faint recedes on every theme.
+
+* **Shooting Star**: a hard hit always breaks a cluster loose, a medium one
+  sometimes throws a single meteor, quiet onsets throw nothing — no meteors
+  in a pad or after the music stops, where there had been. A cluster's
+  trailing fragments had been culled on their first frame.
+* **Constellations** grows a figure only to one of its nearest unused stars
+  and ends it at six lines, instead of tangling into a knot that outlived the
+  track.
+* **Star Trails** stopped being a wall of arcs: no blur at rest, and arcs
+  capped against the gap to the next star. About half the screen coverage and
+  half the cost.
+* **Supernova** waits for a hit to ask for one. The first nova had come off a
+  four-to-eight-second timer and landed in the quiet opening.
+
+### No more torn frames on Windows
+
+Breaks that looked like rendering bugs in Tunnel's fastest ring were the
+terminal showing a frame half-painted: a 60 fps capture matched back to the
+recorded renders had 95 of 720 frames stitched from two. Textual only brackets
+a repaint in synchronized-output markers after the terminal answers a query,
+and its Windows driver never sends the query. spektr now asks on Windows;
+Windows Terminal answers, every repaint is bracketed, and captures show no
+stitched frames. A terminal without the mode never answers and nothing
+changes.
+
+### Under it
+
+* `Pulse` and `Chladni (o)` came off the benchmark's over-budget list; neither
+  was over budget by design, and one bad run recording them there is how a
+  real regression hides.
+* New test files hold each of these to what it promises: the JP family,
+  the cosmos family, the tunnels, Crosscurrent, synchronized output, and the
+  theme background in both its solid and see-through forms. 729 tests.
+
 ## spektr 0.4.5
 
 Five new modes, a new mark, and a change to how you get at the modes at all:
@@ -355,6 +521,24 @@ The frame budget is 16.7 ms at 60 fps and the whole app has to fit in it.
   than four files out of fifteen.
 * Tagging a release now builds and attaches the Windows exe, the Windows
   installer, the Linux binary and the Android APK from one tag.
+
+## Android v0.4.0 — ships in spektr 0.5.0
+
+### The new engine
+
+The port runs spektr's engine unmodified, so everything in 0.5.0 that is
+drawn rather than terminal-specific arrives here too. The picker offers
+**Crosscurrent** and the three **JP** modes, 62 of the engine's 74, and
+Tunnel, Tunnel In and the cosmos family draw with their reworked geometry and
+contrast.
+
+The terminal-only changes do not apply: the see-through background and
+synchronized output are about how a terminal paints cells, and the app paints
+its own.
+
+The version moves because the APK's contents did: a different engine under
+the same `versionCode` (300) could not be told apart from the last build. It
+is 400 now.
 
 ## Android v0.3.0 — ships in spektr 0.4.5
 

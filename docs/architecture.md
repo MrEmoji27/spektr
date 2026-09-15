@@ -42,8 +42,10 @@ The dependency arrow points frontend → engine, and never the other way.
 A mode returns `(codes, cidx)`: a `(h, w)` grid of Unicode codepoints and a
 matching grid of palette ramp indices (`0..RAMP_STEPS-1`, cool to hot).
 Optionally a third `(h, w)` array of background ramp indices, for modes that
-colour whole cells. That pair is the whole interface — verified against the
-code, not taken on faith:
+colour whole cells. Background index `0`, the floor of the ramp, means "nothing
+here": with the see-through background setting on, the frontend leaves those
+cells to the terminal instead of painting them. That pair is the whole
+interface — verified against the code, not taken on faith:
 
 - **Modes never import Rich or Textual.** There is no `rich`/`textual`
   import anywhere under `modes/`; the only cross-module imports are
