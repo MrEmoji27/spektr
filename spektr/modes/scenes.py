@@ -18,6 +18,7 @@ from ..render import (
 from . import (
     Ctx,
     angular_bands as _angular_bands,
+    angular_lut as _angular_lut,
     band_columns,
     bg_contrast,
     contrast_ramp,
@@ -952,77 +953,234 @@ _XC_RIPPLE_REACH = 6.0
 _XC_RIPPLE_GAP = 0.3
 
 
+#: Angular resolution of the spinning wireframe: a turn in this many steps.
+#: 4096 is under a tenth of a degree, finer than the dot grid can show.
+_XC_TURN_STEPS = 4096
+
+#: How fast a flickering spoke strobes when no tempo is known, cycles per
+#: second. With a tempo it strobes in sixteenth notes instead.
+_XC_STROBE_HZ = 9.0
+
+#: A flickering spoke's dash pattern, in real dots along the spoke: this long
+#: a period, of which this much stays lit on the dark half of the strobe. The
+#: lit part is kept at nine dots or more, so a dash is a piece of line and not
+#: a speck.
+_XC_DASH = 14.0
+_XC_DASH_ON = 0.64
+
+
 def _crosscurrent_geometry(dr: int, dc: int, dist, turn, max_r, base: dict) -> dict:
-    """The fixed part of the inbound stream: eight-sided depth, and the cutoff.
+    """Everything about the spinning corridor that does not depend on the spin.
+
+    The wireframe turns, so nothing here is a mask: the spokes and the
+    octagons are resolved each frame through tables indexed by a dot's angle
+    *relative to* the current spin (see :func:`crosscurrent`), and what is
+    cached is the per-dot half of that — each dot's angle step, its radius in
+    stretched and in real dots, and the tables that do not change as the whole
+    thing rotates.
 
     A ring of the inbound stream is the set of points whose *octagonal* radius
     is the ring's radius: for a point at angle ``phi`` inside its sector, the
     flat edge between two corners sits at ``dist * cos(phi - half) / cos(half)``
-    of the corner radius. Using that in place of ``dist`` turns every inbound
-    ring into an octagon with straight chords, without any per-frame geometry.
-
-    Two streams put a ring at every half period of depth instead of every
-    whole one, so the radius inside which rings are too close to resolve moves
-    out by root two, and is tested on each ring's centre line as the tunnels
-    do.
+    of the corner radius. Two streams put a ring at every half period of depth
+    instead of every whole one, so the radius inside which rings are too close
+    to resolve moves out by root two.
     """
-    sector = 2.0 * math.pi / _XC_SIDES
-    half = sector / 2.0
-    phi = frac(turn * np.float32(_XC_SIDES)) * np.float32(sector)
-    oct_scale = np.cos(phi - np.float32(half)) / np.float32(math.cos(half))
-    r_oct = np.maximum(dist * oct_scale, np.float32(0.9))
-    cut = float(math.sqrt(2.0 * 3.5 * 0.55 * max_r))
+    n = _XC_TURN_STEPS
+    cy, cx = dr / 2.0, dc / 2.0
+    s = cy / max(cx, 1.0)
+    yy = (np.arange(dr, dtype=np.float32) - np.float32(cy))[:, None]
+    xx = (np.arange(dc, dtype=np.float32) - np.float32(cx))[None, :]
+    dots = np.sqrt(xx * xx + yy * yy)
     near = np.clip(dist / np.float32(max_r), 0.0, 1.0)
-    per_dot = base["per_dot"]
+    cut = float(math.sqrt(2.0 * 3.5 * 0.55 * max_r))
+
+    step = 2.0 * math.pi / 16.0
+    fuse = 2.5
+    hole = float(min(0.25 * max_r, max(0.07 * max_r, 3.0 / step)))
+
+    rel = np.arange(n, dtype=np.float64) / n
+    kf = np.rint(rel * 16.0)
+    k = kf.astype(np.int32) % 16
+    sector = 2.0 * math.pi / _XC_SIDES
+    oct_table = np.cos(((rel * _XC_SIDES) % 1.0) * sector - sector / 2.0) / math.cos(sector / 2.0)
+    reach_in = np.where(k % 4 == 0, fuse / (4 * step), np.where(k % 2 == 0, fuse / (2 * step), fuse / step))
+
+    inner_idx = np.flatnonzero((dist <= np.float32(hole)).ravel())
+    depth055 = base["depth055"].ravel()
+    by_depth = np.argsort(depth055, kind="stable")
     return {
-        "depth_oct": (np.float32(0.55 * max_r) / r_oct).astype(np.float32),
-        "oct_per_dot": (per_dot / (oct_scale * oct_scale)).astype(np.float32),
+        "turn_idx": ((turn * np.float32(n)).astype(np.int32) & (n - 1)).ravel(),
+        "turn": turn.ravel(),
+        "spoke_index": _xc_spoke_index(dist, turn, hole),
+        "by_depth": by_depth,
+        "depth_sorted": depth055[by_depth],
+        "dist": dist.ravel(),
+        "dots": dots.ravel().astype(np.float32),
+        "near": near.ravel().astype(np.float32),
+        "stretch": s,
+        "hole": hole,
+        "outer_width": (np.float32(0.55) + np.float32(0.45) * near).ravel().astype(np.float32),
+        "outer_value": (np.float32(0.25) + np.float32(0.35) * np.clip((dist - np.float32(hole)) / np.float32(0.8 * max_r), 0.0, 1.0)).ravel().astype(np.float32),
+        "inner_idx": inner_idx,
+        "edge": (dots * np.float32(hole) / np.maximum(dist, np.float32(1e-3))).ravel()[inner_idx].astype(np.float32),
+        "k_table": k,
+        "off_table": (kf / 16.0 - rel),
+        "face_table": (np.floor(rel * _XC_SIDES) + 0.5) / _XC_SIDES,
+        "oct_table": oct_table.astype(np.float32),
+        "reach_table": reach_in.astype(np.float32),
         "depth_cut": float(0.55 * max_r / cut),
+        "corner": float(0.55 * max_r / (float(dist.max()) - 6.0)),
         "ring_value": (np.clip((dist - np.float32(cut)) / np.float32(cut), 0.0, 1.0)
-                       * (np.float32(0.3) + np.float32(0.7) * near)).astype(np.float32),
-        "near": near.astype(np.float32),
-        # The outer spoke dots, flat, with their spoke and resting brightness:
-        # a pulse only ever touches these, so it is applied to them alone
-        # rather than as a gather and a select over the whole dot grid.
-        "spoke_idx": np.flatnonzero(base["spoke_value"] > 0),
-        "spoke_of": (np.rint(turn * np.float32(16.0)).astype(np.int32) % 16).ravel()[np.flatnonzero(base["spoke_value"] > 0)],
-        "spoke_rest": (base["spoke_value"].ravel()[np.flatnonzero(base["spoke_value"] > 0)] * np.float32(0.55)).astype(np.float32),
+                       * (np.float32(0.3) + np.float32(0.7) * near)).ravel().astype(np.float32),
+        "per_dot": base["per_dot"].ravel(),
+        "depth055": base["depth055"].ravel(),
     }
 
 
+def _xc_spoke_index(dist, turn, hole: float) -> tuple:
+    """Where the outer spokes can be, for any spin: dots sorted by angle within
+    rings of radius.
+
+    A dot at stretched radius ``dist`` is within a dot of the spoke line at
+    angle ``theta`` only if ``dist * |sin(phi - theta)| <= 1`` (the stretch can
+    only lengthen the perpendicular), so inside a ring of radius starting at
+    ``r`` the candidates for a spoke are the dots within ``asin(1 / r)`` of its
+    angle. Dots are grouped into rings of radius a quarter wider each, sorted
+    by angle, and each group is keyed ``angle + 4 * group`` into one array, so
+    a frame finds every candidate with two ``searchsorted`` calls. Each group
+    carries a copy of its dots near 0 and 1 a turn away, so a window across
+    the seam is still one contiguous range.
+    """
+    n = _XC_TURN_STEPS
+    dist_r = dist.ravel()
+    turn_r = turn.ravel().astype(np.float64)
+    far = np.flatnonzero(dist_r > np.float32(hole))
+    edges = [hole]
+    top = float(dist_r.max()) + 1.0
+    while edges[-1] < top:
+        edges.append(edges[-1] * 1.25)
+    group = np.searchsorted(np.array(edges), dist_r[far].astype(np.float64), side="right") - 1
+    wrap = 1.0 / 32.0 + 2.0 / n
+    keys, members, groups, halves = [], [], [], []
+    for g in range(len(edges) - 1):
+        m = far[group == g]
+        if not m.size:
+            continue
+        t = turn_r[m]
+        order = np.argsort(t, kind="stable")
+        t, m = t[order], m[order]
+        head, tail = t < wrap, t >= 1.0 - wrap
+        keys.append(np.concatenate([t[tail] - 1.0, t, t[head] + 1.0]) + 4.0 * g)
+        members.append(np.concatenate([m[tail], m, m[head]]))
+        groups.append(g)
+        # never past half a spoke gap: past it a dot belongs to the next spoke
+        halves.append(min(math.asin(min(1.0, 1.0 / edges[g])) / (2.0 * math.pi), 1.0 / 32.0) + 2.0 / n)
+    return (np.concatenate(keys), np.concatenate(members),
+            np.array(groups, dtype=np.float64), np.array(halves, dtype=np.float64))
+
+
+def _xc_spoke_candidates(xc: dict, spin: float) -> np.ndarray:
+    """Indices of every dot that could be on an outer spoke, each once."""
+    keys, members, groups, halves = xc["spoke_index"]
+    centres = (spin + np.arange(16) / 16.0) % 1.0
+    base = 4.0 * groups[:, None] + centres[None, :]
+    lo = np.searchsorted(keys, (base - halves[:, None]).ravel(), side="left")
+    hi = np.searchsorted(keys, (base + halves[:, None]).ravel(), side="right")
+    # Neighbouring windows only overlap when a small terminal's hole forces the
+    # half-gap cap, and only then can a dot be listed twice.
+    return _xc_ranges(members, lo, hi, unique=bool(halves.max() >= 1.0 / 32.0))
+
+
+def _xc_depth_bands(xc: dict, bands) -> np.ndarray:
+    """Indices of the dots whose round depth lies in any band, each once."""
+    ds = xc["depth_sorted"]
+    # float32 bounds: a float64 needle makes searchsorted cast the whole table
+    lo = np.searchsorted(ds, np.array([a for a, _ in bands], dtype=np.float32), side="left")
+    hi = np.searchsorted(ds, np.array([b for _, b in bands], dtype=np.float32), side="right")
+    # The bands come in increasing depth but may overlap; clipping each start
+    # to the furthest end before it lists every dot once without a sort.
+    hi = np.maximum.accumulate(hi)
+    lo[1:] = np.maximum(lo[1:], hi[:-1])
+    return _xc_ranges(xc["by_depth"], lo, hi, unique=False)
+
+
+def _xc_ranges(members: np.ndarray, lo: np.ndarray, hi: np.ndarray, unique: bool) -> np.ndarray:
+    """``members[lo[i]:hi[i]]`` for every i, gathered at once; sorted and
+    de-duplicated only when asked, because the order of the dots never changes
+    what is drawn."""
+    lengths = np.maximum(hi - lo, 0)
+    total = int(lengths.sum())
+    if total == 0:
+        return np.zeros(0, dtype=np.int64)
+    starts = np.repeat(lo - (np.cumsum(lengths) - lengths), lengths)
+    got = members[starts + np.arange(total)]
+    return np.unique(got) if unique else got
+
+
+def _crosscurrent_spin_tables(xc: dict, spin_idx: int):
+    """Per-frame tables for the current spin: how far a dot at each relative
+    angle is from its nearest spoke, as a multiple of its stretched radius.
+
+    A spoke at absolute angle ``theta`` is a straight line in real dots. For a
+    dot at stretched radius ``dist`` and angle ``phi`` its perpendicular
+    distance in dots is ``dist * |sin(theta - phi)| / (s * norm(theta))``, where
+    ``norm`` is the length of the spoke's direction mapped back to dots. That
+    splits into the per-dot ``dist`` and a table over the relative angle whose
+    only dependence on the spin is through ``norm`` — 4096 entries a frame.
+
+    The second table corrects the octagons' stroke width. Depth changes per
+    real dot as fast as the octagonal radius does, and on a flat face that
+    grows along the face's normal, not along the dot's own radius the round
+    rings' rate is measured on. The stretch makes the two rates differ by up to
+    an eighth, which is enough to thin a one-dot stroke into broken pieces.
+    """
+    n = _XC_TURN_STEPS
+    s = xc["stretch"]
+    spin = spin_idx / n
+    theta = (spin + xc["k_table"] / 16.0) * 2.0 * math.pi
+    norm = np.sqrt((np.cos(theta) / s) ** 2 + np.sin(theta) ** 2)
+    to_spoke = (np.abs(np.sin(2.0 * math.pi * xc["off_table"])) / (s * norm)).astype(np.float32)
+    face = (spin + xc["face_table"]) * 2.0 * math.pi
+    phi = (spin + np.arange(n) / n) * 2.0 * math.pi
+    along_face = np.sqrt((s * np.cos(face)) ** 2 + np.sin(face) ** 2) / math.cos(math.pi / _XC_SIDES)
+    along_radius = np.sqrt((s * np.cos(phi)) ** 2 + np.sin(phi) ** 2)
+    return to_spoke, (along_face / along_radius).astype(np.float32)
+
+
 @mode("Crosscurrent", group="scenes", after="Tunnel In",
-      blurb="two streams of rings in one tunnel, rushing out and drawn in, sparking where they cross")
+      blurb="a spinning tunnel of two ring streams, rushing out and drawn in, flickering on the beat")
 def crosscurrent(ctx: Ctx):
-    """A tunnel carrying two opposing streams, and the music is where they meet.
+    """A spinning tunnel carrying two opposing streams, and the music where they meet.
 
-    The defining mechanic is the crossing. Round rings travel out toward the
-    viewer, driven by the bottom of the spectrum; eight-sided rings travel in
-    toward the vanishing point, driven by the top. Both streams share one
-    wireframe, so they pass through each other constantly, and wherever a round
-    ring and an octagonal one coincide the stroke flares — brighter and a little
-    heavier — for exactly as long as they overlap. Because an octagon and a
-    circle only coincide at some angles, a crossing is a spark that runs round
-    the ring as the two slide past each other, not a whole ring blinking.
+    Round rings travel out toward the viewer and eight-sided rings travel in
+    toward the vanishing point, in the same wireframe at the same time, and
+    the whole wireframe turns. Wherever a round ring and an octagon coincide
+    the round stroke flares, and because a circle and an octagon only meet at
+    some angles, a crossing is a spark sliding round the ring.
 
-    Everything else follows from that. The lower half of the spectrum pushes
-    the outbound stream and the upper half pulls the inbound one, each measured
-    against its own recent level, so a passage whose low end swells streams out
-    and one whose top end gets busy streams in, and the rate of crossings — the
-    amount of sparking — is the sum of both. Each band thickens and brightens the stretch
-    of both rings in its own direction.
+    **The spin follows the music.** With a tempo, the spokes advance about a
+    spoke gap a beat, faster the more active the track is; without one, the
+    rate is the activity alone. Hits give it a push, the rate eases toward its
+    target over most of a second — so it visibly accelerates into a busy
+    passage and coasts down out of one — and silence lets it settle to a slow
+    turn. The octagons' corners stay on their spokes as it turns, and the
+    brightness pattern of the bands turns with it.
 
-    The spokes carry transients. When a band jumps above its own recent level
-    spokes in its sector flick bright for a tenth of a second: the spectrum is
-    mirrored both ways, with bass on the two horizontal spokes and treble on
-    the two vertical ones. A strong hit
-    is one coordinated event: both streams surge, the rings thicken, and a
-    pulse sweeps outward round the spokes from the sector that jumped most,
-    fading within six spokes — a region answering the hit, never the whole
-    structure flashing at once, and never blanking anything. In silence the speeds settle to a slow drift and the
-    flicker stops.
+    **The lines flicker.** A band that jumps pulses the spokes in its sector,
+    and a pulsed spoke strobes: on the beat's sixteenth notes (about 9 Hz with
+    no tempo) it alternates between a solid, bright line and a dashed one whose
+    gaps shift on every strobe, so the light visibly stutters along the spoke
+    rather than only changing colour. A strong hit sends the pulse sweeping
+    out from the sector that jumped most, fading within six spokes; spokes that
+    are not pulsing are never touched, and a dashed spoke keeps two thirds of
+    its dots, so the tunnel never blinks out.
 
-    The strokes, centre and ring cutoff are the wireframe tunnels' own, from
-    :func:`_tunnel_geometry`.
+    The rest follows the tunnels: the lower half of the spectrum pushes the
+    outbound stream and the upper half pulls the inbound one, each against its
+    own recent level; strokes are bounded widths in real dots; spokes fade into
+    a shared vanishing point; rings too close to resolve are not drawn; no
+    dither.
     """
     dr, dc = ctx.dot_rows, ctx.dot_cols
     if dr < 8 or dc < 8:
@@ -1035,7 +1193,7 @@ def crosscurrent(ctx: Ctx):
     dt = max(ctx.dt, 0.0)
 
     st = ctx.scratch("crosscurrent", lambda: {
-        "out": 0.0, "in": 0.5,
+        "out": 0.0, "in": 0.5, "spin": 0.0, "spin_v": 0.01, "strobe": 0.0,
         "slow": np.zeros(9, dtype=np.float64),
         "flash": np.zeros(16, dtype=np.float64),
         "due": np.full(16, -1.0), "amp": np.zeros(16),
@@ -1049,10 +1207,8 @@ def crosscurrent(ctx: Ctx):
     # Each stream answers its own half of the spectrum, measured against that
     # half's recent level. Absolute levels do not work on real music: across a
     # minute of each of two ordinary tracks the bottom quarter of the bands had
-    # a median level of 0.00 and 0.02, so an outbound stream driven by it barely
-    # moved. Relative to its own average, a half that is busier than it has
-    # been drives its stream, whatever the mix. The floor keeps near-silence
-    # from being amplified into motion.
+    # a median level of 0.00 and 0.02. The floor keeps near-silence from being
+    # amplified into motion.
     low = ctx.range(0.0, 0.45)
     high = ctx.range(0.45, 1.0)
     a = min(1.0, dt / 4.0)
@@ -1064,18 +1220,17 @@ def crosscurrent(ctx: Ctx):
     flash = st["flash"]
     flash *= math.exp(-dt / _XC_FLASH_TAU)
     k16 = np.arange(16)
-    # Spoke k sits k/16 of a turn from the right-hand horizontal. Its band is
-    # how far it is from the horizontal axis, on either side, so the picture
-    # is mirrored top to bottom and left to right: bass on both horizontal
-    # spokes, treble on both vertical ones, the rest in between.
+    # Spoke k sits k/16 of a turn round from spoke 0. Its band is how far it is
+    # from spoke 0's axis, on either side, so the spectrum is mirrored both
+    # ways across the turning structure: bass on spokes 0 and 8, treble on 4
+    # and 12.
     from_axis = np.minimum(k16 % 8, 8 - k16 % 8)
     sector = from_axis * 2
     sector_rise = rise[sector]
-    # Only the sectors that jumped hardest flick. A broadband attack lifts
+    # Only the two sectors that rose most may flick. A broadband attack lifts
     # every band at once, and with four spokes mirrored to most bands, lighting
     # every sector that cleared the threshold had twelve or more spokes lit at
     # once in 4% of the frames of a percussive track.
-    # So only the two sectors that rose most may flick: at most eight spokes.
     ranked = np.sort(rise[[0, 2, 4, 6, 8]])
     strongest = sector_rise >= ranked[-2]
     np.maximum(flash, np.where(strongest, np.clip((sector_rise - _XC_RISE) * 7.0, 0.0, 1.0), 0.0), out=flash)
@@ -1087,9 +1242,9 @@ def crosscurrent(ctx: Ctx):
         st["surge"] = max(st["surge"], hit)
         st["kick"] = max(st["kick"], hit)
     if hit >= _XC_HIT and ctx.t - st.get("rippled", -9.0) >= _XC_RIPPLE_GAP:
-        # The pulse starts in the sector that jumped most and spreads to
-        # its neighbours, fading with distance, so a hit lights a region
-        # of the wireframe in a quick sweep instead of the whole of it.
+        # The pulse starts in the sector that jumped most and spreads to its
+        # neighbours, fading with distance: a region of the wireframe answers
+        # the hit in a quick sweep, not the whole of it.
         origin = int(np.argmax(sector_rise)) if sector_rise.max() > 0 else 0
         gap = np.abs(k16 - origin)
         gap = np.minimum(gap, 16 - gap)
@@ -1097,10 +1252,8 @@ def crosscurrent(ctx: Ctx):
         st["amp"] = (0.55 + 0.45 * hit) * np.clip(1.0 - gap / _XC_RIPPLE_REACH, 0.0, 1.0) ** 1.5
         st["rippled"] = ctx.t
     elif hit >= _XC_TOUCH:
-        # A smaller onset is a detail, not an event: the sector that jumped
-        # most and its two neighbours flick, in proportion to the hit, and
-        # nothing else moves. Without this a track whose onsets are mostly
-        # moderate — measured on one, four in five of them — lit no spoke.
+        # A smaller onset is a detail: the sector that jumped most and its two
+        # neighbours pulse, in proportion to the hit.
         origin = int(np.argmax(sector_rise)) if sector_rise.max() > 0 else int(np.argmax(levels[sector]))
         gap = np.abs(k16 - origin)
         gap = np.minimum(gap, 16 - gap)
@@ -1113,96 +1266,202 @@ def crosscurrent(ctx: Ctx):
     st["out"] += (0.12 + 0.9 * drive_lo + 1.1 * st["surge"]) * dt
     st["in"] += (0.12 + 0.9 * drive_hi + 0.8 * st["surge"]) * dt
 
+    # ── the spin ──
+    # How active the track is: its attack, how far its two halves sit above
+    # their own recent levels (a steady track sits at one half each, so that
+    # counts for nothing), and the surge of recent hits. A tempo sets the pace,
+    # a spoke gap a beat; without one the pace is that of 96 bpm. Activity
+    # scales it on a curve, so the difference between a steady passage and a
+    # busy one is a visible change of gear: a sixth of the pace for a pad,
+    # about the pace at moderate activity, and up to three and a half times
+    # it when everything is going.
+    activity = min(1.5, ctx.drive + 0.6 * max(0.0, drive_lo + drive_hi - 1.0) + 0.5 * st["surge"])
+    pace = ctx.tempo_bpm / 60.0 / 16.0 if ctx.tempo_bpm > 0 else 0.1
+    target = 0.01 if ctx.silent else 0.01 + pace * (0.15 + 1.5 * activity * activity)
+    st["spin_v"] += (target - st["spin_v"]) * min(1.0, dt / 0.5)
+    if hit >= _XC_HIT:
+        st["spin_v"] += 0.2 * pace * hit
+    st["spin"] = (st["spin"] + st["spin_v"] * dt) % 1.0
+
+    # the strobe: sixteenth notes with a tempo, a fixed rate without
+    strobe_hz = min(16.0, 4.0 * ctx.tempo_bpm / 60.0) if ctx.tempo_bpm > 0 else _XC_STROBE_HZ
+    st["strobe"] += strobe_hz * dt
+    strobe_dark = (st["strobe"] % 1.0) >= 0.5
+    dash_shift = (math.floor(st["strobe"]) * 0.37) % 1.0
+
     n = min(16, ctx.n_display)
-    nrg = _angular_bands(ctx, turn, n, ctx.t * 0.024).astype(np.float32, copy=False)
+    # The band pattern turns with the wireframe. Only the 512-entry table is
+    # built here; each set of dots that needs a level gathers its own, which
+    # is exactly lut[idx] without an index over the whole grid.
+    lut = _angular_lut(ctx, turn[:1, :1], n, -st["spin"])[0]
+    lut_turn = xc["turn"]
+    lut_offset = np.float32(float(-st["spin"]) % 1.0)
+
+    def nrg_at(idx):
+        return lut[((lut_turn[idx] + lut_offset) * np.float32(512)).astype(np.int32) & 511]
+
     kick = np.float32(st["kick"])
 
+    # ── the spinning spokes ──
+    # Everything below works on the dots that could be on a stroke, found from
+    # the geometry cache, rather than on the grid: turning the wireframe means
+    # nothing about a stroke can be cached, and at 400x100 the whole-grid form
+    # of this frame cost two thirds as much again as the static one.
+    steps = _XC_TURN_STEPS
+    spin_idx = int(round(st["spin"] * steps)) & (steps - 1)
+    gtab, oct_rate = _crosscurrent_spin_tables(xc, spin_idx)
+    turn_idx = xc["turn_idx"]
+    dist_f = xc["dist"]
+
+    def rel_at(idx):
+        return (turn_idx[idx] - spin_idx) & (steps - 1)
+
+    cand = _xc_spoke_candidates(xc, spin_idx / steps)
+    outer = cand[dist_f[cand] * gtab[rel_at(cand)] <= xc["outer_width"][cand]]
+    inn = xc["inner_idx"]
+    inn_rel = rel_at(inn)
+    reach_i_in = xc["reach_table"][inn_rel]
+    inner_ok = (dist_f[inn] * gtab[inn_rel] <= np.float32(0.5)) & (xc["dots"][inn] >= reach_i_in)
+    inner = inn[inner_ok]
+    edge = xc["edge"][inner_ok]
+    reach_ok = reach_i_in[inner_ok]
+    fade = np.clip((xc["dots"][inner] - reach_ok) / np.maximum(edge - reach_ok, np.float32(1e-3)), 0.0, 1.0) ** np.float32(1.5)
+
+    spoke_of_outer = xc["k_table"][rel_at(outer)]
+    st["spokes"] = (outer, inner, spoke_of_outer)
+    pulse_level = flash[spoke_of_outer]
+    if strobe_dark and (pulse_level > 0.2).any():
+        # A pulsing spoke's dark strobe: gaps open along it, in real dots, and
+        # shift every strobe so the light visibly stutters along the line. The
+        # first period out of the hole stays solid, and a piece the screen edge
+        # would cut shorter than six dots goes dark with its gap, so a dashed
+        # spoke is pieces of line and never specks.
+        pulsing = pulse_level > 0.2
+        along = xc["dots"][outer]
+        lead = along - along * np.float32(xc["hole"]) / np.maximum(dist_f[outer], np.float32(1e-3))
+        end = np.zeros(16, dtype=np.float32)
+        np.maximum.at(end, spoke_of_outer, along)
+        dash = (along / np.float32(_XC_DASH) + np.float32(dash_shift)) % np.float32(1.0)
+        piece = np.minimum(np.float32(_XC_DASH_ON * _XC_DASH), end[spoke_of_outer] - (along - dash * np.float32(_XC_DASH)))
+        keep = ~pulsing | (lead < np.float32(_XC_DASH)) | ((dash < np.float32(_XC_DASH_ON)) & (piece >= np.float32(6.0)))
+        outer, spoke_of_outer, pulse_level = outer[keep], spoke_of_outer[keep], pulse_level[keep]
+
     # ── both streams, stroke half-widths in real dots ──
-    # A little heavier toward the viewer and for a loud band, and heavier again
-    # on a hit, but bounded: the first cut multiplied depth reach and a kick
-    # swelled a ring to five dots, which read as a band rather than a line.
-    # Only dots within the widest possible stroke of a ring can be on one, so
-    # the strokes are worked out on those alone: a fraction of the grid, and at
-    # 400x100 the difference between this mode fitting a frame and not.
     cap = np.float32(0.11)
-    near = xc["near"].ravel()
-    nrg_f = nrg.ravel()
-    per_o = geo["per_dot"].ravel()
-    per_i = xc["oct_per_dot"].ravel()
+    near = xc["near"]
+    per_o = xc["per_dot"]
+    depth055 = xc["depth055"]
+    depth_cut = np.float32(xc["depth_cut"])
 
     def half_at(idx):
         h_ = np.float32(0.45) + np.float32(0.2) * near[idx]
-        h_ += np.float32(0.4) * nrg_f[idx]
+        h_ += np.float32(0.4) * nrg_at(idx)
         h_ += np.float32(0.25) * kick
         return h_
 
-    # outbound: round rings, toward the viewer
+    # outbound: round rings, toward the viewer. A ring only just larger than
+    # the screen would show as slivers of a few dots in its corners, so rings
+    # reaching within six units of a corner are not drawn at all.
     shift_o = np.float32(st["out"] % 1.0)
-    fo = geo["depth055"] + shift_o
-    centre_o = np.rint(fo)
-    fo -= centre_o
-    np.abs(fo, out=fo)
-    centre_o -= shift_o
-    ok_o = centre_o <= np.float32(xc["depth_cut"])
+    corner_o = np.float32(xc["corner"])
 
-    # inbound: octagonal rings, toward the vanishing point
+    def out_at(idx):
+        f_ = depth055[idx] + shift_o
+        c_ = np.rint(f_)
+        f_ -= c_
+        np.abs(f_, out=f_)
+        c_ -= shift_o
+        return f_, (c_ <= depth_cut) & (c_ >= corner_o)
+
+    # inbound: octagonal rings, toward the vanishing point, turning with the
+    # spokes. The same corner rule, but an octagon's reach toward the corners
+    # depends on how far the turn has carried a vertex from them; the corners
+    # are a quarter turn apart in stretched coordinates, as the vertices are,
+    # so one of them stands for all four.
     shift_i = np.float32(st["in"] % 1.0)
-    fi = xc["depth_oct"] - shift_i
-    centre_i = np.rint(fi)
-    fi -= centre_i
-    np.abs(fi, out=fi)
-    centre_i += shift_i
-    ok_i = centre_i <= np.float32(xc["depth_cut"])
-    fo_f, fi_f, ok_o_f, ok_i_f = fo.ravel(), fi.ravel(), ok_o.ravel(), ok_i.ravel()
+    oct_table = xc["oct_table"]
+    corner_i = xc["corner"] / oct_table[rel_at(np.zeros(1, dtype=np.int64))][0]
+    depth_scale = np.float32(0.55 * max_r)
 
-    cand_o = np.flatnonzero((fo_f <= cap) & ok_o_f)
+    def in_at(idx):
+        o_ = oct_table[rel_at(idx)]
+        f_ = depth_scale / np.maximum(dist_f[idx] * o_, np.float32(0.9))
+        f_ -= shift_i
+        c_ = np.rint(f_)
+        f_ -= c_
+        np.abs(f_, out=f_)
+        c_ += shift_i
+        return f_, (c_ <= depth_cut) & (c_ >= np.float32(corner_i)), o_
+
+    # Rings sit at whole depths less the stream's shift, so the dots that can
+    # be on one lie in a handful of narrow depth bands, looked up in the cache.
+    lo_m = math.floor(xc["corner"] + float(shift_o)) - 1
+    hi_m = math.ceil(xc["depth_cut"] + float(shift_o)) + 1
+    super_o = _xc_depth_bands(xc, [(m - float(shift_o) - 0.111, m - float(shift_o) + 0.111)
+                                   for m in range(lo_m, hi_m + 1)])
+    fo, ok_o = out_at(super_o)
+    cand_o = super_o[(fo <= cap) & ok_o]
+    fo_c = fo[(fo <= cap) & ok_o]
     half_o = half_at(cand_o)
-    on_o = fo_f[cand_o] <= np.minimum(per_o[cand_o] * half_o, cap)
+    on_o = fo_c <= np.minimum(per_o[cand_o] * half_o, cap)
     idx_o = cand_o[on_o]
     half_o = half_o[on_o]
 
-    # ── the crossing ──
-    # Where an octagon runs close beside a round ring the two used to draw as
-    # one heavy double band. Cutting the octagon out there left its broken ends
-    # behind as specks; instead it narrows smoothly to a one-dot hairline over
-    # the last three dots of approach, so the pair reads as one line with a
-    # thread beside it. The round stroke is drawn at full brightness wherever
-    # the octagon is near: the flare, which slides round the ring as the two
-    # shapes pass through each other.
-    flare = idx_o[(fi_f[idx_o] <= per_i[idx_o] * (half_o + np.float32(1.5))) & ok_i_f[idx_o]]
-    cand_i = np.flatnonzero((fi_f <= cap) & ok_i_f)
-    half_c = half_at(cand_i)
-    beside = np.clip(fo_f[cand_i] / np.maximum(per_o[cand_i], np.float32(1e-6)) / np.float32(3.0), 0.0, 1.0)
-    half_i = np.float32(0.5) + (half_c - np.float32(0.5)) * beside
-    idx_i = cand_i[fi_f[cand_i] <= np.minimum(per_i[cand_i] * half_i, cap)]
+    # an octagon's depth lies between the round depth and cos(pi/8) of it
+    lo_m = math.floor(corner_i - float(shift_i)) - 1
+    hi_m = math.ceil(xc["depth_cut"] - float(shift_i)) + 1
+    widen = 1.0 / math.cos(math.pi / _XC_SIDES)
+    super_i = _xc_depth_bands(xc, [(m + float(shift_i) - 0.111, (m + float(shift_i) + 0.111) * widen + 0.001)
+                                   for m in range(lo_m, hi_m + 1)])
+    fi, ok_i, oct_scale = in_at(super_i)
+    keep_i = (fi <= cap) & ok_i
+    cand_i = super_i[keep_i]
+    fi_c = fi[keep_i]
+    oct_c = oct_scale[keep_i]
 
-    lit_f = geo["walls"].ravel().copy()
+    # ── the crossing ──
+    # Near a round ring the octagon narrows smoothly to a one-dot hairline, so
+    # the pair reads as one line with a thread beside it rather than a heavy
+    # double band, and the round stroke flares where the octagon is near.
+    fi_o, ok_i_o, oct_o = in_at(idx_o)
+    per_i_o = per_o[idx_o] * oct_rate[rel_at(idx_o)] / (oct_o * oct_o)
+    flare = idx_o[(fi_o <= per_i_o * (half_o + np.float32(1.5))) & ok_i_o]
+    half_c = half_at(cand_i)
+    fo_i = out_at(cand_i)[0]
+    beside = np.clip(fo_i / np.maximum(per_o[cand_i], np.float32(1e-6)) / np.float32(3.0), 0.0, 1.0)
+    half_i = np.float32(0.5) + (half_c - np.float32(0.5)) * beside
+    per_i_c = per_o[cand_i] * oct_rate[rel_at(cand_i)] / (oct_c * oct_c)
+    idx_i = cand_i[fi_c <= np.minimum(per_i_c * half_i, cap)]
+
+    lit_f = np.zeros(dr * dc, dtype=bool)
+    lit_f[outer] = True
+    lit_f[inner] = True
     lit_f[idx_o] = True
     lit_f[idx_i] = True
     lit = lit_f.reshape(dr, dc)
     codes = pack_braille(lit)
+    st["drawn"] = outer
 
     # ── brightness ──
-    # Rings sit mid-ramp and rise with their band and a hit; a flare is full.
-    # Spokes rest lower than in the tunnels so that a pulse along one is a
-    # visible flick, not a step from bright to slightly brighter.
-    ring_value = xc["ring_value"].ravel()
+    ring_value = xc["ring_value"]
     shade_f = np.zeros(dr * dc, dtype=np.float32)
-    rings_idx = np.union1d(idx_o, idx_i)
-    lift = np.float32(0.35) + np.float32(0.35) * nrg_f[rings_idx]
+    # a dot on both streams is listed twice; both writes are the same value
+    rings_idx = np.concatenate([idx_o, idx_i])
+    lift = np.float32(0.35) + np.float32(0.35) * nrg_at(rings_idx)
     lift += np.float32(0.2) * kick
     shade_f[rings_idx] = lift * ring_value[rings_idx]
     shade_f[flare] = np.maximum(shade_f[flare], np.float32(0.35) + np.float32(0.65) * ring_value[flare])
 
-    si = xc["spoke_idx"]
-    rest = xc["spoke_rest"]
-    pulse = rest + (np.float32(1.0) - rest) * flash.astype(np.float32)[xc["spoke_of"]]
-    shade_f[si] = np.maximum(shade_f[si], pulse)
-    shade = shade_f.reshape(dr, dc)
+    rest = xc["outer_value"][outer] * np.float32(0.55)
+    pulse = rest + (np.float32(1.0) - rest) * pulse_level.astype(np.float32)
+    shade_f[outer] = np.maximum(shade_f[outer], pulse)
 
     lo = _faint_walk_point(ctx.palette, _TUNNEL_FADE_FLOOR, 3.0)
-    shade *= np.float32(1.0 - lo)
-    shade += np.float32(lo)
-    np.multiply(shade, lit, out=shade)
-    np.maximum(shade, geo["spoke_fade"] * np.float32(lo + (1.0 - lo) * 0.25), out=shade)
-    return codes, contrast_ramp(ctx.palette, cell_max(shade), faint=_TUNNEL_FADE_FLOOR)
+    # Gathered before it is written back, so a dot listed twice is lifted once.
+    drawn_all = np.concatenate([rings_idx, outer, inner])
+    part = shade_f[drawn_all]
+    part *= np.float32(1.0 - lo)
+    part += np.float32(lo)
+    shade_f[drawn_all] = part
+    shade_f[inner] = np.maximum(shade_f[inner], fade * np.float32(lo + (1.0 - lo) * 0.25))
+    return codes, contrast_ramp(ctx.palette, cell_max(shade_f.reshape(dr, dc)), faint=_TUNNEL_FADE_FLOOR)

@@ -116,7 +116,7 @@ Listed in the order the picker cycles them.
 | **Bars** | the classic — bars with peak markers | **Keys** | a lit keyboard; struck bands scroll away as notes |
 | **Bricks** | chunky, no partial cells | **Tunnel** | flying down a pipe, ribbed by the beat |
 | **Columns** | gapless, interpolated across the full width | **Tunnel In** | rings thrown out of the centre on the beat, rushing past you |
-| | | **Crosscurrent** | two streams in one tunnel — round rings rushing out, octagons drawn in, sparking where they cross |
+| | | **Crosscurrent** | two streams in one spinning tunnel — round rings rushing out, octagons drawn in, sparking where they cross; the turn speeds up with the tempo and a busy track, and spokes strobe on the beat |
 | **Ladder** | segmented LED stack | **Warp** | starfield, accelerating with the music |
 | **Mirror** | grows out from the centre line | **Matrix** | digital rain, falling faster when it's loud |
 | **Readout** | scrolling numeric ticker, band levels as plain digits | **Boot** | an old PC waking up — BIOS POST, a boot log, a blinking cursor |
