@@ -114,3 +114,21 @@ If your mode returns a background colour array, background index `0` now
 means "nothing here": with the see-through background on, those cells are left
 to the terminal. Every other index keeps its colour. See
 [docs/plugins.md](https://github.com/MrEmoji27/spektr/blob/main/docs/plugins.md).
+
+[Full changelog](https://github.com/MrEmoji27/spektr/blob/main/CHANGELOG.md)
+
+---
+
+### Which file
+
+| you have | download |
+|---|---|
+| Windows, no Python | `spektr.exe` — portable, double-click |
+| Windows, one line in PowerShell | `irm https://github.com/MrEmoji27/spektr/releases/latest/download/spektr.exe -OutFile spektr.exe; ./spektr.exe` |
+| Windows, want a Start Menu entry | `spektr-0.5.0.0-setup.exe` |
+| Linux, no Python | `spektr` — `chmod +x` and run |
+| Android | `spektr-android-0.4.0-arm64-v8a.apk` — Android 10+, 64-bit ARM |
+| Python already | clone and `pip install -e .` — not on PyPI yet |
+
+The Windows and Linux builds are unsigned. SmartScreen will warn on first run:
+More info → Run anyway.
