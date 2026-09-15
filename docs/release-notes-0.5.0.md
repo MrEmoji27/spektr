@@ -43,6 +43,8 @@ not.
 - **JP Pulse** — the meter bent into a dial, with a light that chases
   around it on the beat.
 
+All three go dark when the music stops.
+
 > **Note:** the JP modes are new and not final. They may be changed, improved,
 > reworked or removed, and more modes will join this family in the next major
 > release.
@@ -62,8 +64,10 @@ desktop through spektr, open settings (`c`) and set **background** to
 switches instantly and is remembered.
 
 It is off by default for a reason: a light theme over a dark terminal will
-look pale, because the theme no longer decides what is behind the lines. The
-header and footer stay solid either way.
+look pale, because the theme no longer decides what is behind the lines. Modes
+that fill the screen with colour, like Plasma or Chladni, keep their colours
+and only their empty areas turn see-through. The header and footer stay solid
+either way.
 
 ### Tunnel and Tunnel In, cleaned up
 
@@ -80,7 +84,7 @@ up as events.
 - **Shooting Star** throws meteors on hard hits, not on every hi-hat, and
   nothing flies across a quiet part or after the music stops.
 - **Constellations** draws neat figures of a few lines instead of tangled
-  knots.
+  knots, and old figures fade sooner.
 - **Star Trails** no longer fills the screen with arcs.
 - **Supernova** saves its explosion for a real hit instead of going off on a
   timer at the start of a song.
@@ -103,3 +107,10 @@ are terminal features, so they do not apply to the app.)
 
 The APK keeps its own version number because the Android port has had fewer
 releases than the desktop app.
+
+### For plugin authors
+
+If your mode returns a background colour array, background index `0` now
+means "nothing here": with the see-through background on, those cells are left
+to the terminal. Every other index keeps its colour. See
+[docs/plugins.md](https://github.com/MrEmoji27/spektr/blob/main/docs/plugins.md).
