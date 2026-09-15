@@ -26,6 +26,12 @@ jobs:
           java-version: "17"
 
       - uses: android-actions/setup-android@v3
+        with:
+          # The action's default list starts with the legacy `tools` package,
+          # which the runners' cmdline-tools 16.0 no longer carries, so
+          # sdkmanager exits 1 and the job dies in sixteen seconds. Gradle
+          # installs the platform and build-tools it needs on its own.
+          packages: platform-tools
 
       # Chaquopy runs pip on the build machine to resolve numpy for the target,
       # so the runner needs a working Python even though none of it ends up
