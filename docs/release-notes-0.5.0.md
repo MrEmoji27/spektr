@@ -43,6 +43,10 @@ not.
 - **JP Pulse** — the meter bent into a dial, with a light that chases
   around it on the beat.
 
+> **Note:** the JP modes are new and not final. They may be changed, improved,
+> reworked or removed, and more modes will join this family in the next major
+> release.
+
 ### Every theme in its real colours
 
 In 0.4.5 the empty space in the visualizer showed your terminal's own

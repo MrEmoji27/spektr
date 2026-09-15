@@ -82,6 +82,9 @@ number: a Sweep that was a scan light over a bar chart, which `Sonar` already
 does, and a Keys whose piano laid 32 log-spaced bands out on a keyboard, where
 a lit key never meant that note.
 
+The family is not final. Any of the three may be changed, improved, reworked
+or removed, and more modes will join it in the next major release.
+
 ### The theme's background, in every cell
 
 In 0.4.5 the visualizer never actually drew the theme's background. Textual
