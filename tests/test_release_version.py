@@ -18,6 +18,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
@@ -73,14 +75,53 @@ def test_the_version_is_a_plain_three_part_number():
 
 
 def test_the_changelog_has_a_section_for_this_version():
-    """The three build workflows append to the release body; they do not write it.
+    """The build workflows only upload files; they write none of the release.
 
-    So the notes have to exist before the tag is pushed, and this is where
-    they live.
+    So the notes have to exist before the tag is pushed, and the changelog is
+    where the full story of a version lives.
     """
     text = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
     heading = re.compile(rf"^## spektr {re.escape(spektr.__version__)}\b", re.M)
     assert heading.search(text), (
         f"CHANGELOG.md has no `## spektr {spektr.__version__}` section, so a "
-        f"release cut now would ship with only the build jobs' download notes"
+        f"release cut now would ship without its story"
     )
+
+
+# ── the release body, and who writes it ──────────────────────────────────────
+
+_WORKFLOWS = ["build-windows.yml", "build-linux.yml", "build-android.yml"]
+
+
+def _android_version() -> str:
+    for line in (ROOT / "android" / "gradle.properties").read_text(encoding="utf-8").splitlines():
+        if line.startswith("spektrAndroidVersion="):
+            return line.split("=", 1)[1].strip()
+    raise AssertionError("spektrAndroidVersion is missing from android/gradle.properties")
+
+
+def test_the_release_notes_name_every_file_the_builds_upload():
+    """The notes file is the whole release body, download guide included.
+
+    The build jobs used to append a download section each, and three jobs
+    editing one body at once raced: 0.5.0 lost its Linux section. Now they only
+    upload, so a notes file that does not say which file to download ships a
+    release that does not say it either.
+    """
+    v = spektr.__version__
+    notes = ROOT / "docs" / f"release-notes-{v}.md"
+    assert notes.exists(), f"no {notes.relative_to(ROOT)} for the release this version would cut"
+    text = notes.read_text(encoding="utf-8")
+    for name in ("spektr.exe", f"spektr-{v}.0-setup.exe", "`spektr`",
+                 f"spektr-android-{_android_version()}-arm64-v8a.apk"):
+        assert name in text, f"the {v} release notes never mention {name}"
+    assert "Which file" in text, f"the {v} release notes have no download guide"
+
+
+@pytest.mark.parametrize("workflow", _WORKFLOWS)
+def test_no_build_job_edits_the_release_body(workflow):
+    """Only uploads: a body edit from a build job is the race coming back."""
+    text = (ROOT / ".github" / "workflows" / workflow).read_text(encoding="utf-8")
+    assert "append_body" not in text, f"{workflow} appends to the release body"
+    assert "action-gh-release" not in text, f"{workflow} uses action-gh-release, which rewrites the body and publishes"
+    assert "gh release upload" in text, f"{workflow} no longer attaches its files"

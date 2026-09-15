@@ -145,27 +145,23 @@ jobs:
           if-no-files-found: error
 
       - name: Attach to the release
-        # Only a signed one. An unsigned APK cannot be installed, and putting
-        # it on a release is worse than putting nothing there — it looks like
-        # a download that works.
+        # Uploads this job's files and nothing else. The release and all of its
+        # text, the download guide included, come from
+        # docs/release-notes-<version>.md, created before the tag is pushed.
+        # The three build jobs used to append a section each to the release
+        # body, and jobs that edit one body at the same moment race: 0.5.0 lost
+        # its Linux section that way. They also published the release as they
+        # went. Publishing is now done by hand once every file is attached.
+        # Only a signed APK. An unsigned one cannot be installed, and putting
+        # it on a release is worse than putting nothing there: it looks like a
+        # download that works.
         if: startsWith(github.ref, 'refs/tags/') && steps.keystore.outputs.signed == 'true'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: spektr-*.apk
-          # Appends, like the other two build jobs: the release owns its notes
-          # and a build job only adds a section about the file it uploaded.
-          append_body: true
-          body: |
-            **Android — Android 10 or newer, 64-bit ARM.**
-
-            The APK reports **v${{ steps.version.outputs.app }}**, which is the
-            Android build's own version — it ships inside this release rather
-            than sharing its number, because the port has had fewer versions
-            than the desktop app.
-
-            * `spektr-android-*-arm64-v8a.apk` — sideload it. You will need to
-              allow installs from your browser or file manager the first time.
-
-            It captures what your device is playing, which needs the screen
-            recording permission as well as the microphone one: Android has no
-            separate "record the audio only" consent. Nothing leaves the device.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="$GITHUB_REF_NAME"
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null || {
+            echo "::error::no release for $TAG. Create it first: gh release create $TAG --draft --title \"spektr ${TAG#v}\" --notes-file docs/release-notes-${TAG#v}.md"
+            exit 1
+          }
+          gh release upload "$TAG" spektr-*.apk --repo "$GITHUB_REPOSITORY" --clobber

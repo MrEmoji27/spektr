@@ -1,12 +1,17 @@
 <!--
-The body of the GitHub release for v0.5.0.
+The body of the GitHub release for v0.5.0, as published.
 
-It has to exist before the tag is pushed: all three build workflows attach
-with append_body, so they add a download section to whatever is already there
-and never write the notes themselves.
+The build workflows only upload files; they do not write any of this. So the
+whole body, download guide included, lives here and the release has to exist
+before the tag is pushed:
 
     gh release create v0.5.0 --draft --title "spektr 0.5.0" \
       --notes-file docs/release-notes-0.5.0.md
+    git tag -a v0.5.0 -m "spektr 0.5.0" && git push origin v0.5.0
+
+Once the exe, the installer, the Linux binary and the APK are all attached:
+
+    gh release edit v0.5.0 --draft=false
 -->
 
 spektr 0.5.0 adds a spinning tunnel and a family of car-audio meters, draws every
@@ -132,3 +137,39 @@ to the terminal. Every other index keeps its colour. See
 
 The Windows and Linux builds are unsigned. SmartScreen will warn on first run:
 More info → Run anyway.
+
+---
+
+**Windows — no Python needed.**
+
+* `spektr.exe` — portable. Download, double-click. A black console
+  window opening is normal: spektr is a terminal program.
+* `spektr-*-setup.exe` — installer with Start Menu shortcuts and an
+  uninstaller. Starts faster than the portable build.
+
+Both are unsigned, so Windows SmartScreen may warn on first run:
+**More info → Run anyway**.
+
+**Linux (Ubuntu/Arch/Fedora/etc.) — no Python needed.**
+
+* `spektr` — portable native binary. Download, `chmod +x spektr`, run it from a
+  terminal. It is a terminal program, so launch it from a terminal window.
+* Built on Ubuntu 22.04 (glibc), the oldest target the runner offers, so it runs
+  on most modern distros.
+* Needs your system audio libs: `libpulse.so` and PortAudio.
+  Debian/Ubuntu: `sudo apt install libportaudio2`. Arch: `sudo pacman -S portaudio`
+  (PipeWire exposes pulse via `pipewire-pulse`). Fedora: `sudo dnf install portaudio`.
+
+**Android — Android 10 or newer, 64-bit ARM.**
+
+The APK reports **v0.4.0**, which is the
+Android build's own version — it ships inside this release rather
+than sharing its number, because the port has had fewer versions
+than the desktop app.
+
+* `spektr-android-*-arm64-v8a.apk` — sideload it. You will need to
+  allow installs from your browser or file manager the first time.
+
+It captures what your device is playing, which needs the screen
+recording permission as well as the microphone one: Android has no
+separate "record the audio only" consent. Nothing leaves the device.
