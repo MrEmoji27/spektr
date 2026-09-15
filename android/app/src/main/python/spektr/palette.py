@@ -689,13 +689,32 @@ class Palette:
         "pair_styles",
         "rgb",
         "rle_budget",
+        "rle_budget_clear",
         "rle_tol",
         "styles",
         "theme",
+        "transparent",
     )
 
-    def __init__(self, theme: Theme | None = None):
+    def __init__(self, theme: Theme | None = None, transparent: bool = False):
+        #: Leave the theme's background out of every style, so empty cells go
+        #: to the terminal as "default background" and a translucent terminal
+        #: shows through. See ``Settings.transparent_background``.
+        self.transparent = bool(transparent)
         self.set(theme or BUILTIN["classic"])
+
+    def set_transparent(self, on: bool) -> bool:
+        """Switch the background between the theme's colour and the terminal's.
+
+        Rebuilds every derived style at the current point on the ramp, so the
+        next frame is drawn with the new styles and nothing cached under the
+        old ones survives — the combined fg+bg cache is dropped with them.
+        """
+        on = bool(on)
+        if on != self.transparent:
+            self.transparent = on
+            self._build(self._phase)
+        return self.transparent
 
     def set(self, theme: Theme) -> None:
         self.theme = theme
@@ -762,7 +781,12 @@ class Palette:
         # opacity the terminal runs) instead of the theme. Measured on Windows
         # Terminal with Catppuccin Mocha at 80% opacity: gruvbox rendered on
         # #1e1e2e and flexoki-light on a dark background, not on cream.
-        bg = Color.parse(th.bg or "#000000")
+        #
+        # Unless the terminal's background is exactly what was asked for: with
+        # ``transparent`` set they are foreground-only again, deliberately,
+        # because a terminal only draws a cell translucent when the cell names
+        # no background of its own.
+        bg = None if self.transparent else Color.parse(th.bg or "#000000")
         self.styles = [Style.from_color(color=c, bgcolor=bg) for c in self.colors]
         self.bg_styles = [Style.from_color(bgcolor=c) for c in self.colors]
         # Combined fg-on-bg styles, filled on demand and dropped when the ramp
@@ -835,6 +859,15 @@ class Palette:
                 t = nxt
             budget[i] = t
         self.rle_budget = budget
+        # The same budgets for a transparent grid of fg+bg pairs, where
+        # ``make_strips`` marks a cleared background as index RAMP_STEPS. No
+        # run may drift across that marker in either direction: a run starting
+        # at i may absorb at most RAMP_STEPS - 1 - i, and a cleared run absorbs
+        # nothing, so a cleared cell never inherits a colour and a coloured one
+        # never loses it.
+        self.rle_budget_clear = np.append(
+            np.minimum(budget, (n - 1) - np.arange(n, dtype=np.int32)), np.int32(0)
+        ).astype(np.int32)
 
     # ── lookups ──
     def pair_style(self, key: int) -> Style:

@@ -364,6 +364,16 @@ is the last row — it shows what's currently listening, refreshing on its own a
 settles rather than only when you touch it; → cycles to the next candidate device (same as
 `d`), ← resets to the system default (same as `D`).
 
+**Background** is `theme (solid)` by default: every visualizer cell carries the theme's
+own background colour, so the theme looks the same in any terminal. `terminal (see-through)`
+leaves empty cells to the terminal instead, which is what lets Windows Terminal's opacity or
+acrylic show the desktop through the picture — a terminal only draws a cell translucent when
+the cell names no background. The cost is that the theme no longer decides what is behind the
+lines: a light theme over a dark terminal is pale lines on a dark ground, and the modes still
+judge contrast against the theme's background. Two-colour modes keep their coloured fields
+and clear only the ramp's floor, where they draw nothing. The header, footer and panels stay
+solid.
+
 **Shuffle** is two things: `s` switches it on and off, and the `c` panel sets what it
 cycles — `modes`, `themes` or `both`. The scope is remembered while it's off, so `s` picks up
 where you left it. With `both` the mode changes every 15 s and the theme every third change,
@@ -397,6 +407,9 @@ spektr --list-modes     print visualiser names (including the opt-in ones)
 spektr --list-themes    print theme names
 spektr --glyph-test     can this terminal draw the (o) subcell modes?
 spektr --cells quadrant draw the subcell modes as (q) — block elements only
+spektr --background terminal
+                        let the terminal's opacity show through the visualizer
+                        (--background theme is the solid default; saved)
 spektr --monitor        run the capture path headlessly, when --diagnose looks fine
                         but the picture will not move
 spektr --no-plugins     skip loading plugins this run

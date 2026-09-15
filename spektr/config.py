@@ -77,6 +77,22 @@ class Settings:
     #: animated. Applied live from the settings panel via
     #: ``AudioVisualizer.set_motion``.
     motion: str = MOTION_DEFAULT
+    #: Leave the visualizer's empty cells to the terminal instead of painting
+    #: the theme's background into them, so a terminal running with opacity
+    #: or acrylic shows the desktop through the picture.
+    #:
+    #: Off by default, because solid is the only way the theme is guaranteed
+    #: to be what is on screen. A terminal draws a cell translucent only when
+    #: it has no background colour of its own, so this is all or nothing: the
+    #: cells show whatever the terminal's scheme is. A light theme over a dark
+    #: terminal is then pale lines on a dark ground, and every contrast
+    #: decision the modes make is still made against the theme's background,
+    #: not against what is actually behind the cell. Two-colour modes keep
+    #: their coloured fields and give up only the floor of the ramp, which is
+    #: what they paint where there is nothing. The header, footer and panels
+    #: stay solid either way. Applied live via
+    #: ``AudioVisualizer.set_transparent_background``.
+    transparent_background: bool = False
     #: Screensaver-style auto-cycling of mode and theme. Remembered across
     #: restarts like everything else here — if you left it on, you wanted it
     #: on, not a surprise burst of quiet the next time you open a terminal.
@@ -167,6 +183,7 @@ class Settings:
         self.motion = self.motion if self.motion in MOTION_CHOICES else MOTION_DEFAULT
         self.fine_modes = bool(self.fine_modes)
         self.chrome = bool(self.chrome)
+        self.transparent_background = bool(self.transparent_background)
         # A hand-edited config can carry a string, a number, or a list with
         # junk in it. Keep the strings, drop everything else, and de-duplicate
         # while preserving order — the list is a set with a stable reading

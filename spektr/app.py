@@ -1039,6 +1039,14 @@ class Spektr(App):
                 f"cycles modes/themes every {int(SHUFFLE_MODE_SECONDS)}s",
             ),
             Setting(
+                "transparent_background",
+                "background",
+                (False, True),
+                lambda v: "terminal (see-through)" if v else "theme (solid)",
+                viz.set_transparent_background,
+                "see-through shows terminal opacity; light themes want a light terminal",
+            ),
+            Setting(
                 "chrome",
                 "header + footer",
                 (True, False),
@@ -1112,6 +1120,7 @@ class Spektr(App):
             "sensitivity": s.sensitivity,
             "gate": s.gate,
             "chrome": s.chrome,
+            "transparent_background": s.transparent_background,
             "shuffle_scope": s.shuffle_scope,
         }
 
@@ -1184,6 +1193,10 @@ usage: spektr [options]
   --cells quadrant   draw the subcell modes as (q) — block elements only
                      instead of Unicode 16 octants — half the resolution,
                      works in every font. Saved, so set it once.
+  --background terminal
+                     leave the visualizer's empty cells to the terminal, so
+                     its opacity or acrylic shows through; --background theme
+                     paints the theme's colour again (the default). Saved.
   --version          print version and exit
   -h, --help         this text
 
@@ -1442,6 +1455,12 @@ def main() -> None:
             print(f"unknown cell geometry: {cells}   (octant or quadrant)")
             return
         settings.cells = cells
+    background = _arg(argv, "--background")
+    if background:
+        if background not in ("theme", "terminal"):
+            print(f"unknown background: {background}   (theme or terminal)")
+            return
+        settings.transparent_background = background == "terminal"
     # Set before any mode draws: the subcell packers read it, so a mode never
     # has to know which geometry it is being rendered into.
     from .render import set_cell_mode

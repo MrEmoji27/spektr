@@ -94,7 +94,10 @@ class AudioVisualizer(Widget):
         if self.settings.bands:
             self.analyser.set_bands(self.settings.bands)
 
-        self.palette = Palette()
+        self.settings.transparent_background = bool(
+            getattr(self.settings, "transparent_background", False)
+        )
+        self.palette = Palette(transparent=self.settings.transparent_background)
         self._themes = all_themes(self._config_dir)
         self._theme_name = self.settings.theme
 
@@ -459,6 +462,24 @@ class AudioVisualizer(Widget):
             self.refresh()
         return name
 
+    def set_transparent_background(self, on: bool) -> bool:
+        """Leave empty cells to the terminal, or paint the theme into them, live.
+
+        The settings panel's background row. The palette rebuilds its styles
+        on the spot and the cached frame is dropped, so the very next frame
+        goes out with the new backgrounds rather than one built under the old
+        styles. The widget and screen backgrounds are left as they are either
+        way: Textual draws a Line-API widget's lines as they are handed over,
+        so those colours never reach a visualizer cell — they only fill space
+        no widget covers.
+        """
+        on = bool(on)
+        self.settings.transparent_background = on
+        self.palette.set_transparent(on)
+        self._strips = None
+        self.refresh()
+        return on
+
     def restart_capture(self) -> None:
         self.capture.next_source()
 
@@ -741,12 +762,16 @@ class AudioVisualizer(Widget):
         # fraction of a step each frame instead of jumping a whole step — and the
         # per-column offset spreads the spectrum across the bands. _build runs
         # each frame, so the rainbow drifts live.
+        # Which backgrounds are the ramp's floor has to be decided on the
+        # mode's own indices: the animation below shifts them by column, after
+        # which index 0 no longer means "nothing here".
+        clear = bidx == 0 if bidx is not None and self.palette.transparent else None
         if getattr(self.palette.theme, "animated", False):
             phase = (time.monotonic() - self._t0) / RAINBOW_SECONDS_PER_CYCLE
             self.palette.set_phase(phase)
             cidx, bidx = self._animate_ramp(codes, cidx, bidx, w)
 
-        strips = make_strips(codes, cidx, self.palette, bidx)
+        strips = make_strips(codes, cidx, self.palette, bidx, clear)
         ms = (time.perf_counter() - t0) * 1000.0
         prev = self._mode_ms.get(m.name)
         self._mode_ms[m.name] = ms if prev is None else prev * 0.7 + ms * 0.3

@@ -794,6 +794,7 @@ def make_strips(
     cidx: np.ndarray,
     palette: Palette,
     bidx: np.ndarray | None = None,
+    clear: np.ndarray | None = None,
 ) -> list[Strip]:
     """``(h, w)`` codepoints + ramp indices -> one Strip per row.
 
@@ -806,16 +807,40 @@ def make_strips(
     visible banding on ``rainbow``, which walks a hue wheel. Blank cells are
     folded into whichever run they land in — a space has no visible
     foreground, so letting it inherit avoids splitting runs for nothing.
+
+    With ``palette.transparent`` no cell may name the theme's background, so
+    the terminal's own shows through. The foreground styles already carry
+    none. A two-colour grid is the other way a background reaches the
+    terminal, and there the floor of the ramp is what the modes paint where
+    there is nothing — the dark between Radial's wedges, the plate between
+    Chladni's nodal lines, the air around Maelstrom's dye. ``clear`` marks the
+    cells whose background is that floor and is left to the terminal; given
+    None it is every cell whose background index is 0. A caller that remaps
+    indices after the mode ran (the animated themes do) passes the mask it
+    took beforehand. A cleared cell whose foreground is the same index as its
+    background has nothing of its own to draw, so it goes out as a space.
+    Every other background is a real colour of the field and stays.
     """
     h, w = codes.shape
     styles = palette.styles
+    base = RAMP_STEPS
+    if bidx is not None and palette.transparent:
+        if clear is None:
+            clear = bidx == 0
+        if clear.any():
+            codes = np.where(clear & (cidx == bidx), np.int32(SPACE), codes)
+            # RAMP_STEPS is not a ramp index, so it is the cleared marker, and
+            # packing pairs on RAMP_STEPS + 1 keeps its keys from colliding
+            # with a real pair's.
+            bidx = np.where(clear, np.int32(RAMP_STEPS), bidx)
+            base = RAMP_STEPS + 1
     strips: list[Strip] = []
     # Per-palette *and* per-index: how far a run may drift is a question about
     # this theme's colours at the colour the run started on. See
     # Palette.rle_budget — one number for the whole ramp is decided by its
     # steepest segment, which on `classic` is 0 and switches the merge off
     # entirely.
-    budget = palette.rle_budget
+    budget = palette.rle_budget if base == RAMP_STEPS else palette.rle_budget_clear
     tol = budget.max()
 
     # One C-level decode for the whole grid beats h*w calls to chr(). At 240x60
@@ -913,23 +938,41 @@ def make_strips(
         & (np.abs(np.diff(b_arr)) <= budget[b_arr[:-1]])
     ):
         ms, mv, ends = _rle_merge_pair(
-            starts, f_arr.tolist(), b_arr.tolist(), w, budget.tolist()
+            starts, f_arr.tolist(), b_arr.tolist(), w, budget.tolist(), base
         )
     else:
         ms = starts
-        mv = (f_arr.astype(np.int32) * RAMP_STEPS + b_arr).tolist()
+        mv = (f_arr.astype(np.int32) * base + b_arr).tolist()
         ends = _row_clamped_ends(flat, h, w)
     row_end = w
     segs = []
-    for s, e, key in zip(ms, ends, mv):
-        if s >= row_end:
-            strips.append(Strip(segs, w))
-            segs = []
-            row_end += w
-        st = cache.get(key)
-        if st is None:
-            st = pair_style(key)
-        segs.append(Segment(text_all[s:e], st))
+    if base == RAMP_STEPS:
+        for s, e, key in zip(ms, ends, mv):
+            if s >= row_end:
+                strips.append(Strip(segs, w))
+                segs = []
+                row_end += w
+            st = cache.get(key)
+            if st is None:
+                st = pair_style(key)
+            segs.append(Segment(text_all[s:e], st))
+    else:
+        # Transparent, with cleared cells: a cleared background is the
+        # foreground style alone, which on a transparent palette names none.
+        for s, e, key in zip(ms, ends, mv):
+            if s >= row_end:
+                strips.append(Strip(segs, w))
+                segs = []
+                row_end += w
+            f, b = divmod(key, base)
+            if b == RAMP_STEPS:
+                st = styles[f]
+            else:
+                key = f * RAMP_STEPS + b
+                st = cache.get(key)
+                if st is None:
+                    st = pair_style(key)
+            segs.append(Segment(text_all[s:e], st))
     strips.append(Strip(segs, w))
     return strips
 
@@ -965,15 +1008,16 @@ def _rle_merge(starts, vals, w, budget):
     return ms, mv, me
 
 
-def _rle_merge_pair(starts, fvals, bvals, w, budget):
+def _rle_merge_pair(starts, fvals, bvals, w, budget, base=RAMP_STEPS):
     """Pair version of :func:`_rle_merge`.
 
     A run merges only if *both* channels stay within ``tol`` of the current
     run's start pair — AND, not OR: a pair that qualifies on one channel
-    alone can never merge.
+    alone can never merge. Values are packed ``f * base + b``; ``base`` is
+    one wider than the ramp when the background carries a cleared marker.
     """
     ms = [0]
-    mv = [fvals[0] * RAMP_STEPS + bvals[0]]
+    mv = [fvals[0] * base + bvals[0]]
     me: list[int] = []
     f0, b0 = fvals[0], bvals[0]
     fb, bb = budget[f0], budget[b0]
@@ -990,7 +1034,7 @@ def _rle_merge_pair(starts, fvals, bvals, w, budget):
         ):
             me.append(row_end if p >= row_end else p)
             ms.append(p)
-            mv.append(f * RAMP_STEPS + b)
+            mv.append(f * base + b)
             f0, b0 = f, b
             fb, bb = budget[f0], budget[b0]
             if p >= row_end:
