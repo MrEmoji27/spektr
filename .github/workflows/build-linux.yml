@@ -17,29 +17,27 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    container: quay.io/pypa/manylinux_2_28_x86_64
 
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-
       - name: Install system audio libraries
-        # The frozen binary loads these at runtime via cffi/ctypes rather than
-        # bundling them, so they must exist on the build host for analysis to
-        # see them — and on the user's machine to run. soundcard.pulseaudio
-        # dlopens libpulse; sounddevice/PortAudio is the fallback capture path.
+        # AlmaLinux 8 inside the manylinux image: dnf, not apt. PortAudio comes
+        # from EPEL. Both are needed at build time; the user's machine supplies
+        # them at run time.
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libpulse-dev portaudio19-dev
+          dnf install -y epel-release
+          dnf install -y pulseaudio-libs-devel portaudio-devel
 
       - name: Install dependencies
+        # The image ships CPython builds under /opt/python; cp312-cp312 is the
+        # one the release is built with.
         run: |
-          python -m pip install --upgrade pip
-          pip install "pyinstaller>=6.3"
-          pip install -e ".[dev]"
+          echo "/opt/python/cp312-cp312/bin" >> $GITHUB_PATH
+          /opt/python/cp312-cp312/bin/python -m pip install --upgrade pip
+          /opt/python/cp312-cp312/bin/python -m pip install "pyinstaller>=6.3"
+          /opt/python/cp312-cp312/bin/python -m pip install -e ".[dev]"
 
       - name: Run the test suites
         # Same tests as the Windows build — none of them need an audio device.
