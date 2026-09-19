@@ -43,3 +43,69 @@ def test_settings_built_in_code_save_exactly_their_fields(tmp_path):
     saved = _read(tmp_path)
     assert saved["mode"] == "Flame"
     assert set(saved) == {f for f in config.Settings.__dataclass_fields__}
+
+
+import shutil  # noqa: E402
+
+import pytest  # noqa: E402
+
+from spektr import loadouts, palette, plugins  # noqa: E402
+import spektr.modes as registry  # noqa: E402
+
+FIXTURE = Path(__file__).resolve().parent / "fixtures" / "config-0.5.0"
+
+
+@pytest.fixture
+def folder(tmp_path):
+    """A copy, so a test that saves never edits the fixture."""
+    dst = tmp_path / "spektr"
+    shutil.copytree(FIXTURE, dst)
+    return dst
+
+
+def test_every_0_5_0_setting_comes_through(folder):
+    raw = json.loads((FIXTURE / "config.json").read_text(encoding="utf-8"))
+    settings = config.load(folder)
+    for name, value in raw.items():
+        assert getattr(settings, name) == value, name
+
+
+def test_saving_a_0_5_0_config_loses_nothing(folder):
+    before = json.loads((folder / "config.json").read_text(encoding="utf-8"))
+    config.save(config.load(folder), folder)
+    after = json.loads((folder / "config.json").read_text(encoding="utf-8"))
+    for name, value in before.items():
+        assert after[name] == value, name
+
+
+def test_every_mode_a_0_5_0_config_names_still_exists(folder):
+    settings = config.load(folder)
+    named = {settings.mode, *settings.loadout}
+    for modes in loadouts.load(folder).values():
+        named.update(modes)
+    missing = sorted(n for n in named if registry.get(n) is None)
+    assert not missing, f"0.5.0 configs name modes that are gone: {missing}"
+
+
+def test_the_0_5_0_loadouts_load(folder):
+    assert loadouts.load(folder) == {
+        "calm": ["Bars", "Auroras", "Star Trails"],
+        "loud": ["Tunnel", "Crosscurrent", "JP Drift", "Fireworks"],
+    }
+
+
+def test_a_0_5_0_user_theme_loads(folder):
+    themes = palette.all_themes(folder)
+    assert "solarized" in themes
+    assert themes["solarized"].low.lower() == "#859900"
+
+
+def test_a_0_5_0_plugin_loads_once_trusted(folder):
+    ok, message = plugins.trust("nightrider", folder)
+    assert ok, message
+    try:
+        loaded = {p.name: p for p in plugins.load_all(folder)}
+        assert loaded["nightrider"].loaded, loaded["nightrider"].error
+        assert registry.get("Nightrider") is not None
+    finally:
+        registry.unregister_plugin("nightrider")

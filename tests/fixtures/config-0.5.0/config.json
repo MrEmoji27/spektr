@@ -1,0 +1,16 @@
+{
+  "mode": "Tunnel",
+  "theme": "hot-pink",
+  "sensitivity": 1.0,
+  "gate": 0.001,
+  "fps": 0,
+  "chrome": false,
+  "bands": 16,
+  "motion": "glide",
+  "transparent_background": false,
+  "shuffle": false,
+  "shuffle_scope": "both",
+  "cells": "octant",
+  "fine_modes": false,
+  "loadout": ["Bars", "Tunnel", "Flame", "JP Bars"]
+}
