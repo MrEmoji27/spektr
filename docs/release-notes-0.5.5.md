@@ -61,8 +61,9 @@ alters a picture fails the build. A 0.5.0 config folder — settings, loadouts,
 a theme, a plugin — has to survive an upgrade untouched, and every flag and
 key is pinned too.
 
-Behind that, the project is being reorganised into clear parts, and memory is
-capped: only the five most recently used visuals stay loaded. *Planned.*
+Behind that, the project is being reorganised into clear parts. Audio capture
+and analysis now live together behind the same compatibility surface; the
+remaining layers and five-mode memory cap are still planned.
 
 ### For plugin authors
 
