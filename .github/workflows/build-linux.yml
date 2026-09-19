@@ -59,6 +59,12 @@ jobs:
         # Same tests as the Windows build — none of them need an audio device.
         # See that workflow for why the two script-style files are named on
         # top of the pytest run.
+        env:
+          # The golden fingerprints were recorded on a machine with no AVX-512,
+          # and a runner whose numpy dispatches AVX-512 kernels rounds the last
+          # bit differently, which seven modes then compare unequal on. Pin the
+          # kernels to the recorded baseline so the comparison means something.
+          NPY_DISABLE_CPU_FEATURES: "AVX512F,AVX512CD,AVX512_SKX,AVX512_CLX,AVX512_CNL,AVX512_ICL,AVX512_SPR"
         run: |
           python -m pytest tests/ -q
           python tests/test_app.py
