@@ -1,0 +1,74 @@
+  Bars       the classic — ten-ish bars with peak markers
+  Bricks     chunky, no partial cells
+  Columns    gapless, interpolated across the full width
+  Ladder     segmented LED stack
+  Mirror     grows out from the centre line
+  Readout    scrolling numeric ticker, band levels as plain digits
+  Stereo     per-band L/R meters, mirrored from centre
+  Wave       smoothed waveform
+  Scope      trigger-synced oscilloscope — the trace holds still
+  Scope (o)  the same trace as a continuous stroke — needs a terminal that draws Unicode 16 octants  (opt-in — settings, or --mode)
+  ECG        scrolling trace, like a heart monitor
+  ECG (o)    the same scrolling trace, drawn solid — needs a terminal that draws Unicode 16 octants  (opt-in — settings, or --mode)
+  Strings    plucked strings, bowed by their own band
+  Helix      two strands rotating around a shared axis, split by true L/R phase
+  Gonio      stereo phase scope with phosphor trail
+  Scatter    density sparkle, thicker where it's loud
+  Flame      fire, licking upward from each band
+  Pulse      a radial blob with shockwaves thrown off the beat
+  Arcs       hollow rings, one per band, pushed out by level
+  Bubbles    bubbles from the low end, popping at the top
+  Radial     the spectrum wrapped into a circle
+  Radial (o) the same ring as a solid field at two colours a cell — needs a terminal that draws Unicode 16 octants  (opt-in — settings, or --mode)
+  Sonar      one sweep, not the whole spectrum — returns fade like CRT phosphor
+  Sonar (o)  the same sweep drawn solid instead of stippled — needs a terminal that draws Unicode 16 octants  (opt-in — settings, or --mode)
+  Orbit      bodies on real elliptical orbits; loud bands swing out
+  Fireworks  beat-triggered launches, bursts, and fall
+  Dune       sand piles up by band, avalanching past a threshold
+  Murmuration a flock wheeling and scattering with the beat
+  Retro      sunset grid, with the spectrum as the horizon
+  Auroras    a light ribbon whose lower rim rides the spectrum
+  Keys       a lit keyboard; struck bands scroll away as falling notes
+  Tunnel     flying down a pipe, ribbed by the beat
+  Tunnel In  rings thrown out of the centre on the beat, rushing past you
+  Crosscurrent a spinning tunnel of two ring streams, rushing out and drawn in, flickering on the beat
+  Warp       starfield, accelerating with the music
+  Matrix     digital rain, falling faster when it's loud
+  Boot       an old PC waking up — BIOS POST, a boot log, a blinking cursor
+  Spectro    scrolling waterfall — frequency up, time across
+  Plasma     solid colour field, warped by the spectrum
+  Plasma (o) the same field at eight samples a cell instead of two — needs Unicode 16 octants  (opt-in — settings, or --mode)
+  Chladni    nodal interference pattern, plate modes set by the dominant pitch
+  Chladni (o) the same plate at eight samples a cell, nodal lines antialiased — needs Unicode 16 octants  (opt-in — settings, or --mode)
+  Chladni Flow a plate figure melting continuously from one resonance into the next
+  Chladni Flow (o) the melting plate at eight samples a cell — needs Unicode 16 octants  (opt-in — settings, or --mode)
+  Chladni Extreme a plate driven past its modes - morphs, escalates, and snaps on the beat
+  Chladni Extreme (o) the overdriven plate at eight samples a cell — needs Unicode 16 octants  (opt-in — settings, or --mode)
+  VFD        vacuum-fluorescent bargraph with phosphor afterglow
+  Needle     analogue VU — one sweeping needle, one red zone
+  VU         big L/R LED meters with peak hold
+  Kaleidoscope a mirrored tube of stained glass — the wedge count follows the spectrum, beats shake the chamber
+  Kaleidoscope (o) the same tube at four times the vertical detail — needs a terminal that draws Unicode 16 octants  (opt-in — settings, or --mode)
+  Kaleidoscope Ultra (o) the tube with its seams antialiased — the smoothest a terminal gets  (opt-in — settings, or --mode)
+  Dither     the spectrum printed as a newspaper halftone, in one-bit crosshatch
+  Dither Storm Dither's one-bit crosshatch, but the field moves — each band drives its own wave, and beats throw rings through it
+  Dither Storm Extreme Dither Storm with nothing holding it back — hits pile up and a dense passage blows the field to white
+  Valentine  a heart that beats with the track, trailing smaller ones upward
+  Valentine (o) the same heart drawn solid instead of stippled — needs a terminal that draws Unicode 16 octants  (opt-in — settings, or --mode)
+  Locket     an outlined heart, pulsing rings of hearts outward on the beat
+  Maelstrom  a real fluid sim, stirred by the music
+  Maelstrom (o) the same fluid as a solid field at two colours a cell — needs a terminal that draws Unicode 16 octants  (opt-in — settings, or --mode)
+  Vinyl      a record whose grooves light up as a radial spectrum
+  Rain       rain on the glass, falling harder when it's loud
+  Snow       snowfall in three planes, thickening and gusting with the track
+  Ember      a coal bed burning by band, sparks rising off the hot spots
+  Swell      an open sea in half-tones — built for the Android terrain view
+  Terra      a bass-lifted mountain range, hills raised by hits — for terrain view
+  Shooting Star a night sky, with meteors thrown from a drifting radiant on the beat
+  Constellations beats draw lines between fixed stars, then the figures fade
+  Star Trails a long exposure: the sky turns, and the arcs it leaves are the show
+  Supernova  a mostly dark sky, waiting for the one hit worth a catastrophe
+  JP Bars    a segmented LED meter whose crest peels off and rises, like notes leaving a key
+  JP Drift   the meter as a sandpile — bulbs stack up, and pour into their neighbours on the beat
+  JP Pulse   the meter bent into a ring — a spoke of bulbs per band, chased on the beat
+  None       nothing at all
