@@ -243,7 +243,12 @@ def load(config_dir: Path | None = None) -> Settings:
         if not isinstance(raw, dict):
             return Settings()
         known = {f.name for f in fields(Settings)}
-        return Settings(**{k: v for k, v in raw.items() if k in known}).clamp()
+        settings = Settings(**{k: v for k, v in raw.items() if k in known}).clamp()
+        # Keys this version does not know are kept and written back by save(),
+        # so a setting added by a later version survives this one, and one
+        # this version adds survives a downgrade and an upgrade again.
+        settings._extra = {k: v for k, v in raw.items() if k not in known}
+        return settings
     except Exception:
         return Settings()
 
@@ -252,6 +257,7 @@ def save(settings: Settings, config_dir: Path | None = None) -> None:
     try:
         path = _path(config_dir)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(asdict(settings), indent=2), encoding="utf-8")
+        data = {**getattr(settings, "_extra", {}), **asdict(settings)}
+        path.write_text(json.dumps(data, indent=2), encoding="utf-8")
     except Exception:
         pass  # a read-only home should never take the visualiser down
