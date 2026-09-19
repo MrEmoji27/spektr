@@ -59,6 +59,9 @@ display for the desk. It is a second screen, not a second product: see
 > ./spektr
 > ```
 >
+> Built against glibc 2.28, so it runs on Ubuntu 18.10 and newer, Debian 10 and newer,
+> Fedora 29 and newer, and anything else of that age or later.
+>
 > You'll need the system audio libs it loads at run time: `libpulse.so` (PipeWire provides
 > it via `pipewire-pulse`) and PortAudio. Arch: `sudo pacman -S portaudio`. Debian/Ubuntu:
 > `sudo apt install libportaudio2`. Fedora: `sudo dnf install portaudio`. spektr tells you
