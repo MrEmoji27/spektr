@@ -424,8 +424,9 @@ def ratchet(cost: dict[str, float]) -> tuple[list[str], dict[str, float]]:
     #
     # What this deliberately cannot catch is everything getting slower
     # together — a regression in ``make_strips`` would lift all 52 costs and
-    # leave the ratios untouched. That is what ``strips_equiv.py`` is for, and
-    # what the absolute ``BUDGET_MS`` check above still backstops.
+    # leave the ratios untouched. The absolute ``BUDGET_MS`` check above is
+    # what backstops that; the golden suite (tests/golden.py) checks that
+    # make_strips draws the same, not how fast.
     ref = statistics.median(cost.values())
     if ref <= 0:
         return ["median mode cost is zero, which cannot be right"], {}

@@ -535,6 +535,10 @@ python tests/onset_score.py  # scores the real onset detector against the corpus
 python tests/test_audit.py   # logic audit: mutation, animation, reactivity, leaks
 ```
 
+`tests/test_golden_modes.py` checks that every built-in mode draws exactly what it drew
+when `tests/golden/modes.json` was recorded. A change meant to alter a picture regenerates
+it with `python tests/golden.py --update`, and says so in its commit message.
+
 Benchmark method, what each gate actually gates, and their current state:
 **[docs/development.md](docs/development.md)**. Building the Windows exe and installer:
 **[packaging/README.md](https://github.com/MrEmoji27/spektr/blob/main/packaging/README.md)**.
