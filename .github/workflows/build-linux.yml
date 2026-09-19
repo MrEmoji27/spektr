@@ -111,3 +111,27 @@ jobs:
             exit 1
           }
           gh release upload "$TAG" dist/spektr --repo "$GITHUB_REPOSITORY" --clobber
+
+  old-distribution:
+    # Docker is available on the runner, not inside the build job's container,
+    # so the pre-flight check is a job of its own over the built artifact.
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: spektr-linux
+          path: dist
+
+      - name: Check it starts on an old distribution
+        # The point of the manylinux build. Ubuntu 20.04 has glibc 2.31; if the
+        # binary demands anything newer this fails here rather than on a user's
+        # machine.
+        run: |
+          chmod +x dist/spektr
+          docker run --rm -v "$PWD/dist:/dist" ubuntu:20.04 bash -c "
+            apt-get update -qq &&
+            apt-get install -y -qq libportaudio2 libpulse0 >/dev/null &&
+            /dist/spektr --version &&
+            /dist/spektr --list-modes | head -3"
