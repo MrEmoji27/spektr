@@ -138,6 +138,9 @@ def main() -> int:
     ap.add_argument("--fps", type=int, default=60)
     ap.add_argument("--seconds", type=float, default=10.0)
     ap.add_argument("--wav", type=Path, help="16-bit WAV to replay instead of the synthetic loop")
+    ap.add_argument("--repeats", type=int, default=1,
+                    help="run each case this many times and report the median; "
+                         "anything measured on a busy machine needs 3 or more")
     args = ap.parse_args()
 
     if args.mode:
@@ -149,12 +152,18 @@ def main() -> int:
     print(f"{'mode':<10} {'size':>8} {'fps':>4} {'cpu%core':>9} "
           f"{'p50 ms':>7} {'p95 ms':>7} {'p99 ms':>7} {'missed':>7}")
     for mode, w, h in cases:
-        blocks = (wav_blocks(args.wav, args.seconds + 2) if args.wav
-                  else synth_blocks(args.seconds + 2))
-        r = asyncio.run(measure(mode, w, h, args.fps, args.seconds, blocks))
-        print(f"{r['mode']:<10} {r['size']:>8} {r['fps']:>4} {r['cpu']:>8.1f}% "
-              f"{r['p50']:>7.2f} {r['p95']:>7.2f} {r['p99']:>7.2f} "
-              f"{r['missed']:>4}/{r['asked']}")
+        runs = []
+        for _ in range(max(1, args.repeats)):
+            blocks = (wav_blocks(args.wav, args.seconds + 2) if args.wav
+                      else synth_blocks(args.seconds + 2))
+            runs.append(asyncio.run(measure(mode, w, h, args.fps, args.seconds, blocks)))
+        med = {k: statistics.median([r[k] for r in runs])
+               for k in ("cpu", "p50", "p95", "p99", "missed", "asked")}
+        spread = max(r["cpu"] for r in runs) - min(r["cpu"] for r in runs)
+        note = f"  (spread {spread:.0f}pp over {len(runs)} runs)" if len(runs) > 1 else ""
+        print(f"{mode:<10} {w}x{h:<5} {args.fps:>4} {med['cpu']:>8.1f}% "
+              f"{med['p50']:>7.2f} {med['p95']:>7.2f} {med['p99']:>7.2f} "
+              f"{med['missed']:>4.0f}/{med['asked']:.0f}{note}")
     return 0
 
 
