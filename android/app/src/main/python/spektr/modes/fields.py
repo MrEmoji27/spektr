@@ -1180,11 +1180,11 @@ def _kaleido(ctx: Ctx, cells: str):
     and the fact that turning the tube rotates the glass behind fixed mirror
     seams.
 
-    **The mirrors.** A ring of 8, 12, 16 or 20 of them, eased by the spectral
+    **The mirrors.** A ring of 8, 12 or 16 of them, eased by the spectral
     centroid and snapped on a beat, each showing the same source slice
     reflected left-right alternately. The slice narrows as the count rises
     (:data:`_KAL_SECTOR_K`), which is what a real tube does and what keeps a
-    piece of glass the same shape whether it is repeated eight times or twenty. Every dot's angle is wrapped into its
+    piece of glass the same shape whether it is repeated eight times or sixteen. Every dot's angle is wrapped into its
     sector, then even sectors read the source forward and odd sectors read it
     reversed, so adjacent sectors mirror across the shared boundary and the
     picture is symmetric about every mirror line. Only a multiple of four puts
