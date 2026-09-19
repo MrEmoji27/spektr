@@ -130,15 +130,34 @@ def _feed_strips(h: "hashlib._Hash", out: tuple, palette: Palette) -> None:
             h.update(str(seg.style).encode("utf-8"))
 
 
+#: Modes whose glyphs are an ordered threshold over a gradient, where a cell
+#: sits exactly on the threshold and the last bit of a float32 decides which
+#: subcells light. That bit is not the same on every CPU, so the pattern is
+#: reproducible on one machine but not across machines: measured here, a
+#: relative change of 1e-7 in the input moves 9% of the glyph cells while
+#: moving no colour at all.
+#:
+#: They are still pinned whole — glyphs included — on the machine that
+#: recorded the file, which is where a release is checked. Anywhere else,
+#: only their colours are compared: coarser, because in Ultra the colour
+#: comes from the flat field and the glyphs from the interpolated one, so a
+#: change to the antialiasing alone would not show. A real change does show:
+#: 1% more level moves 17% of the colours.
+PLATFORM_SENSITIVE = {"Kaleidoscope Ultra (o)"}
+
+#: Key under which the recording platform is stored in the golden file.
+PLATFORM_KEY = "_platform"
+
+
 def builtin_modes() -> list:
     return [m for m in M.MODES if m.plugin is None]
 
 
-def key(mode_name: str, case: Case) -> str:
-    return f"{mode_name}|{case.id}"
+def key(mode_name: str, case: Case, colours_only: bool = False) -> str:
+    return f"{mode_name}|{case.id}" + ("|colours" if colours_only else "")
 
 
-def fingerprint(mode, case: Case) -> str:
+def fingerprint(mode, case: Case, colours_only: bool = False) -> str:
     """SHA-256 over what ``mode`` draws on the sampled frames of ``case``."""
     render.set_cell_mode(case.cells)
     try:
@@ -153,20 +172,27 @@ def fingerprint(mode, case: Case) -> str:
             except Exception as exc:  # a crash is an output too
                 return f"error: {type(exc).__name__}"
             if i in SAMPLED:
-                for arr in out:
-                    _feed(h, arr)
-                _feed_strips(h, out, palette)
+                if colours_only:
+                    h.update(str(np.asarray(out[0]).shape).encode())
+                    for arr in out[1:]:
+                        _feed(h, arr)
+                else:
+                    for arr in out:
+                        _feed(h, arr)
+                    _feed_strips(h, out, palette)
         return h.hexdigest()
     finally:
         render.set_cell_mode("octant")
 
 
 def run_all() -> dict[str, str]:
-    return {
-        key(m.name, case): fingerprint(m, case)
-        for m in builtin_modes()
-        for case in CASES
-    }
+    out = {PLATFORM_KEY: sys.platform}
+    for m in builtin_modes():
+        for case in CASES:
+            out[key(m.name, case)] = fingerprint(m, case)
+            if m.name in PLATFORM_SENSITIVE:
+                out[key(m.name, case, True)] = fingerprint(m, case, True)
+    return out
 
 
 def load_golden() -> dict[str, str]:
