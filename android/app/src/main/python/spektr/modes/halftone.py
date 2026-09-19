@@ -598,7 +598,17 @@ def _dither_storm(ctx: Ctx, extreme: bool = False):
         np.clip(field, 0.0, 1.0, out=lit_buf)
         d = float(lit_buf.mean())
         inside = float(np.count_nonzero((field > 0.0) & (field < 1.0))) / field.size
-        field += np.float32((target - d) / max(inside, 0.20))
+        # The Newton-ish density step divides by the fraction of dots a small
+        # field shift can still change. When the field is uniform at a boundary
+        # — every band silent, so the field is all-black — ``inside`` is 0 and
+        # the 0.20 floor would manufacture a move of ``(target - d) / 0.20`` =
+        # +0.30, lighting ~30% of a silent field against the 0.06 rest density
+        # the mode documents. With nothing in transition, a uniform shift moves
+        # *every* dot, so the step is just ``target - d`` and lands on the
+        # target directly. Any audio-driven field keeps ``inside`` comfortably
+        # above the floor, so this branch never runs while music is playing.
+        field += np.float32(
+            (target - d) / max(inside, 0.20) if inside > 0 else (target - d))
 
     # The onset inversion lives here: while inv > 0 the tile is lerped toward
     # its own inverse, so the field's troughs light instead of its crests and
