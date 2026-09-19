@@ -18,6 +18,15 @@ jobs:
   build:
     runs-on: ubuntu-latest
     container: quay.io/pypa/manylinux_2_28_x86_64
+    env:
+      # The job runs as root inside the container while the runner checks the
+      # workspace out as its own user, so git refuses the repository as not
+      # owned by us and the two suites that call `git ls-files` fail with
+      # exit 128. These set safe.directory for every step's git, whichever
+      # config file that step turns out to read.
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: "safe.directory"
+      GIT_CONFIG_VALUE_0: "*"
 
     steps:
       - uses: actions/checkout@v4
