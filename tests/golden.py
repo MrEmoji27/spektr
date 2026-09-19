@@ -63,11 +63,18 @@ CASES: tuple[Case, ...] = tuple(
 ) + (
     Case("beat", 80, 24, theme="flexoki-light"),
     Case("beat", 80, 24, cells="quadrant"),
+    # Digital silence, with the noise gate shut — a state the other signals
+    # never reach, and one modes get wrong in their own way. Dither Storm
+    # drew five times its documented rest density here and no test saw it.
+    Case("silent", 80, 24),
+    Case("silent", 200, 50),
 )
 
 
 def _bands(signal: str, t: float) -> np.ndarray:
     n = N_BANDS
+    if signal == "silent":
+        return np.zeros(n)
     if signal == "quiet":
         return np.full(n, 0.04)
     if signal == "loud":
@@ -106,7 +113,7 @@ def _ctx(case: Case, i: int, palette: Palette, state: dict, onset_seq: int) -> t
     ctx = Ctx(
         w=case.w, h=case.h, bands=b, peaks=b, bands_l=b, bands_r=b,
         wave=wave, stereo=np.stack((wave, wave), axis=1),
-        frame=i, t=t, dt=DT, energy=level, silent=False,
+        frame=i, t=t, dt=DT, energy=level, silent=case.signal == "silent",
         palette=palette, state=state, **rhythm,
     )
     return ctx, onset_seq
