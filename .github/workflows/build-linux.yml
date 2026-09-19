@@ -40,13 +40,20 @@ jobs:
           dnf install -y pulseaudio-libs-devel portaudio-devel
 
       - name: Install dependencies
-        # The image ships CPython builds under /opt/python; cp312-cp312 is the
-        # one the release is built with.
+        # The image's /opt/python builds are linked statically and PyInstaller
+        # cannot freeze those, so this uses the container's own shared
+        # python3.12 (AlmaLinux 8, glibc 2.28). `python` points at it so the
+        # later steps are unchanged; the distribution marks it externally
+        # managed, hence PIP_BREAK_SYSTEM_PACKAGES.
+        env:
+          PIP_BREAK_SYSTEM_PACKAGES: "1"
         run: |
-          echo "/opt/python/cp312-cp312/bin" >> $GITHUB_PATH
-          /opt/python/cp312-cp312/bin/python -m pip install --upgrade pip
-          /opt/python/cp312-cp312/bin/python -m pip install "pyinstaller>=6.3"
-          /opt/python/cp312-cp312/bin/python -m pip install -e ".[dev]"
+          dnf install -y python3.12 python3.12-devel python3.12-pip
+          echo "/usr/bin" >> $GITHUB_PATH
+          ln -sf /usr/bin/python3.12 /usr/local/bin/python
+          /usr/bin/python3.12 -m pip install --upgrade pip
+          /usr/bin/python3.12 -m pip install "pyinstaller>=6.3"
+          /usr/bin/python3.12 -m pip install -e ".[dev]"
 
       - name: Run the test suites
         # Same tests as the Windows build — none of them need an audio device.
