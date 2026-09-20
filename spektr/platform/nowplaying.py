@@ -28,6 +28,22 @@ class Track:
         return f"{self.artist} — {self.title}" if self.artist else self.title
 
 
+def _reader(name: str):
+    """The per-OS reader, through this module so a patched one is honoured.
+
+    Tests replace ``nowplaying._windows``; resolving the name here rather than
+    importing the OS module directly means such a patch is still what runs.
+    """
+    import sys as _sys
+    return getattr(_sys.modules[__name__], name)
+
+
+def _os(name: str):
+    """The per-OS reader, imported only on the OS it belongs to."""
+    from importlib import import_module
+    return getattr(import_module(f".{name}", __package__), f"_{'nowplaying' if name == 'macos' else name}")
+
+
 async def current() -> Track | None:
     """The track the OS says is playing right now, or ``None``.
 
@@ -41,86 +57,22 @@ async def current() -> Track | None:
 
     try:
         if sys.platform == "win32":
-            return await asyncio.wait_for(_windows(), timeout=3.0)
+            return await asyncio.wait_for(_reader("_windows")(), timeout=3.0)
         if sys.platform.startswith("linux"):
-            return await asyncio.wait_for(_linux(), timeout=3.0)
+            return await asyncio.wait_for(_reader("_linux")(), timeout=3.0)
     except Exception:
         pass
     return None
 
 
-async def _windows() -> Track | None:
-    """System Media Transport Controls — what the lock screen's media
-    overlay and the keyboard's play/pause key already talk to."""
-    try:
-        from winrt.windows.media.control import (
-            GlobalSystemMediaTransportControlsSessionManager as SessionManager,
-        )
-    except ImportError:
-        return None
-
-    manager = await SessionManager.request_async()
-    session = manager.get_current_session()
-    if session is None:
-        return None
-
-    info = await session.try_get_media_properties_async()
-    title = (info.title or "").strip()
-    if not title:
-        return None
-    return Track(title=title, artist=(info.artist or "").strip())
 
 
-async def _linux() -> Track | None:
-    """MPRIS over the session D-Bus. Several players can be registered at
-    once (a browser tab, a music app); the first one actually *playing* wins
-    — a paused player from yesterday shouldn't outrank what's live now."""
-    try:
-        from dbus_next import BusType
-        from dbus_next.aio import MessageBus
-    except ImportError:
-        return None
+def __getattr__(name: str):
+    """``_windows`` and ``_linux`` still resolve, from their own modules.
 
-    bus = await MessageBus(bus_type=BusType.SESSION).connect()
-    try:
-        dbus_intro = await bus.introspect("org.freedesktop.DBus", "/org/freedesktop/DBus")
-        dbus_obj = bus.get_proxy_object(
-            "org.freedesktop.DBus", "/org/freedesktop/DBus", dbus_intro
-        )
-        names = await dbus_obj.get_interface("org.freedesktop.DBus").call_list_names()
-        players = [n for n in names if n.startswith("org.mpris.MediaPlayer2.")]
-        if not players:
-            return None
-
-        fallback: Track | None = None
-        for name in players:
-            track, playing = await _mpris_player(bus, name)
-            if track is None:
-                continue
-            if playing:
-                return track
-            if fallback is None:
-                fallback = track
-        return fallback
-    finally:
-        bus.disconnect()
-
-
-async def _mpris_player(bus, name: str) -> tuple[Track | None, bool]:
-    """One MPRIS player's current track and whether it's actually playing."""
-    intro = await bus.introspect(name, "/org/mpris/MediaPlayer2")
-    obj = bus.get_proxy_object(name, "/org/mpris/MediaPlayer2", intro)
-    props = obj.get_interface("org.freedesktop.DBus.Properties")
-
-    status = await props.call_get("org.mpris.MediaPlayer2.Player", "PlaybackStatus")
-    playing = status.value == "Playing"
-
-    meta = await props.call_get("org.mpris.MediaPlayer2.Player", "Metadata")
-    fields = meta.value
-    title_v = fields.get("xesam:title")
-    artist_v = fields.get("xesam:artist")
-    title = (title_v.value or "").strip() if title_v else ""
-    if not title:
-        return None, playing
-    artist = ", ".join(artist_v.value) if artist_v and artist_v.value else ""
-    return Track(title=title, artist=artist), playing
+    They moved to platform/windows.py and platform/linux.py; tests and any
+    caller that reached for them here keep working.
+    """
+    if name in ("_windows", "_linux"):
+        return _os(name[1:])
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
