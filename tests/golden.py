@@ -137,39 +137,73 @@ def _feed_strips(h: "hashlib._Hash", out: tuple, palette: Palette) -> None:
             h.update(str(seg.style).encode("utf-8"))
 
 
-#: Modes whose glyphs are an ordered threshold over a gradient, where a cell
-#: sits exactly on the threshold and the last bit of a float32 decides which
-#: subcells light. That bit is not the same on every CPU, so the pattern is
-#: reproducible on one machine but not across machines: measured here, a
-#: relative change of 1e-7 in the input moves 9% of the glyph cells while
-#: moving no colour at all.
-#:
-#: They are still pinned whole — glyphs included — on the machine that
-#: recorded the file, which is where a release is checked. Anywhere else,
-#: only their colours are compared: coarser, because in Ultra the colour
-#: comes from the flat field and the glyphs from the interpolated one, so a
-#: change to the antialiasing alone would not show. A real change does show:
-#: 1% more level moves 17% of the colours.
-PLATFORM_SENSITIVE = {"Kaleidoscope Ultra (o)"}
-
 #: Key under which the recording platform is stored in the golden file.
 PLATFORM_KEY = "_platform"
+
+#: How much of a picture may differ before a foreign platform calls it a
+#: change, as a share of its cells.
+#:
+#: Exact hashes cannot hold across machines. A mode that decides a cell by
+#: comparing a float against a threshold lands on the other side of it when
+#: the maths library rounds the last bit differently, and Windows and Linux
+#: do. Measured on the CI runner against a file recorded here: seven modes
+#: differed, all of them trig-heavy (Radial, Crosscurrent, the Kaleidoscope
+#: family, JP Pulse), while the same modes are stable to a 1e-7 nudge of
+#: their input on one machine.
+#:
+#: So the machine that recorded the file still checks every cell, which is
+#: where a release is cut. Everywhere else the picture is compared by its
+#: shape: how much is lit, where the colour sits, and how the ramp is spread.
+#: A real change moves those far past this bar — a 1% louder signal moves 17%
+#: of the colours — while a rounding difference moves a fraction of a percent.
+TOLERANCE = 0.02
 
 
 def builtin_modes() -> list:
     return [m for m in M.MODES if m.plugin is None]
 
 
-def key(mode_name: str, case: Case, colours_only: bool = False) -> str:
-    return f"{mode_name}|{case.id}" + ("|colours" if colours_only else "")
+def key(mode_name: str, case: Case) -> str:
+    return f"{mode_name}|{case.id}"
 
 
-def fingerprint(mode, case: Case, colours_only: bool = False) -> str:
-    """SHA-256 over what ``mode`` draws on the sampled frames of ``case``."""
+def _summary(arrays: tuple) -> list:
+    """A picture's shape, in numbers a rounding difference cannot move.
+
+    Lit cells, then for each layer its mean and a sixteen-bucket histogram of
+    the values in it. Enough to catch a mode drawing something else; blind to
+    a handful of cells landing either side of a threshold.
+    """
+    out: list[float] = []
+    for arr in arrays:
+        a = np.asarray(arr).astype(np.float64).ravel()
+        out.append(float(np.count_nonzero(a)) / a.size)
+        # Shares only, never raw values: a mean over codepoints moves by half
+        # a unit when twenty cells land either side of a threshold, which is
+        # exactly the difference this comparison exists to ignore.
+        lo, hi = float(a.min()), float(a.max())
+        hist = np.histogram(a, bins=16, range=(lo, hi if hi > lo else lo + 1.0))[0]
+        out.extend((hist / a.size).tolist())
+    return [round(v, 6) for v in out]
+
+
+def differs(recorded: list, measured: list) -> float:
+    """How far two summaries are apart, on their worst number."""
+    if len(recorded) != len(measured):
+        return 1.0
+    return max(abs(a - b) for a, b in zip(recorded, measured))
+
+
+def measure(mode, case: Case) -> tuple[str, list]:
+    """What ``mode`` draws on the sampled frames of ``case``.
+
+    Returns the exact fingerprint and the tolerant summary beside it.
+    """
     render.set_cell_mode(case.cells)
     try:
         palette = Palette(BUILTIN[case.theme])
         h = hashlib.sha256()
+        shape: list = []
         state: dict = {}
         onset_seq = 0
         for i in range(FRAMES):
@@ -177,28 +211,23 @@ def fingerprint(mode, case: Case, colours_only: bool = False) -> str:
             try:
                 out = mode.fn(ctx)
             except Exception as exc:  # a crash is an output too
-                return f"error: {type(exc).__name__}"
+                return f"error: {type(exc).__name__}", []
             if i in SAMPLED:
-                if colours_only:
-                    h.update(str(np.asarray(out[0]).shape).encode())
-                    for arr in out[1:]:
-                        _feed(h, arr)
-                else:
-                    for arr in out:
-                        _feed(h, arr)
-                    _feed_strips(h, out, palette)
-        return h.hexdigest()
+                for arr in out:
+                    _feed(h, arr)
+                _feed_strips(h, out, palette)
+                shape.extend(_summary(out))
+        return h.hexdigest(), shape
     finally:
         render.set_cell_mode("octant")
 
 
-def run_all() -> dict[str, str]:
-    out = {PLATFORM_KEY: sys.platform}
+def run_all() -> dict:
+    out: dict = {PLATFORM_KEY: sys.platform}
     for m in builtin_modes():
         for case in CASES:
-            out[key(m.name, case)] = fingerprint(m, case)
-            if m.name in PLATFORM_SENSITIVE:
-                out[key(m.name, case, True)] = fingerprint(m, case, True)
+            digest, shape = measure(m, case)
+            out[key(m.name, case)] = [digest, shape]
     return out
 
 
@@ -215,7 +244,8 @@ def main() -> int:
         parser.print_help()
         return 0
     first, second = run_all(), run_all()
-    unstable = sorted(k for k in first if first[k] != second[k])
+    unstable = sorted(k for k in first if k != PLATFORM_KEY
+                      and first[k][0] != second[k][0])
     if unstable:
         print("not deterministic — fix these before recording:")
         for k in unstable:

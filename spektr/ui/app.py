@@ -5,6 +5,7 @@ from __future__ import annotations
 import random
 import sys
 
+from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer, Header
@@ -1257,8 +1258,16 @@ class Spektr(App):
             w.display = True
         self._rearm_chrome()
 
-    def on_key(self, event) -> None:
-        self._wake_chrome()
+    async def on_event(self, event) -> None:
+        """Wake the chrome on any key, before bindings get a say.
+
+        ``on_key`` is not enough: a key with a binding is handled where the
+        binding lives, and the message handler here never runs. This sees the
+        event on its way in, whatever happens to it afterwards.
+        """
+        if isinstance(event, events.Key):
+            self._wake_chrome()
+        await super().on_event(event)
 
     def _set_chrome(self, visible: bool) -> None:
         for w in (self.query_one(Header), self.query_one(Footer)):
