@@ -158,10 +158,7 @@ class AudioVisualizer(Widget):
         self._dissolve_started = 0.0
         #: The last picture the current mode drew, and the outgoing mode's
         #: copy of it once a dissolve starts. See :meth:`_outgoing`.
-        #: Auto eco's current answer, and how many frames of timing it has
-        #: seen since it last decided. See :meth:`_maybe_eco`.
-        self._eco_auto = False
-        self._eco_frames = 0
+        #: The band count to put back when eco is switched off again.
         self._eco_bands_were: int | None = None
         self._last_frame: tuple | None = None
         self._frozen_old: tuple | None = None
@@ -598,13 +595,6 @@ class AudioVisualizer(Widget):
             return self._unlimited[0]
         return max(15, min(FPS_MAX, int(fps)))
 
-    #: Frames of timing before auto eco decides either way, and the share of
-    #: the frame budget a machine has to exceed to count as struggling. Half a
-    #: second at 60 fps: long enough to be past startup, short enough that a
-    #: slow machine is not left stuttering while it is measured.
-    ECO_SETTLE_FRAMES = 30
-    ECO_TRIP = 0.9
-
     def affordable(self, name: str) -> bool:
         """Whether ``name`` has drawn inside the frame budget at this size.
 
@@ -622,32 +612,8 @@ class AudioVisualizer(Widget):
         return one is not None and two is not None and one.group == two.group
 
     def eco_active(self) -> bool:
-        """Whether eco is in force right now, by setting or by measurement."""
-        if self.settings.eco == "on":
-            return True
-        if self.settings.eco == "off":
-            return False
-        return self._eco_auto
-
-    def _maybe_eco(self) -> None:
-        """Turn eco on when the machine cannot hold the rate it was asked for.
-
-        Judged on the frame cost the app already records, against the frame
-        budget: a machine spending most of its budget drawing is one that
-        drops frames the moment anything else happens. Only ``auto`` moves on
-        its own — an explicit on or off is the user's answer and is left alone.
-        """
-        if self.settings.eco != "auto" or self._build_ms is None:
-            return
-        self._eco_frames += 1
-        if self._eco_frames < self.ECO_SETTLE_FRAMES:
-            return
-        self._eco_frames = 0
-        over = self._build_ms > (1000.0 / max(1, self._target_fps)) * self.ECO_TRIP
-        if over == self._eco_auto:
-            return
-        self._eco_auto = over
-        self._apply_eco()
+        """Whether eco is in force."""
+        return self.settings.eco == "on"
 
     def _apply_eco(self) -> None:
         """Put the frame rate and band count where eco wants them.
@@ -740,8 +706,6 @@ class AudioVisualizer(Widget):
         # Pacing is safe to adapt now that the physics is expressed in seconds —
         # changing fps no longer changes how the animation feels, only how
         # finely it is sampled. That was not true before.
-        self._maybe_eco()
-
         if self._frame % 45 == 0 and self._build_ms is not None:
             budget = 1000.0 / self._fps * 0.5
             if self._build_ms > budget and self._fps > 30:

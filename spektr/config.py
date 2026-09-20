@@ -52,11 +52,12 @@ SHUFFLE_DEFAULT = "both"
 #: What advances shuffle: its normal interval, or a change reported by the
 #: operating system's now-playing service.
 #: Eco keeps spektr usable on a machine that cannot hold 60 fps: 30 frames a
-#: second, fewer bars, and shuffle staying away from the heaviest modes.
-#: ``auto`` turns it on by itself when the first seconds of frame timing say
-#: the machine cannot keep up, and off again if that stops being true.
-ECO_CHOICES = ("auto", "on", "off")
-ECO_DEFAULT = "auto"
+#: second, fewer bars, and shuffle staying away from the modes measured over
+#: the frame budget. Off unless asked for — spektr does not decide this for
+#: you, because a machine that dips below the rate for a moment is not one
+#: that wants fewer bars for the rest of the evening.
+ECO_CHOICES = ("on", "off")
+ECO_DEFAULT = "off"
 
 #: Frame rate and band count eco settles on.
 ECO_FPS = 30

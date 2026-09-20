@@ -18,52 +18,15 @@ def _viz(**settings) -> AudioVisualizer:
     return AudioVisualizer(settings=app.settings)
 
 
-def test_auto_is_the_default_and_starts_off():
+def test_eco_is_off_unless_asked_for():
     viz = _viz()
-    assert viz.settings.eco == "auto"
+    assert viz.settings.eco == "off"
     assert viz.eco_active() is False
 
 
 @pytest.mark.parametrize("choice, active", [("on", True), ("off", False)])
 def test_an_explicit_choice_is_obeyed(choice, active):
     assert _viz(eco=choice).eco_active() is active
-
-
-def test_auto_turns_on_when_frames_cost_most_of_the_budget():
-    viz = _viz()
-    viz._build_ms = 1000.0 / 60 * 0.95          # 95% of a 60 fps budget
-    for _ in range(viz.ECO_SETTLE_FRAMES):
-        viz._maybe_eco()
-    assert viz.eco_active() is True
-
-
-def test_auto_stays_off_on_a_machine_that_keeps_up():
-    viz = _viz()
-    viz._build_ms = 2.0
-    for _ in range(viz.ECO_SETTLE_FRAMES * 2):
-        viz._maybe_eco()
-    assert viz.eco_active() is False
-
-
-def test_auto_turns_itself_back_off_when_the_cost_drops():
-    viz = _viz()
-    viz._build_ms = 1000.0 / 60 * 0.95
-    for _ in range(viz.ECO_SETTLE_FRAMES):
-        viz._maybe_eco()
-    assert viz.eco_active() is True
-    viz._build_ms = 1.0
-    for _ in range(viz.ECO_SETTLE_FRAMES):
-        viz._maybe_eco()
-    assert viz.eco_active() is False
-
-
-@pytest.mark.parametrize("choice", ["on", "off"])
-def test_an_explicit_choice_is_never_overridden_by_measurement(choice):
-    viz = _viz(eco=choice)
-    viz._build_ms = 1000.0 / 60 * 0.95
-    for _ in range(viz.ECO_SETTLE_FRAMES * 2):
-        viz._maybe_eco()
-    assert viz.eco_active() is (choice == "on")
 
 
 def test_eco_holds_the_band_count_down():

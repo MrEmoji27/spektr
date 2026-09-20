@@ -1019,11 +1019,6 @@ class Spektr(App):
             label = "every track change" if v == "track" else "every 15 seconds"
             return label if s.shuffle else f"{label}  (off — press s)"
 
-        def show_eco(v):
-            if v != "auto":
-                return v
-            return "auto — on" if viz.eco_active() else "auto — not needed"
-
         def show_fps(v):
             if v != config.FPS_UNLIMITED:
                 return f"{v} fps"
@@ -1127,7 +1122,7 @@ class Spektr(App):
                 "eco",
                 "eco mode",
                 config.ECO_CHOICES,
-                show_eco,
+                lambda v: v,
                 self._set_eco,
                 "easier on an older machine: 30 fps, fewer bars, and shuffle "
                 "keeps away from the heaviest visuals",

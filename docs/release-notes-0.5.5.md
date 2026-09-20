@@ -21,9 +21,8 @@ next.
 
 A new **eco** setting in the settings panel: 30 frames a second, fewer bars,
 and shuffle staying away from the visuals your machine has been measured
-struggling with. Left on **auto** it turns itself on when frames start costing
-most of the time available, and off again when they don't — or set it to on or
-off yourself and it won't argue.
+struggling with. It is off until you turn it on — spektr does not decide this
+for you.
 
 Which visuals it avoids is measured here, on your machine, at your window
 size, rather than read from a list: the same visual can be cheap in a small
