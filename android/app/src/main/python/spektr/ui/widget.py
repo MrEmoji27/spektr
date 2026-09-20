@@ -24,6 +24,8 @@ from .. import modes as mode_registry
 from ..analysis import ANALYSES_PER_SEC, N_BANDS, Analyser
 from ..capture import Capture
 from ..config import (
+    ECO_BANDS,
+    ECO_FPS,
     FPS_MAX,
     FPS_UNLIMITED,
     MOTION_CHOICES,
@@ -156,6 +158,11 @@ class AudioVisualizer(Widget):
         self._dissolve_started = 0.0
         #: The last picture the current mode drew, and the outgoing mode's
         #: copy of it once a dissolve starts. See :meth:`_outgoing`.
+        #: Auto eco's current answer, and how many frames of timing it has
+        #: seen since it last decided. See :meth:`_maybe_eco`.
+        self._eco_auto = False
+        self._eco_frames = 0
+        self._eco_bands_were: int | None = None
         self._last_frame: tuple | None = None
         self._frozen_old: tuple | None = None
 
@@ -591,6 +598,78 @@ class AudioVisualizer(Widget):
             return self._unlimited[0]
         return max(15, min(FPS_MAX, int(fps)))
 
+    #: Frames of timing before auto eco decides either way, and the share of
+    #: the frame budget a machine has to exceed to count as struggling. Half a
+    #: second at 60 fps: long enough to be past startup, short enough that a
+    #: slow machine is not left stuttering while it is measured.
+    ECO_SETTLE_FRAMES = 30
+    ECO_TRIP = 0.9
+
+    def affordable(self, name: str) -> bool:
+        """Whether ``name`` has drawn inside the frame budget at this size.
+
+        A mode nobody has drawn yet counts as affordable: refusing to try it
+        would mean eco silently shrinking the roster to whatever happened to
+        run first.
+        """
+        cost = self._mode_ms.get(name)
+        return cost is None or cost <= 1000.0 / max(1, self._target_fps)
+
+    def eco_active(self) -> bool:
+        """Whether eco is in force right now, by setting or by measurement."""
+        if self.settings.eco == "on":
+            return True
+        if self.settings.eco == "off":
+            return False
+        return self._eco_auto
+
+    def _maybe_eco(self) -> None:
+        """Turn eco on when the machine cannot hold the rate it was asked for.
+
+        Judged on the frame cost the app already records, against the frame
+        budget: a machine spending most of its budget drawing is one that
+        drops frames the moment anything else happens. Only ``auto`` moves on
+        its own — an explicit on or off is the user's answer and is left alone.
+        """
+        if self.settings.eco != "auto" or self._build_ms is None:
+            return
+        self._eco_frames += 1
+        if self._eco_frames < self.ECO_SETTLE_FRAMES:
+            return
+        self._eco_frames = 0
+        over = self._build_ms > (1000.0 / max(1, self._target_fps)) * self.ECO_TRIP
+        if over == self._eco_auto:
+            return
+        self._eco_auto = over
+        self._apply_eco()
+
+    def _apply_eco(self) -> None:
+        """Put the frame rate and band count where eco wants them.
+
+        Retiming needs a running app; the settings panel is also built and
+        checked without one, so a setter called there changes the setting and
+        leaves the clock alone rather than raising.
+        """
+        try:
+            self._apply_eco_now()
+        except RuntimeError:
+            pass
+
+    def _apply_eco_now(self) -> None:
+        # Bands first, then the clock: retiming is the part that needs a
+        # running app, so doing it last means the band count still follows
+        # when the panel is built without one.
+        if self.eco_active():
+            if self.settings.bands > ECO_BANDS:
+                self._eco_bands_were = self.settings.bands
+                self.set_bands(ECO_BANDS)
+            self._retime(min(self._fps or ECO_FPS, ECO_FPS))
+        else:
+            if self._eco_bands_were is not None:
+                self.set_bands(self._eco_bands_were)
+                self._eco_bands_were = None
+            self._retime(self._resolve_fps(self.settings.fps))
+
     def _retime(self, fps: int, *, requested: bool = False) -> None:
         """Re-pace the render timer.
 
@@ -655,6 +734,8 @@ class AudioVisualizer(Widget):
         # Pacing is safe to adapt now that the physics is expressed in seconds —
         # changing fps no longer changes how the animation feels, only how
         # finely it is sampled. That was not true before.
+        self._maybe_eco()
+
         if self._frame % 45 == 0 and self._build_ms is not None:
             budget = 1000.0 / self._fps * 0.5
             if self._build_ms > budget and self._fps > 30:

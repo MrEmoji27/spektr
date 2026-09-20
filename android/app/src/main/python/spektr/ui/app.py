@@ -629,6 +629,13 @@ class Spektr(App):
 
         if scope in ("modes", "both"):
             others = [n for n in viz.mode_names if n != viz.mode_name]
+            if viz.eco_active():
+                # In eco, shuffle stops offering the modes this machine cannot
+                # draw at rate. Judged on what they measured here rather than a
+                # fixed list, so it follows the terminal size too: the same
+                # mode is cheap in a small window and expensive fullscreen.
+                affordable = [n for n in others if viz.affordable(n)]
+                others = affordable or others
             if others:
                 viz.set_mode(random.choice(others), dissolve=True)
                 viz.commit_mode()
@@ -968,6 +975,14 @@ class Spektr(App):
         rows, values = self._settings_rows(self.viz, self.settings)
         self._open_overlay(SettingsPanel(rows, values), self._save_settings)
 
+    def _set_eco(self, value: str) -> str:
+        """Take the eco choice and apply it at once."""
+        self.settings.eco = value
+        self.viz.settings.eco = value
+        self.viz._apply_eco()
+        self._save_settings()
+        return value
+
     def _settings_rows(self, viz, s) -> "tuple[list[Setting], dict]":
         """Build the panel's rows and the values they open on.
 
@@ -1003,6 +1018,11 @@ class Spektr(App):
         def show_shuffle_timing(v):
             label = "every track change" if v == "track" else "every 15 seconds"
             return label if s.shuffle else f"{label}  (off — press s)"
+
+        def show_eco(v):
+            if v != "auto":
+                return v
+            return "auto — on" if viz.eco_active() else "auto — not needed"
 
         def show_fps(v):
             if v != config.FPS_UNLIMITED:
@@ -1104,6 +1124,15 @@ class Spektr(App):
                 "higher-resolution variants",
             ),
             Setting(
+                "eco",
+                "eco mode",
+                config.ECO_CHOICES,
+                show_eco,
+                self._set_eco,
+                "easier on an older machine: 30 fps, fewer bars, and shuffle "
+                "keeps away from the heaviest visuals",
+            ),
+            Setting(
                 "cells",
                 "subcell shape",
                 ("octant", "quadrant"),
@@ -1157,6 +1186,7 @@ class Spektr(App):
             "bands": s.bands,
             "motion": s.motion,
             "fine_modes": s.fine_modes,
+            "eco": s.eco,
             "cells": s.cells,
             "sensitivity": s.sensitivity,
             "gate": s.gate,

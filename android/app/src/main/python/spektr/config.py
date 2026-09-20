@@ -51,6 +51,17 @@ SHUFFLE_DEFAULT = "both"
 
 #: What advances shuffle: its normal interval, or a change reported by the
 #: operating system's now-playing service.
+#: Eco keeps spektr usable on a machine that cannot hold 60 fps: 30 frames a
+#: second, fewer bars, and shuffle staying away from the heaviest modes.
+#: ``auto`` turns it on by itself when the first seconds of frame timing say
+#: the machine cannot keep up, and off again if that stops being true.
+ECO_CHOICES = ("auto", "on", "off")
+ECO_DEFAULT = "auto"
+
+#: Frame rate and band count eco settles on.
+ECO_FPS = 30
+ECO_BANDS = 12
+
 SHUFFLE_TIMINGS = ("timer", "track")
 SHUFFLE_TIMING_DEFAULT = "timer"
 
@@ -123,6 +134,8 @@ class Settings:
     #: ``spektr --glyph-test`` shows in two seconds whether this terminal can
     #: draw them, and ``--cells quadrant`` is the fallback that works
     #: everywhere.
+    #: One of :data:`ECO_CHOICES`. See that constant for what eco does.
+    eco: str = ECO_DEFAULT
     cells: str = "octant"
     #: Offer the twelve subcell variants — the ``Fine`` modes and
     #: ``Kaleidoscope Ultra (o)`` — in the picker.
@@ -219,6 +232,8 @@ class Settings:
             self.shuffle = bool(raw)
         if self.shuffle_scope not in SHUFFLE_SCOPES:
             self.shuffle_scope = SHUFFLE_DEFAULT
+        if self.eco not in ECO_CHOICES:
+            self.eco = ECO_DEFAULT
         if self.shuffle_timing not in SHUFFLE_TIMINGS:
             self.shuffle_timing = SHUFFLE_TIMING_DEFAULT
         return self
