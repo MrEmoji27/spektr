@@ -44,6 +44,19 @@ ones with a `GLIBC` error. It's now built for **glibc 2.28** — Ubuntu 18.10,
 Debian 10, Fedora 29 and anything newer — and every release is started on
 Ubuntu 20.04 before it ships, so this can't quietly come back.
 
+### It hears the first beat now
+
+A track's first hit used to be invisible. The detector compares each moment
+with the one before it, and at the start of a track there is nothing before —
+so the first kick after silence was never found, on every track, every time.
+It is found now, and the same fix covers starting again after a pause.
+
+spektr also used to assume every sound card runs at 48 kHz. On a 96 kHz device
+every timing inside the beat detector meant half as long as it should, and
+detection suffered for it: on the test corpus, accuracy rises from 0.888 to
+0.905 and the hardest case — hi-hats close behind a drum — from 0.48 to 0.63.
+At 44.1 and 48 kHz nothing changes.
+
 ### Your settings stay put
 
 If you went back to an older spektr, it used to quietly erase any setting it
