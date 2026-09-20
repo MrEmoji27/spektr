@@ -106,9 +106,12 @@ async def measure(
         await pilot.pause()
         feeder = asyncio.create_task(_feed(viz.capture.ring, blocks))
 
-        # Count real frames by wrapping the build, rather than watching
-        # _build_ms: two frames that cost the same would look like one.
-        build = viz._build
+        # Count real frames by wrapping the paint, rather than watching
+        # _build_ms: two frames that cost the same would look like one. The
+        # paint rather than the build, because the visualiser has two paths to
+        # the terminal and only the paint is on both of them — with the cells
+        # written straight out, ``_build`` is never called at all.
+        build = viz._paint
 
         def timed_build(*a, **k):
             t0 = time.perf_counter()
@@ -116,13 +119,13 @@ async def measure(
             frames.append(1000.0 * (time.perf_counter() - t0))
             return out
 
-        viz._build = timed_build  # type: ignore[method-assign]
+        viz._paint = timed_build  # type: ignore[method-assign]
         if dissolve_from:
             # Warm both modes so their measured costs are real, then start a
             # dissolve: for its length the app draws the outgoing mode as well.
             viz.set_mode(dissolve_from)
             for _ in range(10):
-                viz._build()
+                viz._paint()
             viz.set_mode(mode, dissolve=True)
             frames.clear()
         cpu0, wall0 = time.process_time(), time.perf_counter()
@@ -138,7 +141,7 @@ async def measure(
             await asyncio.sleep(0.05)
         cpu = time.process_time() - cpu0
         wall = time.perf_counter() - wall0
-        viz._build = build  # type: ignore[method-assign]
+        viz._paint = build  # type: ignore[method-assign]
         feeder.cancel()
 
     drawn = len(frames)

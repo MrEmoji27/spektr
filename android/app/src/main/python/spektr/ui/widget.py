@@ -43,7 +43,7 @@ from ..motion import (
 )
 from ..palette import AUTO, RAMP_STEPS, Palette, all_themes, theme_from_textual
 from ..plugins import BadModeOutput, Quarantine, validate
-from ..render import SPACE, make_strips
+from ..render import SPACE, direct, make_strips
 
 #: A plugin allowed to eat the whole frame budget would stutter the entire UI,
 #: so anything slower than this gets its previous frame reused on alternate
@@ -137,6 +137,10 @@ class AudioVisualizer(Widget):
 
         self._mode_state: dict[str, dict] = {}
         self._strips: list[Strip] | None = None
+        #: The picture's own cells, for the frames that are written straight to
+        #: the terminal rather than composed by Textual. See :meth:`_paint`.
+        self._screen = direct.Screen()
+        self._direct = False
         self._frame = 0
         #: Onset counter as of the previous rendered frame, for ``ctx.onsets``.
         self._last_onset_seq = 0
@@ -307,7 +311,7 @@ class AudioVisualizer(Widget):
         cached strips survive until something else invalidates them and the
         setting looks like it did nothing.
         """
-        self._strips = None
+        self._invalidate()
         self.refresh()
 
     def set_mode(
@@ -344,7 +348,7 @@ class AudioVisualizer(Widget):
             self._dissolve_from = None
         self.mode_name = name
         self._refresh_mode_window(self._dissolve_from)
-        self._strips = None
+        self._invalidate()
         if remember:
             self._preview_mode = None
             self.settings.mode = name
@@ -422,7 +426,7 @@ class AudioVisualizer(Widget):
         source, self._preview_mode = self._preview_mode, None
         if dissolve and source is not None and source != self.mode_name:
             self._start_morph(source, quick=True)
-            self._strips = None
+            self._invalidate()
         self.settings.mode = self.mode_name
 
     def cancel_mode_preview(self) -> None:
@@ -488,7 +492,7 @@ class AudioVisualizer(Widget):
             self._preview = None
             self.settings.theme = self._theme_name
         self._paint_background()
-        self._strips = None
+        self._invalidate()
         self.refresh()
         return self.palette.note
 
@@ -521,7 +525,7 @@ class AudioVisualizer(Widget):
             self._preview = self._theme_name
         self.palette.set(theme)
         self._paint_background()
-        self._strips = None
+        self._invalidate()
         self.refresh()
 
     def preview_theme(self, name: str) -> str:
@@ -617,7 +621,7 @@ class AudioVisualizer(Widget):
         on = bool(on)
         self.settings.transparent_background = on
         self.palette.set_transparent(on)
-        self._strips = None
+        self._invalidate()
         self.refresh()
         return on
 
@@ -652,7 +656,7 @@ class AudioVisualizer(Widget):
         # behaviour here too: a resized blend has no honest past.
         self._mode_state.clear()  # cached geometry is sized for the old count
         self._refresh_mode_window(self._dissolve_from)
-        self._strips = None
+        self._invalidate()
 
     def set_bands(self, n: int) -> int:
         """Change how many bars are drawn, live.
@@ -666,7 +670,7 @@ class AudioVisualizer(Widget):
         self.analyser.set_bands(self.settings.bands or N_BANDS)
         self._mode_state.clear()
         self._refresh_mode_window(self._dissolve_from)
-        self._strips = None
+        self._invalidate()
         self.refresh()
         return self.settings.bands
 
@@ -813,11 +817,12 @@ class AudioVisualizer(Widget):
         # halves the sampling rate and changes nothing else.
         cost = self._mode_ms.get(self.mode_name, 0.0)
         if cost > SLOW_MODE_MS and self._frame % 2:
+            if self._painting_directly():
+                return  # last frame is still on the screen, untouched
             self.refresh()
             return
 
-        self._strips = None
-        self.refresh()
+        self._paint()
 
     # ── painting ─────────────────────────────────────────────────────────────
 
@@ -964,11 +969,14 @@ class AudioVisualizer(Widget):
         # shape to blend against; drawing it live is the only correct answer.
         return self._render_mode(name, frame, w, h, onsets)
 
-    def _build(self) -> list[Strip]:
-        w, h = self.size.width, self.size.height
-        if w < 2 or h < 1:
-            return []
+    def _picture(self) -> tuple:
+        """This frame's arrays: the mode, the morph, and the animated ramp.
 
+        The picture, with nothing done about how it reaches the terminal —
+        which is what the two painters below differ on, and the only thing
+        they differ on.
+        """
+        w, h = self.size.width, self.size.height
         frame = getattr(self, "_frame_data", None)
         if frame is None:
             from ..analysis import Frame
@@ -982,7 +990,6 @@ class AudioVisualizer(Widget):
         onsets = max(0, frame.onset_seq - self._last_onset_seq)
         self._last_onset_seq = frame.onset_seq
 
-        t0 = time.perf_counter()
         out = self._render_mode(self.mode_name, frame, w, h, onsets)
         if self._dissolve_from is not None:
             family = self._same_family(self._dissolve_from, self.mode_name)
@@ -1020,7 +1027,7 @@ class AudioVisualizer(Widget):
         # animated themes flow their colour ramp. The palette is rotated to the
         # current point on its loop — a fractional phase, so the colours glide a
         # fraction of a step each frame instead of jumping a whole step — and the
-        # per-column offset spreads the spectrum across the bands. _build runs
+        # per-column offset spreads the spectrum across the bands. This runs
         # each frame, so the rainbow drifts live.
         # Which backgrounds are the ramp's floor has to be decided on the
         # mode's own indices: the animation below shifts them by column, after
@@ -1030,10 +1037,104 @@ class AudioVisualizer(Widget):
             phase = (time.monotonic() - self._t0) / RAINBOW_SECONDS_PER_CYCLE
             self.palette.set_phase(phase)
             cidx, bidx = self._animate_ramp(codes, cidx, bidx, w)
+            # The colours moved under keys that did not: whatever is on screen
+            # was drawn in the ramp's last position, so it all goes out again.
+            self._screen.forget()
+        return codes, cidx, bidx, clear
 
+    def _build(self) -> list[Strip]:
+        """The frame as strips, for Textual to compose and encode."""
+        w, h = self.size.width, self.size.height
+        if w < 2 or h < 1:
+            return []
+        t0 = time.perf_counter()
+        codes, cidx, bidx, clear = self._picture()
         strips = make_strips(codes, cidx, self.palette, bidx, clear)
-        ms = (time.perf_counter() - t0) * 1000.0
+        self._note_build(t0)
+        return strips
+
+    def _note_build(self, started: float) -> None:
+        """Fold this frame's build into the running average the pacer reads."""
+        ms = (time.perf_counter() - started) * 1000.0
         self._build_ms = (
             ms if self._build_ms is None else self._build_ms * 0.85 + ms * 0.15
         )
-        return strips
+
+    def _painting_directly(self) -> bool:
+        """Whether the picture can go straight to the terminal this frame.
+
+        Only while the picture is the only thing on screen: a picker or a
+        settings panel is docked over it and a notification floats above it, so
+        anything Textual has put there is Textual's to keep. Transparent
+        backgrounds are left out too — there a cell that names no colour is
+        meant to show the terminal's own through, and that is a rule Textual's
+        renderer owns.
+        """
+        app = self.app
+        driver = getattr(app, "_driver", None)
+        return (
+            self._screen is not None
+            and driver is not None
+            and not getattr(driver, "is_inline", False)
+            and getattr(app, "_overlay", None) is None
+            and not getattr(app, "_notifications", None)
+            and not self.palette.transparent
+        )
+
+    def _paint(self) -> None:
+        """Draw the frame, directly or through Textual.
+
+        The two paths are exclusive per frame: Textual composes the whole
+        screen whenever it paints, so letting it paint a frame and then writing
+        over it from here would be paying twice for one picture.
+        """
+        direct = self._painting_directly()
+        if direct:
+            region = self.content_region
+            self._screen.place(region.width, region.height, region.x, region.y)
+        if direct != self._direct:
+            # Handing over either way, whatever is on screen is not what the
+            # next frame is about to draw.
+            self._direct = direct
+            self._invalidate()
+            self.refresh()
+        if not direct:
+            self._invalidate()
+            self.refresh()
+            return
+        started = time.perf_counter()
+        codes, cidx, bidx, clear = self._picture()
+        frame = self._screen.frame(codes, cidx, bidx, self.palette, clear)
+        self._note_build(started)
+        if not frame:
+            return
+        app = self.app
+        begin = getattr(app, "_begin_update", None)
+        if begin is not None:
+            begin()
+        try:
+            app._driver.write(frame)
+        finally:
+            end = getattr(app, "_end_update", None)
+            if end is not None:
+                end()
+        app._driver.flush()
+
+    def note_textual_paint(self) -> None:
+        """Textual has painted over the whole screen; forget ours.
+
+        Called by the app after its own display pass: whatever it drew is on
+        top of the visualiser's cells now, so the next direct frame has to draw
+        all of them again rather than the ones that changed.
+        """
+        self._screen.forget()
+
+    def _invalidate(self) -> None:
+        """Both painters' caches: the strips Textual holds, and our cells.
+
+        Anything that makes the cached frame stale — a new picture, a different
+        theme, another size — has to make it stale for both, or the one that
+        was not invalidated goes on drawing under the old one.
+        """
+        self._strips = None
+        self._screen.forget()

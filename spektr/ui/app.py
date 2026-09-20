@@ -229,6 +229,21 @@ class Spektr(App):
             self._start_shuffle()
         self.set_interval(NOWPLAYING_POLL_SECONDS, self._poll_now_playing)
 
+    def _display(self, screen, renderable) -> None:
+        """Textual's own paint pass, with one addition: tell the visualiser.
+
+        The visualiser writes most of its frames straight to the terminal, so
+        the cells on screen are its own to keep track of. Anything Textual
+        paints — a panel, a notification, a resize — lands on top of them, and
+        the widget has to hear about it: its next frame is then a full one
+        rather than a diff against cells that are no longer there.
+        """
+        super()._display(screen, renderable)
+        try:
+            self.viz.note_textual_paint()
+        except Exception:  # noqa: BLE001 — not mounted yet, or on the way out
+            pass
+
     def _ask_for_synchronized_output(self) -> None:
         """Ask the terminal whether it can present a whole frame at once.
 
