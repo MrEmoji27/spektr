@@ -17,15 +17,23 @@ next.
 
 **74 modes, 55 themes, both unchanged.**
 
-### Lighter on old machines — *planned*
+### Eco mode, for machines that can't keep up
 
-spektr asked more of your processor than it had any right to, and most of it
-went on drawing the frame rather than on the visual itself. This release goes
-after that, aiming to roughly a third of what it uses today.
+A new **eco** setting in the settings panel: 30 frames a second, fewer bars,
+and shuffle staying away from the visuals your machine has been measured
+struggling with. Left on **auto** it turns itself on when frames start costing
+most of the time available, and off again when they don't — or set it to on or
+off yourself and it won't argue.
 
-There is also a new **eco** setting: 30 frames a second, fewer bars, and
-shuffle keeping away from the heaviest visuals. It switches itself on when
-your machine can't keep up, or you can turn it on yourself.
+Which visuals it avoids is measured here, on your machine, at your window
+size, rather than read from a list: the same visual can be cheap in a small
+window and far too slow fullscreen.
+
+Honest about the rest: most of spektr's processor time goes on pushing frames
+through the interface framework, not on drawing the visuals, and that has not
+changed in this release. Measured here, the heaviest visual at a fullscreen
+size still costs more than a frame's worth of time. The groundwork is done and
+measured — see the note at the end — and the work itself is 0.6.x.
 
 ### Shuffle fades instead of cutting
 
@@ -88,6 +96,16 @@ Nothing you use changes: `spektr.api` keeps every name, and the mode contract
 and plugin version stay as they are. If you import from somewhere inside
 spektr instead of `spektr.api`, that still works here, but move across — those
 paths go away in 0.6.5.
+
+### One for the curious
+
+The reason eco exists rather than a blanket speed-up: measured at a large
+terminal size, building a frame costs about 1.4 ms and turning it into the
+text a terminal understands costs 0.07 ms — while the whole app spends around
+80% of a processor core. Nearly all of that goes on the interface framework
+between those two steps. Replacing that path is the single biggest thing
+spektr can do for old hardware, and it is too large a change to rush into a
+release whose first rule is that nothing breaks.
 
 ### Next
 
