@@ -18,19 +18,19 @@ from textual.reactive import reactive
 from textual.strip import Strip
 from textual.widget import Widget
 
-from . import display as display_probe
-from . import modes as mode_registry
-from .analysis import ANALYSES_PER_SEC, N_BANDS, Analyser
-from .capture import Capture
-from .config import (
+from .. import display as display_probe
+from .. import modes as mode_registry
+from ..analysis import ANALYSES_PER_SEC, N_BANDS, Analyser
+from ..capture import Capture
+from ..config import (
     FPS_MAX,
     FPS_UNLIMITED,
     MOTION_CHOICES,
     MOTION_DEFAULT,
     Settings,
 )
-from .modes import Ctx
-from .motion import (
+from ..modes import Ctx
+from ..motion import (
     GLIDE_BLEND_TAU,
     PROFILES,
     Peaks,
@@ -38,9 +38,9 @@ from .motion import (
     Trace,
     spread,
 )
-from .palette import AUTO, RAMP_STEPS, Palette, all_themes, theme_from_textual
-from .plugins import BadModeOutput, Quarantine, validate
-from .render import SPACE, make_strips
+from ..palette import AUTO, RAMP_STEPS, Palette, all_themes, theme_from_textual
+from ..plugins import BadModeOutput, Quarantine, validate
+from ..render import SPACE, make_strips
 
 #: A plugin allowed to eat the whole frame budget would stutter the entire UI,
 #: so anything slower than this gets its previous frame reused on alternate
@@ -698,7 +698,7 @@ class AudioVisualizer(Widget):
 
         frame = getattr(self, "_frame_data", None)
         if frame is None:
-            from .analysis import Frame
+            from ..analysis import Frame
 
             frame = Frame()
 
@@ -734,7 +734,7 @@ class AudioVisualizer(Widget):
             beat_phase=frame.beat_phase,
         )
 
-        from .modes import empty
+        from ..modes import empty
 
         t0 = time.perf_counter()
         try:
