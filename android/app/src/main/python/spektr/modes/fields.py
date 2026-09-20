@@ -1248,7 +1248,7 @@ def _kaleido(ctx: Ctx, cells: str):
     if dr < 8 or dc < 8:
         return empty(ctx.w, ctx.h)
 
-    from ..render import cell_hilo, frac, pack_octant, pack_octant_smooth
+    from ..render import frac, pack_octant
 
     # Geometry on the |x|-folded grid: dot (x, y) and its L/R mirror
     # (dc - 1 - x, y) compute identical turn and radius, so any function of

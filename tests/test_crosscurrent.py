@@ -30,11 +30,12 @@ from numpy.lib.stride_tricks import sliding_window_view
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from test_tunnel import _components, _dots  # noqa: E402
+
 import spektr.modes as M  # noqa: E402
 from spektr.analysis import N_BANDS  # noqa: E402
 from spektr.modes import Ctx  # noqa: E402
 from spektr.palette import BUILTIN, Palette  # noqa: E402
-from test_tunnel import _components, _dots  # noqa: E402
 
 PAL = Palette(BUILTIN["hackerman"])
 NAME = "Crosscurrent"

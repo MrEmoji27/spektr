@@ -299,8 +299,8 @@ def test_the_readme_documents_every_command_line_flag():
 
 def test_no_stale_fine_naming_survives_anywhere_user_visible():
     """The rename is only done if nothing still calls them "Fine"."""
-    from spektr.app import _USAGE
     import spektr.modes as M
+    from spektr.app import _USAGE
 
     assert "Fine" not in README.read_text(encoding="utf-8")
     assert "Fine" not in _USAGE

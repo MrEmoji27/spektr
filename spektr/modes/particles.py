@@ -9,13 +9,19 @@ import numpy as np
 from ..render import cell_hilo, cell_max, frac, noise, pack_braille, pack_octant, pack_octant_bits
 from . import (
     Ctx,
-    angular_bands as _angular_bands,
-    angular_lut as _angular_lut,
     band_columns,
     empty,
     mode,
-    polar_grid as _polar,
     spread,
+)
+from . import (
+    angular_bands as _angular_bands,
+)
+from . import (
+    angular_lut as _angular_lut,
+)
+from . import (
+    polar_grid as _polar,
 )
 
 _INV24 = np.float32(1.0 / 0x1000000)

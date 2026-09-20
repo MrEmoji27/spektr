@@ -27,8 +27,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from spektr import config  # noqa: E402
-from spektr.app import Spektr  # noqa: E402
 from spektr import loadouts as loadouts_module  # noqa: E402
+from spektr.app import Spektr  # noqa: E402
 from spektr.pickers import LoadoutPicker, NamePrompt  # noqa: E402
 from spektr.widget import AudioVisualizer  # noqa: E402
 

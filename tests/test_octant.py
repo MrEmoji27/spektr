@@ -19,7 +19,6 @@ from spektr.render import (
     OCTANT_LUT,
     SPACE,
     cell_hilo,
-    pack_braille,
     pack_octant,
     pack_octant_bits,
 )

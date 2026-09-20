@@ -49,8 +49,8 @@ import shutil  # noqa: E402
 
 import pytest  # noqa: E402
 
-from spektr import loadouts, palette, plugins  # noqa: E402
 import spektr.modes as registry  # noqa: E402
+from spektr import loadouts, palette, plugins  # noqa: E402
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "config-0.5.0"
 

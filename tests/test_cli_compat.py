@@ -18,7 +18,8 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from spektr import app as app_module, config, palette  # noqa: E402
+from spektr import app as app_module  # noqa: E402
+from spektr import config, palette
 
 PINNED = Path(__file__).resolve().parent / "golden" / "cli"
 LISTINGS = {

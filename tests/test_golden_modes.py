@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import sys
 
-import pytest
-
 import golden
+import pytest
 
 RECORDED = golden.load_golden() if golden.GOLDEN.exists() else {}
 MODES = golden.builtin_modes()

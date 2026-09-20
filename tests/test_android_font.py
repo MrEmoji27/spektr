@@ -26,10 +26,10 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from spektr.analysis import N_BANDS          # noqa: E402
-from spektr.modes import Ctx                 # noqa: E402
-from spektr.palette import BUILTIN, Palette   # noqa: E402
-import spektr.modes as M                     # noqa: E402
+import spektr.modes as M  # noqa: E402
+from spektr.analysis import N_BANDS  # noqa: E402
+from spektr.modes import Ctx  # noqa: E402
+from spektr.palette import BUILTIN, Palette  # noqa: E402
 
 TTLib = pytest.importorskip("fontTools.ttLib")
 

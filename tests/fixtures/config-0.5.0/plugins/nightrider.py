@@ -1,5 +1,7 @@
 import numpy as np
-from spektr.api import mode, pack_braille, cell_max
+
+from spektr.api import cell_max, mode, pack_braille
+
 
 @mode("Nightrider", blurb="scanning eye, swept by the beat")
 def nightrider(ctx):

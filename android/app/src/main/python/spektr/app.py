@@ -11,9 +11,9 @@ from textual.binding import Binding
 from textual.widgets import Footer, Header
 
 from . import __version__, config, nowplaying
+from . import loadouts as loadouts_module
 from . import modes as mode_registry
 from . import palette as palette_mod
-from . import loadouts as loadouts_module
 from .pickers import (
     ColourPicker,
     HelpPanel,

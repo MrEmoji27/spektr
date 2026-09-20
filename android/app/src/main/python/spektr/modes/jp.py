@@ -45,7 +45,6 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..palette import RAMP_STEPS
 from ..render import SPACE, cell_max, pack_braille
 from . import (
     Ctx,
@@ -53,6 +52,8 @@ from . import (
     bg_contrast,
     empty,
     mode,
+)
+from . import (
     polar_grid as _polar,
 )
 

@@ -12,20 +12,25 @@ from ..render import (
     SPACE,
     cell_max,
     frac,
-    noise,
     pack_braille,
 )
 from . import (
     Ctx,
-    angular_bands as _angular_bands,
-    angular_lut as _angular_lut,
     band_columns,
     bg_contrast,
     contrast_ramp,
     empty,
     mode,
-    polar_grid as _polar,
     spread,
+)
+from . import (
+    angular_bands as _angular_bands,
+)
+from . import (
+    angular_lut as _angular_lut,
+)
+from . import (
+    polar_grid as _polar,
 )
 
 _FULL = ord("█")

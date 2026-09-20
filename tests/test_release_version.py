@@ -14,7 +14,6 @@ itself is wrong. That is a bad thing to discover from a bug report.
 from __future__ import annotations
 
 import re
-import subprocess
 import sys
 from pathlib import Path
 
