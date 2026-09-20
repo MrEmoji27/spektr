@@ -4,7 +4,7 @@
 
 <sub>logo by Roshan (RRDOJ)</sub>
 
-**spektr** — a terminal spectrum analyser for whatever your speakers are doing.
+**spektr**, a terminal spectrum analyser for whatever your speakers are doing.
 
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-00c853)](https://github.com/MrEmoji27/spektr/blob/main/LICENSE)
@@ -18,57 +18,53 @@
 
 </div>
 
-Point it at nothing. Play music anywhere — Spotify, a browser tab, a game, a call — and
-spektr draws it: overlapped FFTs across 32 log-spaced bands (settable) from 50 Hz to 10 kHz, laid
-out the way cava does it, rendered with braille sub-characters so the picture moves at
-four times the vertical resolution of a text cell.
+Play music anywhere, from Spotify to a browser tab to a game, and spektr draws it in your
+terminal. You do not point it at a file or sign in to anything. It listens to whatever your
+speakers are playing.
 
 **Sixty render modes. Fifty-five themes. 60 fps, or your display's.**
 
-There is an **Android build** too — the same engine, on a tablet, as an ambient
-display for the desk. It is a second screen, not a second product: see
-[spektr on Android](#spektr-on-android).
+There is an Android build too: the same engine on a tablet, as an ambient display for your
+desk. See [spektr on Android](#spektr-on-android).
 
 ## Install
 
 > [!TIP]
-> **Windows, one line, no Python required** — paste this into PowerShell:
+> **Windows, one line, no Python needed.** Paste this into PowerShell:
 >
 > ```powershell
 > irm https://github.com/MrEmoji27/spektr/releases/latest/download/spektr.exe -OutFile spektr.exe; ./spektr.exe
 > ```
 >
-> That downloads the current release next to you and starts it. Nothing is
-> installed and nothing is written outside the folder you ran it in, so
-> deleting `spektr.exe` is the uninstall.
+> It downloads spektr next to you and starts it. Nothing is installed and nothing is
+> written outside that folder, so deleting the file is the uninstall.
 >
-> Or grab `spektr.exe` from the
-> [latest release](https://github.com/MrEmoji27/spektr/releases) and double-click it.
-> A black window opens with the visualiser in it; that's a terminal, and it's meant to
-> happen. Windows may warn that it doesn't recognise the app — **More info → Run anyway**;
-> the build is unsigned because certificates cost money. There's an installer in the same
-> release if you'd rather have a Start Menu entry and a faster start.
+> You can also grab `spektr.exe` from the
+> [latest release](https://github.com/MrEmoji27/spektr/releases) and double-click it. A
+> black window opens with the visualiser in it. That is a terminal, and it is meant to
+> happen. Windows may warn that it does not recognise the app: choose **More info**, then
+> **Run anyway**. The build is unsigned because certificates cost money. There is an
+> installer in the same release if you want a Start Menu entry and a faster start.
 
 > [!TIP]
-> **Linux, no Python required** — grab the `spektr` binary from the same
-> [latest release](https://github.com/MrEmoji27/spektr/releases), make it executable, and
-> run it from a terminal (it's a terminal program):
+> **Linux, no Python needed.** Download the `spektr` binary from the
+> [latest release](https://github.com/MrEmoji27/spektr/releases), then:
 >
 > ```bash
 > chmod +x spektr
 > ./spektr
 > ```
 >
-> Built against glibc 2.28, so it runs on Ubuntu 18.10 and newer, Debian 10 and newer,
-> Fedora 29 and newer, and anything else of that age or later.
->
-> You'll need the system audio libs it loads at run time: `libpulse.so` (PipeWire provides
-> it via `pipewire-pulse`) and PortAudio. Arch: `sudo pacman -S portaudio`. Debian/Ubuntu:
+> Run it from a terminal, because it is a terminal program. You also need your system
+> audio libraries: `libpulse.so` (PipeWire provides it through `pipewire-pulse`) and
+> PortAudio. Arch: `sudo pacman -S portaudio`. Debian and Ubuntu:
 > `sudo apt install libportaudio2`. Fedora: `sudo dnf install portaudio`. spektr tells you
-> if any are missing. The Windows `spektr.exe` in that release **will not run on Linux** —
-> it's a Windows binary; use the `spektr` file instead.
+> if any are missing.
+>
+> The binary is built against glibc 2.28, so it runs on Ubuntu 18.10 and newer, Debian 10
+> and newer, and Fedora 29 and newer. The Windows `spektr.exe` will not run on Linux.
 
-**With Python 3.10+ (works on Windows, Linux and macOS)** — from source:
+**With Python 3.10+**, on Windows, Linux or macOS:
 
 ```bash
 git clone https://github.com/MrEmoji27/spektr
@@ -78,31 +74,8 @@ spektr
 ```
 
 > [!NOTE]
-> A one-line `pip install` is still on the way. It won't be under the name
-> `spektr` — that belongs to an unrelated project on PyPI — so the package name
-> gets announced along with it. The PowerShell line above needs no Python at
-> all, and is the shortest way in on Windows today.
-
-On Windows you can also just double-click `start.bat`, which builds a private
-environment on first run and starts spektr on every run after.
-
-No configuration, no file to point it at, no music service to log into. It finds your
-output device, taps it, and draws.
-
-The header shows what's playing when it can — spektr only ever taps raw audio, so track
-title/artist comes from the OS media session instead (System Media Transport Controls on
-Windows, MPRIS on Linux), the same source your lock screen and media keys already use. No
-session, no supported player, or an unsupported platform (macOS) all just fall back to the
-usual capture status — never an error.
-
----
-
-**Contents** · [Modes](#modes) · [Themes](#themes) ·
-[Plugins](#plugins) · [Keys](#keys) · [Command line](#command-line) ·
-[Audio capture](docs/audio-capture.md) · [How it works](docs/how-it-works.md) ·
-[Development](docs/development.md) · [Inspired by](#inspired-by)
-
----
+> A one-line `pip install` is on the way. It will not be under the name `spektr`, which
+> belongs to an unrelated project on PyPI, so the package name gets announced with it.
 
 ## Modes
 
@@ -111,45 +84,45 @@ usual capture status — never an error.
 
 <sub>Valentine and Auroras, on the `citrine` ramp.</sub>
 
-Press `v` for a filterable picker that previews each one live as you arrow through it.
-Listed in the order the picker cycles them.
+Press `v` for a picker that previews each mode live as you arrow through it, and `/` to
+filter. They are listed here in the order the picker cycles them.
 
 | | | | |
 |---|---|---|---|
-| **Bars** | the classic — bars with peak markers | **Keys** | a lit keyboard; struck bands scroll away as notes |
+| **Bars** | the classic, bars with peak markers | **Keys** | a lit keyboard; struck bands scroll away as notes |
 | **Bricks** | chunky, no partial cells | **Tunnel** | flying down a pipe, ribbed by the beat |
 | **Columns** | gapless, interpolated across the full width | **Tunnel In** | rings thrown out of the centre on the beat, rushing past you |
-| | | **Crosscurrent** | two streams in one spinning tunnel — round rings rushing out, octagons drawn in, sparking where they cross; the turn speeds up with the tempo and a busy track, and spokes strobe on the beat |
+| | | **Crosscurrent** | two streams in one spinning tunnel, round rings rushing out, octagons drawn in, sparking where they cross; the turn speeds up with the tempo and a busy track, and spokes strobe on the beat |
 | **Ladder** | segmented LED stack | **Warp** | starfield, accelerating with the music |
 | **Mirror** | grows out from the centre line | **Matrix** | digital rain, falling faster when it's loud |
-| **Readout** | scrolling numeric ticker, band levels as plain digits | **Boot** | an old PC waking up — BIOS POST, a boot log, a blinking cursor |
-| **Stereo** | per-band L/R meters, mirrored from centre | **Spectro** | scrolling waterfall — frequency up, time across |
+| **Readout** | scrolling numeric ticker, band levels as plain digits | **Boot** | an old PC waking up, BIOS POST, a boot log, a blinking cursor |
+| **Stereo** | per-band L/R meters, mirrored from centre | **Spectro** | scrolling waterfall, frequency up, time across |
 | **Wave** | smoothed waveform | **Plasma** | solid colour field, warped by the spectrum |
-| **Scope** | trigger-synced oscilloscope — the trace holds still | **Chladni** | vibrating-plate figure that snaps between real resonances |
+| **Scope** | trigger-synced oscilloscope, the trace holds still | **Chladni** | vibrating-plate figure that snaps between real resonances |
 | **ECG** | scrolling trace, like a heart monitor | **Chladni Flow** | the same plate, melting continuously from one figure to the next |
-| **Strings** | plucked strings, bowed by their own band | **Chladni Extreme** | the plate driven past its modes — morphs and escalates |
+| **Strings** | plucked strings, bowed by their own band | **Chladni Extreme** | the plate driven past its modes, morphs and escalates |
 | **Helix** | two strands rotating, split by true L/R phase | **VFD** | vacuum-fluorescent bargraph with phosphor afterglow |
-| **Gonio** | stereo phase scope with a phosphor trail | **Needle** | analogue VU — one sweeping needle, one red zone |
+| **Gonio** | stereo phase scope with a phosphor trail | **Needle** | analogue VU, one sweeping needle, one red zone |
 | **Scatter** | density sparkle, thicker where it's loud | **VU** | big L/R LED meters with peak hold |
-| **Flame** | fire, licking upward from each band | **Kaleidoscope** | radial mirror symmetry — the wedge count follows the spectrum |
+| **Flame** | fire, licking upward from each band | **Kaleidoscope** | radial mirror symmetry, the wedge count follows the spectrum |
 | **Pulse** | radial pulse with shockwaves | **Dither** | the spectrum printed as a newspaper halftone |
-| **Arcs** | hollow rings, one per band, pushed out by level | **Dither Storm** | the same crosshatch, but moving — each band drives its own wave, and beats throw rings through it |
-| **Bubbles** | bubbles from the low end, popping at the top | **Dither Storm Extreme** | Dither Storm with nothing holding it back — hits pile up and a dense passage blows the field to white |
+| **Arcs** | hollow rings, one per band, pushed out by level | **Dither Storm** | the same crosshatch, but moving, each band drives its own wave, and beats throw rings through it |
+| **Bubbles** | bubbles from the low end, popping at the top | **Dither Storm Extreme** | Dither Storm with nothing holding it back, hits pile up and a dense passage blows the field to white |
 | **Radial** | the spectrum wrapped into a circle | **Valentine** | a heart that beats with the track, trailing smaller ones upward |
-| **Sonar** | one sweep, not the whole spectrum — returns fade like a scope | **Locket** | an outlined heart, pulsing rings of hearts outward on the beat |
+| **Sonar** | one sweep, not the whole spectrum, returns fade like a scope | **Locket** | an outlined heart, pulsing rings of hearts outward on the beat |
 | **Orbit** | bodies on real elliptical orbits; loud bands swing out | **Shooting Star** | a night sky, with meteors thrown from a drifting radiant on the beat |
 | **Constellations** | beats draw lines between fixed stars; the figures fade like film | **Star Trails** | a long exposure: the sky turns and leaves its arcs behind |
 | **Supernova** | a mostly dark sky, waiting for the one hit worth a catastrophe | | |
-| **Swell** | an open sea — bass drives the swell, hits land ripples | | |
+| **Swell** | an open sea, bass drives the swell, hits land ripples | | |
 | **Fireworks** | beat-triggered launches, bursts, and fall | **Maelstrom** | a real fluid sim, stirred by the music |
 | **Dune** | sand piles up by band, avalanching past a threshold | **Vinyl** | a record whose grooves light up as a radial spectrum |
 | **Murmuration** | a flock wheeling and scattering with the beat | **Rain** | rain on the glass, falling harder when it's loud |
 | **Retro** | sunset grid, with the spectrum as the horizon | **Ember** | a coal bed burning by band, sparks off the hot spots |
 | **Auroras** | a light ribbon whose lower rim rides the spectrum | **Snow** | snowfall in three planes, gusting and lying in drifts |
-| **JP Bars** | a segmented LED meter whose crest peels off and rises, like notes leaving a key | **JP Drift** | the meter as a sandpile — bulbs stack up, drain away, and pour into their neighbours on the beat |
-| **JP Pulse** | the meter bent into a ring — a spoke of bulbs per band, chased on the beat | | |
+| **JP Bars** | a segmented LED meter whose crest peels off and rises, like notes leaving a key | **JP Drift** | the meter as a sandpile, bulbs stack up, drain away, and pour into their neighbours on the beat |
+| **JP Pulse** | the meter bent into a ring, a spoke of bulbs per band, chased on the beat | | |
 
-The three **JP** modes are inspired by Japanese car audio hardware — the LED
+The three **JP** modes are inspired by Japanese car audio hardware, the LED
 level meters on in-dash head units and equalisers. All three draw the same
 meter, with the unlit bulbs showing as faint dots, and each adds one idea from
 another mode: **Keys**' note roll, **Dune**'s sandpile and **Radial**'s circle.
@@ -165,17 +138,17 @@ The meteors come from a drifting **radiant**, the point a real shower appears
 to diverge from, and a harder onset throws a brighter, longer, faster one.
 It has company now: **Constellations** grows figures by drawing one line per
 beat, **Star Trails** spins up with percussion while arcs accumulate around a
-fixed pole, and **Supernova** spends its whole budget on rare, hard hits —
+fixed pole, and **Supernova** spends its whole budget on rare, hard hits ,
 a shell that expands for five seconds and a core that glows on after it.
 
-Vinyl, Rain, Snow and Ember are the lofi group — a
+Vinyl, Rain, Snow and Ember are the lofi group, a
 shared *look* (warm objects, soft edges, nothing strobing) rather than a
 shared reactivity budget. Each one maps real band data into its geometry,
 so what the music changes is what the object is doing, not just how bright
 the picture is.
 
-A sixty-first entry, **None**, is registered as the off switch — it draws nothing.
-That is why the test output counts 61 against the sixty listed here — and 73
+A sixty-first entry, **None**, is registered as the off switch, it draws nothing.
+That is why the test output counts 61 against the sixty listed here, and 73
 in total, because the twelve subcell variants below are registered whether or not
 the setting that offers them is on.
 
@@ -184,16 +157,15 @@ the setting that offers them is on.
 <img src="https://raw.githubusercontent.com/MrEmoji27/spektr/main/assets/chladni.gif"
      alt="the Chladni family, drawn with subcell glyphs" width="900">
 
-<sub>Chladni Extreme with the theme picker open. Nodal lines land inside a
-cell rather than on its boundary, which is the whole of the difference.</sub>
+<sub>Chladni Extreme with the theme picker open.</sub>
 
-Twelve modes have a second version that draws with **subcell glyphs** — one text
-cell split into eight or four addressable pieces instead of being a single
-block. A nodal line or a scope trace then lands *inside* a cell rather than on
-its boundary, which is the difference between a curve and a staircase.
+Twelve modes have a second version drawn with subcell glyphs, which split one text cell
+into eight or four pieces instead of treating it as one block. A curve then lands inside a
+cell rather than on its edge, which is the difference between a curve and a staircase.
 
-They are **off by default**. Open Settings (`c`) and turn on **subcell modes** to
-put them in the `v` picker:
+They are off by default, because they need a font with Unicode 16 octants. Open settings
+with `c` and turn on **subcell modes** to add them to the `v` picker. `spektr --glyph-test`
+shows in two seconds whether your terminal can draw them.
 
 | variant | what the extra resolution buys |
 |---|---|
@@ -203,18 +175,18 @@ put them in the `v` picker:
 | **Valentine (o)**, **Maelstrom (o)** | the rim of the shape gets four times the vertical resolution |
 
 The suffix says **which glyphs the mode is drawing with**, and that is a
-setting rather than a property of the mode — the **subcell shape** row in
+setting rather than a property of the mode, the **subcell shape** row in
 Settings switches all of them at once:
 
-- **`(o)` — octants.** 2x4 pieces per cell, from Unicode 16. The default, and
+- **`(o)`, octants.** 2x4 pieces per cell, from Unicode 16. The default, and
   what the modes are designed around. Needs a font that has them; run
   `spektr --glyph-test` and you will know in two seconds.
-- **`(q)` — quadrants.** 2x2 pieces, from Block Elements, which every terminal
+- **`(q)`, quadrants.** 2x2 pieces, from Block Elements, which every terminal
   font has had for decades. The fallback that always works.
 
 So the same mode shows as `Chladni (o)` or `Chladni (q)` depending on that
 setting, and both spellings are accepted anywhere a mode is named. Quadrants
-are **not** a downgrade in speed — they are faster on the smooth field modes
+are **not** a downgrade in speed, they are faster on the smooth field modes
 and slower on the silhouette ones. Pick by what your font can draw.
 
 At a normal terminal size the variants cost about what the originals do. Only
@@ -223,39 +195,35 @@ heaviest of them is Chladni Extreme.
 
 Still frames of a few of them, straight from the render path: **[docs/gallery.md](https://github.com/MrEmoji27/spektr/blob/main/docs/gallery.md)**.
 
-
 ## Themes
 
 <img src="https://raw.githubusercontent.com/MrEmoji27/spektr/main/assets/themes.gif"
      alt="arrowing down the theme picker, the picture recolouring live" width="900">
 
-<sub>The `t` picker recolours the running picture as you arrow through it, so
-a theme is chosen by looking at it rather than by its name.</sub>
+<sub>The `t` picker recolours the running picture as you arrow through it.</sub>
 
-Fifty-five built in, previewed live from the `t` picker: `classic`, `gruvbox`, `catppuccin`
-(+`-latte`), `dracula`, `nord`, `tokyo-night` (+`-day`), `rose-pine`, `everforest`,
-`kanagawa`, `ayu-mirage`, `monokai`, `solarized`, `nightfox`, `oxocarbon`, `miasma`,
-`osaka-jade`, `ristretto`, `flexoki-light`, `nightfly`, `material`, `gotham`, `oceanic`,
-`gruvbox-light`, `hackerman`, `ember`, `ethereal`, `synthwave`, `blade-runner`,
+Fifty-five themes are built in and preview live from the `t` picker: `classic`, `gruvbox`,
+`catppuccin` (+`-latte`), `dracula`, `nord`, `tokyo-night` (+`-day`), `rose-pine`,
+`everforest`, `kanagawa`, `ayu-mirage`, `monokai`, `solarized`, `nightfox`, `oxocarbon`,
+`miasma`, `osaka-jade`, `ristretto`, `flexoki-light`, `nightfly`, `material`, `gotham`,
+`oceanic`, `gruvbox-light`, `hackerman`, `ember`, `ethereal`, `synthwave`, `blade-runner`,
 `nostromo`, `plasma`, `viridis`, `ice`, `vaporwave`, `infrared`, `deep-sea`, `magma`,
 `matte-black`, `vantablack`, `rainbow`, `phosphor-amber`, `sakura`, `toxic`, `copper`,
 `polar`, `bubblegum`, `hot-pink`, `ruby`, `emerald`, `sapphire`, `amethyst`, `citrine`,
-`tangerine`, `indigo` — plus `auto`, which derives a ramp from whatever Textual theme your
+`tangerine`, `indigo`, plus `auto`, which builds a ramp from whatever Textual theme your
 terminal is wearing.
 
-`rainbow` is animated — its colour loop drifts continuously across the bands instead of
-sitting still, closing red → yellow → green → blue → violet → magenta back to red so the
-flow has no seam to jump at.
+`rainbow` is animated. Its colours drift across the bands instead of sitting still, and the
+loop closes on itself so there is no seam to jump at.
 
-Gradients are blended in linear light rather than straight sRGB, so the midpoint of a
-ramp doesn't go muddy the way naive hex interpolation does. The terminal background is
-painted with the theme's own `bg`, so a dark theme is dark whatever your terminal is set
-to rather than showing through it.
+Two details matter more than they sound. Gradients are blended in linear light instead of
+straight sRGB, so the middle of a ramp does not go muddy. And the background is painted
+with the theme's own colour, so a dark theme is dark whatever your terminal is set to.
 
 ### Custom themes
 
-Drop a TOML file in `~/.config/spektr/themes/` (`%APPDATA%\spektr\themes\` on Windows).
-The filename becomes the theme name; press `r` to reload without restarting.
+Drop a TOML file in `~/.config/spektr/themes/`, or `%APPDATA%\spektr\themes\` on Windows.
+The filename becomes the theme name. Press `r` to reload without restarting.
 
 ```toml
 # ~/.config/spektr/themes/solarized.toml
@@ -267,13 +235,13 @@ fg     = "#839496"
 accent = "#268bd2"
 ```
 
-cliamp's `green`/`yellow`/`red`/`bright_fg` key names are accepted as aliases, so themes
-port across without editing.
+cliamp's `green`, `yellow`, `red` and `bright_fg` names work as aliases, so its themes port
+across unchanged.
 
 ## Plugins
 
-Your own visualizers, in `~/.config/spektr/plugins/`. They appear in the `v` picker
-alongside the built-ins, because they use the same decorator and the same contract:
+Write your own visualiser and drop it in `~/.config/spektr/plugins/`. It appears in the `v`
+picker beside the built-in ones, because it uses the same decorator and the same contract.
 
 ```python
 # ~/.config/spektr/plugins/nightrider.py
@@ -292,100 +260,37 @@ def nightrider(ctx):
     return pack_braille(field > 0.10), ctx.ramp(cell_max(field))
 ```
 
-You return codepoints and *heat* — never colours — so every plugin works with all
-fifty-five themes for free.
+You return codepoints and heat, never colours, so every plugin works with all fifty-five
+themes for free.
 
 > [!WARNING]
-> **Plugins are Python and run with your privileges.** spektr can't sandbox them, and
-> won't pretend to. Instead the trust decision is explicit: a plugin doesn't run until
-> you've approved its exact contents, and any edit invalidates that.
+> **Plugins are Python and run with your privileges.** spektr cannot sandbox them and will
+> not pretend to. A plugin does not run until you trust it by name, and it is checked by
+> hash after that, so an edited file has to be trusted again. Read one before you trust it.
 
-```console
-$ spektr plugins list
-  nightrider   untrusted  —
-
-$ spektr plugins trust nightrider
-  sha256  f28ceb19b2d630bd…   (31 lines)
-  This is Python. It runs with your privileges. Read it first.
-  Trust this plugin? [y/N] y
-```
-
-Failure *is* contained: a plugin that raises gets quarantined after a few attempts
-rather than taking the app down, one that renders too slowly has its previous frame
-reused, and its output is shape-checked so a mistake names the plugin instead of
-crashing somewhere unrelated. `spektr plugins doctor` explains anything that didn't
-load; `--no-plugins` starts clean.
-
-Full guide, including the whole of `ctx` and the drawing toolkit: **[docs/plugins.md](https://github.com/MrEmoji27/spektr/blob/main/docs/plugins.md)**.
+Manage them with `spektr plugins list`, `spektr plugins trust <name>` and
+`spektr plugins untrust <name>`. The full contract, including what a mode is given each
+frame and the mistakes that are easy to make: **[docs/plugins.md](docs/plugins.md)**.
 
 ## Keys
 
 | Key | Action | | Key | Action |
 |---|---|---|---|---|
-| `v` | Visualizer picker — live preview, `/` filter | | `d` / `D` | Next audio source / back to the default |
-| `l` | Loadout — which modes are offered at all | | `s` | Shuffle on/off — set what it cycles in `c` |
-| `t` | Theme picker — live preview, `/` filter | | `[` `]` | Sensitivity down / up |
-| `c` | Settings — frame rate, bands, sensitivity, gate, source | | `g` `G` | Noise gate down / up |
+| `v` | Visualizer picker, live preview, `/` filter | | `d` / `D` | Next audio source / back to the default |
+| `l` | Loadout, which modes are offered at all | | `s` | Shuffle on/off, set what it cycles in `c` |
+| `t` | Theme picker, live preview, `/` filter | | `[` `]` | Sensitivity down / up |
+| `c` | Settings, frame rate, bands, sensitivity, gate, source | | `g` `G` | Noise gate down / up |
 | `m` / `space` | Next mode (`M` for previous) | | `r` | Reload themes and plugins from disk |
 | `T` | Next theme | | `p` | Frame time and FPS |
-| `f` | Hide header and footer — full-screen visual | | `h` / `?` | Help — every key, and what each thing means |
+| `f` | Hide header and footer, full-screen visual | | `h` / `?` | Help, every key, and what each thing means |
 | `q` | Quit | | | |
 
-Mode, theme, frame rate, band count, sensitivity, gate, shuffle with its scope, and the loadout are remembered between runs.
+Mode, theme, frame rate, band count, sensitivity, gate, shuffle with its scope, and the
+loadout are all remembered between runs.
 
-`l` opens the **loadout** — a checklist of every mode. `space` picks one in or out, `a`
-and `n` take all or none, `/` filters. Whatever is left is what `v`, `m` and shuffle
-offer you, which is the point: spektr ships far more modes than anyone wants in one
-rotation, and cycling past fifty to reach your four is the problem it solves. Picking
-everything is the same as picking nothing — both mean no restriction — so it does
-nothing until you narrow it, and `--mode` still names any mode whether it is in the
-loadout or not.
-
-Press `s` in that panel to name what you have picked and keep it. Named loadouts show
-as `★` rows at the top of the same list: `space` loads one into the ticks so you can
-adjust it before applying, `d` deletes it. They live in `loadouts.json` beside your
-config, and they hold modes only — your theme and settings are never moved by loading
-one. This replaces the old `l`/`L` presets, which bundled mode, theme and four
-settings numbers together and so changed things you had not asked them to change; an
-existing `presets.json` is left on disk, just no longer read.
-
-`c` opens a settings panel in the same shape as the pickers — arrow keys change values
-and everything applies live, because a settings screen you have to close to see the
-effect of is one you fight with. **Bands** is one control over two mechanisms: at or
-below the analyser's native 32 the modes simply draw fewer bars out of the same
-analysis, and above it the band plan is rebuilt so 48 or 64 bars are genuinely 48 or 64
-distinct ranges of FFT bins rather than interpolated copies of their neighbours. **Source**
-is the last row — it shows what's currently listening, refreshing on its own as a switch
-settles rather than only when you touch it; → cycles to the next candidate device (same as
-`d`), ← resets to the system default (same as `D`).
-
-**Background** is `theme (solid)` by default: every visualizer cell carries the theme's
-own background colour, so the theme looks the same in any terminal. `terminal (see-through)`
-leaves empty cells to the terminal instead, which is what lets Windows Terminal's opacity or
-acrylic show the desktop through the picture — a terminal only draws a cell translucent when
-the cell names no background. The cost is that the theme no longer decides what is behind the
-lines: a light theme over a dark terminal is pale lines on a dark ground, and the modes still
-judge contrast against the theme's background. Two-colour modes keep their coloured fields
-and clear only the ramp's floor, where they draw nothing. The header, footer and panels stay
-solid.
-
-**Shuffle** is two things: `s` switches it on and off, and the `c` panel sets what it
-cycles — `modes`, `themes` or `both`. The scope is remembered while it's off, so `s` picks up
-where you left it. With `both` the mode changes every 15 s and the theme every third change,
-staggered because new shapes and new colours in the same instant read as the picture breaking.
-With `themes` alone there's no mode change to stagger against, so the theme moves every tick.
-
-The **theme editor** row in `c` opens an editor on whatever is currently showing. Same panel shape, same live
-application — the visualiser is running behind it with real audio, so you judge a colour by
-watching bars move in it rather than by looking at a swatch. Pick a slot on the top row,
-then nudge its hue, saturation and lightness. Four slots by default (`low`, `mid`, `high`,
-`accent`) with the background and text colour derived from them; the `slots` row unlocks
-those two for hand-picking, seeded from what was being derived so nothing jumps. A `check`
-row runs the same visibility rule the test suite applies to the built-in themes — anchors
-too close to their own background, text below WCAG AA — as a warning, not a veto. `esc`
-asks for a name and writes `<config>/themes/<name>.toml`; a name that already exists gets a
-numeric suffix rather than shadowing a built-in. `esc` at the name prompt throws the draft
-away and restores the theme you started from.
+Changing mode fades one picture into the other rather than cutting. Within a family the
+outgoing picture keeps moving to the music while it changes shape. Between families the
+change is slower and more deliberate.
 
 ## Command line
 
@@ -401,7 +306,7 @@ spektr --mic            allow the microphone as an automatic source
 spektr --list-modes     print visualiser names (including the opt-in ones)
 spektr --list-themes    print theme names
 spektr --glyph-test     can this terminal draw the (o) subcell modes?
-spektr --cells quadrant draw the subcell modes as (q) — block elements only
+spektr --cells quadrant draw the subcell modes as (q), block elements only
 spektr --background terminal
                         let the terminal's opacity show through the visualizer
                         (--background theme is the solid default; saved)
@@ -418,29 +323,28 @@ spektr plugins path     print the plugins folder
 
 ## How it captures audio
 
-spektr listens to your **output** device via loopback, so it visualises whatever is
-already playing — it never needs a file, a stream, or a music service. Stereo is
-preserved end to end, which is what the Stereo, VU, Needle and Gonio modes read.
+spektr listens to your output device through loopback, so it draws whatever is already
+playing. It never needs a file, a stream or an account. Stereo is kept all the way through,
+which is what the Stereo, VU, Needle and Gonio modes read.
 
 | Platform | Status |
 |---|---|
-| **Windows** | WASAPI loopback via `soundcard` — works out of the box |
-| **Linux** | PulseAudio / PipeWire monitor via `soundcard`, or a monitor input |
-| **macOS** | Needs a loopback device (BlackHole, Soundflower) |
+| **Windows** | WASAPI loopback through `soundcard`. Works out of the box. |
+| **Linux** | PulseAudio or PipeWire monitor through `soundcard`, or a monitor input. |
+| **macOS** | Needs a loopback device such as BlackHole or Soundflower. |
 
-It taps whatever the OS calls your default output and stays there, and it will never pick
-your microphone on its own. If the display is flat, `spektr --diagnose` opens every
-candidate in turn and prints the measured RMS and peak for each, which settles it.
+It taps whatever your system calls the default output and stays there. It will never pick
+your microphone on its own. If the picture is flat, run `spektr --diagnose`: it opens every
+candidate in turn and prints what it measured, which usually settles it.
 
-Why loopback needs `soundcard` rather than `sounddevice`, why the tap doesn't audition
-devices for signal, and how to read `--diagnose`:
+Why loopback needs `soundcard` rather than `sounddevice`, and how to read `--diagnose`:
 **[docs/audio-capture.md](docs/audio-capture.md)**.
 
 ## spektr on Android
 
 <details>
-<summary><b>An ambient display for a tablet you already own.</b> Same engine, same
-modes, same themes — click to expand.</summary>
+<summary><b>An ambient display for a tablet you already own.</b> Same engine, same modes,
+same themes. Click to expand.</summary>
 
 <br>
 
@@ -452,180 +356,147 @@ modes, same themes — click to expand.</summary>
      alt="spektr running on a tablet" width="100%"></td>
 </tr>
 <tr>
-<td><sub>The home screen. Mode and theme are pickable before capture starts, and
-the preview behind them is the real engine, not a mockup.</sub></td>
-<td><sub>On the tablet it is meant for — Chladni Extreme, <code>ice</code>.</sub></td>
+<td><sub>The home screen. The preview behind the pickers is the real engine.</sub></td>
+<td><sub>On the tablet it is meant for: Chladni Extreme, <code>ice</code>.</sub></td>
 </tr>
 </table>
 
-**What it is for.** A spare screen that draws your music. It is best on a big
-one — a tablet propped on the desk, an old phone in a stand, anything you are
-going to *look at* rather than hold. This is decoration, and it is meant to be:
-there is nothing here you cannot do better on the desktop, and no reason to run
-it on the device you are actually using. Where it earns its place is a
-multi-device setup — laptop for the work, tablet beside it doing nothing else.
+**What it is for.** A spare screen that draws your music. It is best on a big one: a tablet
+propped on the desk, an old phone in a stand, anything you look at rather than hold. This
+is decoration and it is meant to be. There is nothing here you cannot do better on the
+desktop.
 
-**What it captures.** Whatever *that device* is playing. Android has no way for
-one device to read another's audio, so the tablet visualises the tablet: put
-the music on it and let the desktop get on with the work. It cannot draw what
-your PC is playing, and no Android app can.
+**What it captures.** Whatever that device is playing. Android gives no app a way to read
+another device's audio, so the tablet draws the tablet. Put the music on it and let the
+desktop get on with work.
 
-The permission prompt asks to record the screen. That is Android's doing, not
-ours — `AudioPlaybackCapture` is part of the screen-recording API and there is
-no audio-only consent to ask for. Nothing is recorded and nothing leaves the
-device; the capture is read straight into the analyser and thrown away.
+The permission prompt asks to record the screen. That is Android's design, not ours: audio
+capture is part of the screen-recording API and there is no audio-only permission to ask
+for. Nothing is recorded and nothing leaves the device.
 
-**How it works.** The engine is the same Python you are reading about above,
-running unmodified on the device through
-[Chaquopy](https://chaquo.com/chaquopy/): CPython and numpy load in about half
-a second, and one call per frame crosses into Kotlin carrying a packed grid of
-codepoints and colour indices. Kotlin owns the audio and the screen; everything
-between them is this repository.
-
-That means a mode written for the terminal works on the phone the day it is
-written, and a theme is the same fifty-five colours in both places. It also
-means the port inherits the terminal's shape — a grid of character cells —
-which is why the settings sheet has a **detail** row: how many rows of cells
-fit on the screen is the one number that decides how coarse everything looks.
+**How it works.** The engine is the same Python described above, running unmodified
+through [Chaquopy](https://chaquo.com/chaquopy/). CPython and numpy load in about half a
+second, and one call per frame hands Kotlin a packed grid of codepoints and colours. Kotlin
+owns the audio and the screen. Everything between them is this repository, so a mode
+written for the terminal works on the phone the day it is written.
 
 **Where it differs.**
 
 | | desktop | Android |
 |---|---|---|
-| modes | 64 | 52 — the twelve `(o)` variants need Unicode 16 octants, which no font on Android has yet |
+| modes | 60 | the subcell variants are missing, because no Android font has Unicode 16 octants yet |
 | themes | 55 | 55 |
-| frame rate | 60 | 30, and the panel is watched from across a room |
-| rendering | terminal cells | cells, or **smooth** — the field blitted as a picture instead of typeset as glyphs |
+| frame rate | 60 | 30, and it is watched from across a room |
+| rendering | terminal cells | cells, or **smooth**, where the field is drawn as a picture instead of typeset as glyphs |
 
-**Smooth** is the one thing the phone can do that a terminal cannot. A cell is
-not a pixel: Chladni computes a continuous field and then picks one half-block
-to stand for each cell. Android has a canvas and no such constraint, so the
-mode is run finer and the field it actually computed is drawn — curves instead
-of staircases.
+**Smooth** is the one thing a phone can do that a terminal cannot. A cell is not a pixel:
+in the terminal, Chladni computes a continuous field and then picks one block to stand for
+each cell. Android has a canvas and no such limit, so it draws the field it actually
+computed. Curves instead of staircases.
 
-**Getting it.** `spektr-android-*-arm64-v8a.apk` on the
-[releases page](https://github.com/MrEmoji27/spektr/releases). Android 10 or
-newer, 64-bit ARM. Sideload it — you will need to allow installs from your
-browser or file manager the first time.
+**Getting it.** Download `spektr-android-*-arm64-v8a.apk` from the
+[releases page](https://github.com/MrEmoji27/spektr/releases). It needs Android 10 or newer
+and 64-bit ARM. Sideload it, allowing installs from your browser the first time.
 
-The APK carries its own version number and it is not the one on the release.
-The port has had fewer versions than the desktop app, so the build inside
-spektr 0.5.0 reports **v0.4.0**; putting 0.5.0 on it would claim six versions
-of something that has had four. `CHANGELOG.md` lists the Android versions
-separately, and the app shows that same file under **what's new**.
+The APK carries its own version number, which is not the one on the release. The port has
+had fewer versions than the desktop app. `CHANGELOG.md` lists them separately, and the app
+shows that file under **what's new**.
 
-Build it yourself with `cd android && ./gradlew :app:assembleDebug`; the
-design notes are in [docs/android-port.md](docs/android-port.md).
+Build it yourself with `cd android && ./gradlew :app:assembleDebug`. Design notes:
+[docs/android-port.md](docs/android-port.md).
 
 </details>
 
 ## How it works
 
-Analysis runs on its own 256-sample-hop clock rather than off the frame timer, the bands
-use [cava](https://github.com/karlstav/cava)'s two-window distribution, the easing is
-expressed in seconds so the motion is identical at 15 and 240 fps, and modes emit arrays
-of codepoints and palette indices — never strings, never a Rich console render.
+Analysis runs on its own clock rather than off the frame timer. The bands use
+[cava](https://github.com/karlstav/cava)'s two-window distribution. Motion is timed in
+seconds, so it looks the same at 15 fps and at 240. Modes return arrays of codepoints and
+palette indices, never strings and never a Rich render.
 
-The reasoning behind each of those, and what breaks without it:
+Why each of those, and what breaks without them:
 **[docs/how-it-works.md](docs/how-it-works.md)**.
 
 ## Development
 
 ```bash
 python -m pytest tests/ -q   # the whole suite
-python tests/bench.py        # shape checks, per-mode render benchmark, cost gate
-python tests/onset_score.py  # scores the real onset detector against the corpus
-python tests/test_audit.py   # logic audit: mutation, animation, reactivity, leaks
+python tests/bench.py        # shape checks, per-mode benchmark, cost gate
+python tests/onset_score.py  # scores the beat detector against its corpus
+python tests/test_audit.py   # mutation, animation, reactivity, leaks
 ```
 
 `tests/test_golden_modes.py` checks that every built-in mode draws exactly what it drew
 when `tests/golden/modes.json` was recorded. A change meant to alter a picture regenerates
-it with `python tests/golden.py --update`, and says so in its commit message.
+that file with `python tests/golden.py --update` and says so in its commit message.
 
-Benchmark method, what each gate actually gates, and their current state:
-**[docs/development.md](docs/development.md)**. Building the Windows exe and installer:
+What each gate covers and where it stands: **[docs/development.md](docs/development.md)**.
+Building the Windows exe and installer:
 **[packaging/README.md](https://github.com/MrEmoji27/spektr/blob/main/packaging/README.md)**.
 
 ## Why it exists
 
-It began as the visualiser inside a terminal music client. It turned out to be the most
-interesting part of that project and the only part that didn't depend on anyone's API,
-so it moved out and got its own name.
+It started as the visualiser inside a terminal music player. It turned out to be the most
+interesting part of that project, and the only part that did not depend on anyone's API, so
+it moved out and got its own name.
 
 ## Inspired by
 
-spektr is a terminal visualizer, and the two best ones were already written — so their
-good ideas get cited here, where they belong.
+Two terminal visualisers got there first, so their ideas are credited here.
 
-- **[cava](https://github.com/karlstav/cava)** — the console audio visualizer that
-  solved the hard parts of the spectrum first. spektr takes its band distribution
-  (two FFT windows with strictly disjoint bins over 50 Hz–10 kHz), its
-  overshoot-based automatic sensitivity, and its capture rule: tap whatever the OS
-  calls the default output and don't audition for signal.
+- **[cava](https://github.com/karlstav/cava)**, the console audio visualizer that solved
+  the hard parts of the spectrum first. spektr takes its band distribution, its
+  overshoot-based automatic sensitivity, and its capture rule: tap the default output and
+  do not audition devices for signal.
 
-- **[cliamp](https://github.com/bjarneo/cliamp)** — the terminal music player that
-  spektr began life inside. The mode registry, the theme system and the plugin
-  contract all carry its shape: cliamp theme files port over unchanged (see
-  [Custom themes](#custom-themes)), and the plugin model — code with a decorator,
-  in a folder, vetted by hash before it runs — is the same idea in a different
-  language.
+- **[cliamp](https://github.com/bjarneo/cliamp)**, the terminal music player spektr began
+  inside. The mode registry, the theme system and the plugin contract all carry its shape.
+  cliamp theme files port over unchanged, and its plugin model, code with a decorator in a
+  folder checked by hash, is the same idea in another language.
 
 ## Use of AI in this project
 
-Parts of spektr were developed with the assistance of AI. **Opus 5**,
-**GPT-5.6 Luna** and **DeepSeek v4 Flash** contributed to building, debugging
-and fixing the project. This is stated openly rather than left to be inferred
-from the commit history.
+Parts of spektr were built with AI. **Opus 5**, **GPT-5.6 Luna** and **DeepSeek v4 Flash**
+helped build, debug and fix it. That is said here rather than left to be worked out from the
+commit history.
 
-They were used under human direction and within deliberate limits. No model
-had authority over the project's direction, and no output was accepted merely
-because it appeared complete. Contributions were reviewed, and — more
-importantly — held to the same standards as anything else here: a change was
-adopted once it had been measured, rendered, or otherwise demonstrated to do
-what it claimed.
+They worked under direction and within limits. No model decided where the project was
+going, and no output was accepted because it looked finished. Every change had to be
+measured, rendered, or otherwise shown to do what it claimed.
 
-That requirement is not ceremony. Generated code fails in a particular way:
-it is fluent, internally consistent, and confidently documented, and it can be
-all of those things while being wrong. A visualiser mode can return arrays of
-the correct shape, carry an articulate docstring, and still draw the wrong
-picture. Reviewing such code by reading it is not sufficient, because reading
-is precisely the check it is best at passing.
+That rule is not ceremony. Generated code fails in a specific way: it is fluent, coherent
+and confidently documented, and it can be all of that while being wrong. A mode can return
+arrays of the right shape, carry a convincing docstring, and still draw the wrong picture.
+Reading such code is not enough, because reading is the check it passes best.
 
-This is why the test suite here is shaped as it is. It verifies behaviour
-rather than structure: that a mode responds when the audio changes and holds
-still when it does not; that it uses the colour ramp it is given instead of
-collapsing into a few shades; that a comment still describes the code beside
-it; that the Android build's vendored copy of the engine matches the original;
-that every glyph a mode emits exists in the font that ships with it. Most of
-those checks were added after something had already passed a weaker one and
-proved wrong regardless.
+This is why the tests here check behaviour rather than structure: that a mode reacts when
+the audio changes and holds still when it does not, that it uses the colour ramp it was
+given, that a comment still matches the code beside it, that the Android copy of the engine
+matches the original, that every glyph a mode emits exists in the font shipped with it. Most
+of those were added after something passed a weaker check and turned out wrong anyway.
 
 ### A note for anyone doing the same
 
-If you use AI while building software, the risk worth planning for is not poor
-quality output — it is plausible output. Code that has not been read, executed
-and tested is a liability regardless of its author, and adopting a model's
-work because it looks reasonable is a reliable way to ship a defect that
-cannot later be explained.
+The risk to plan for is not bad output. It is plausible output. Code nobody has read, run
+and tested is a liability whoever wrote it, and accepting a model's work because it looks
+reasonable is a reliable way to ship a bug you cannot explain later.
 
-Treat generated code as a proposal rather than a result. Establish how a
-change will be verified before accepting it, prefer checks that observe
-behaviour over checks that inspect form, and keep a human accountable for
-every decision. Used on those terms, these tools are genuinely useful. Used
-without them, they transfer risk into the codebase quietly, which is the worst
-place for it to arrive.
+Treat generated code as a proposal, not a result. Decide how a change will be checked before
+you accept it. Prefer checks that watch behaviour over checks that inspect form. Keep a
+person accountable for every decision. On those terms these tools are genuinely useful.
+Without them they move risk quietly into your codebase, which is the worst place for it.
 
 ### Credits
 
-**zemo** — author and maintainer.
-**Roshan (RRDOJ)** — the logo: a terminal prompt built out of spectrum bars.
+**zemo**, author and maintainer.
+**Roshan (RRDOJ)**, the logo: a terminal prompt built out of spectrum bars.
 
-Assisted work, on the terms set out above:
+Assisted work, on the terms above:
 
-- **Opus 5** — most of the assisted work.
-- **GPT-5.6 Luna** — dispatched on individual modes.
-- **DeepSeek v4 Flash** — debugging and second opinions.
+- **Opus 5**, most of it.
+- **GPT-5.6 Luna**, individual modes.
+- **DeepSeek v4 Flash**, debugging and second opinions.
 
 ## License
 
-MIT © zemo — see [LICENSE](https://github.com/MrEmoji27/spektr/blob/main/LICENSE).
+MIT, © zemo. See [LICENSE](https://github.com/MrEmoji27/spektr/blob/main/LICENSE).
