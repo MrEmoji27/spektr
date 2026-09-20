@@ -93,24 +93,6 @@ jobs:
           path: dist/spektr
           if-no-files-found: error
 
-      - name: Attach to the release
-        # Uploads this job's files and nothing else. The release and all of its
-        # text, the download guide included, come from
-        # docs/release-notes-<version>.md, created before the tag is pushed.
-        # The three build jobs used to append a section each to the release
-        # body, and jobs that edit one body at the same moment race: 0.5.0 lost
-        # its Linux section that way. They also published the release as they
-        # went. Publishing is now done by hand once every file is attached.
-        if: startsWith(github.ref, 'refs/tags/')
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          TAG="$GITHUB_REF_NAME"
-          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null || {
-            echo "::error::no release for $TAG. Create it first: gh release create $TAG --draft --title \"spektr ${TAG#v}\" --notes-file docs/release-notes-${TAG#v}.md"
-            exit 1
-          }
-          gh release upload "$TAG" dist/spektr --repo "$GITHUB_REPOSITORY" --clobber
 
   old-distribution:
     # Docker is available on the runner, not inside the build job's container,
@@ -135,3 +117,33 @@ jobs:
             apt-get install -y -qq libportaudio2 libpulse0 >/dev/null &&
             /dist/spektr --version &&
             /dist/spektr --list-modes | head -3"
+
+  attach:
+    # The container the binary is built in has no gh CLI, so the upload runs
+    # on the host runner instead, over the artifact the build job left. It
+    # waits for the old-distribution check as well: a binary that cannot start
+    # on Ubuntu 20.04 has no business on a release.
+    needs: [build, old-distribution]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: spektr-linux
+          path: dist
+
+      - name: Attach to the release
+        # Uploads this job's file and nothing else. The release and all of its
+        # text, the download guide included, come from
+        # docs/release-notes-<version>.md, created before the tag is pushed.
+        # Publishing is done by hand once every file is attached.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="$GITHUB_REF_NAME"
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null || {
+            echo "::error::no release for $TAG. Create it first: gh release create $TAG --draft --title \"spektr ${TAG#v}\" --notes-file docs/release-notes-${TAG#v}.md"
+            exit 1
+          }
+          gh release upload "$TAG" dist/spektr --repo "$GITHUB_REPOSITORY" --clobber
