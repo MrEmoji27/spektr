@@ -335,7 +335,7 @@ class Spektr(App):
                 viz.cancel_mode_preview()
             else:
                 viz.set_mode(choice)
-                viz.commit_mode()
+                viz.commit_mode(dissolve=True)
                 self._save_settings()
 
         self._open_overlay(

@@ -156,11 +156,20 @@ class AudioVisualizer(Widget):
         self._preview_mode: str | None = None
         self._dissolve_from: str | None = None
         self._dissolve_started = 0.0
-        #: The last picture the current mode drew, and the outgoing mode's
-        #: copy of it once a dissolve starts. See :meth:`_outgoing`.
+        #: Whether this morph runs for the short span. True for the handful of
+        #: switches a person made by hand, where waiting out a shuffle-length
+        #: morph would feel like the key did nothing.
+        self._dissolve_quick = False
+        #: What beats landing during this morph have added to its travel. See
+        #: ``dissolve.PUSH``; reset when a morph starts, carried while it runs.
+        self._dissolve_push = 0.0
+        #: The last picture drawn, and which mode drew it — the morph needs
+        #: both, since a frame is only a stand-in for the outgoing mode if
+        #: that mode is the one it came from. See :meth:`_outgoing`.
         #: The band count to put back when eco is switched off again.
         self._eco_bands_were: int | None = None
         self._last_frame: tuple | None = None
+        self._last_frame_mode: str | None = None
         self._frozen_old: tuple | None = None
 
         self.quarantine = Quarantine()
@@ -301,20 +310,30 @@ class AudioVisualizer(Widget):
         *,
         remember: bool = True,
         dissolve: bool = False,
+        quick: bool = False,
+        from_mode: str | None = None,
     ) -> None:
         """Switch to a mode by name — including a hidden one, deliberately.
 
         Hiding is about what the interface *offers*, not about what it will
         run: a config file or ``--mode`` naming a hidden mode has to keep
         working, or hiding one would silently change what someone's setup does.
+
+        ``dissolve`` morphs out of what is on screen rather than cutting, and
+        is what every switch a person makes passes — shuffle, the cycle keys,
+        the picker. ``quick`` shortens the morph to ``FAMILY_SECONDS`` however
+        far apart the two modes are. ``from_mode`` names the picture to morph
+        out of when that is not the mode currently running: the picker
+        previews live, so at the moment its choice is committed the mode on
+        screen is the one being committed, and the change worth animating is
+        the one from where the picker was opened.
         """
         if mode_registry.get(name) is None or self.quarantine.is_disabled(name):
             return
         previous = self.mode_name
-        if dissolve and name != previous:
-            self._dissolve_from = previous
-            self._dissolve_started = time.monotonic()
-            self._frozen_old = self._last_frame
+        source = from_mode or previous
+        if dissolve and name != source:
+            self._start_morph(source, quick=quick)
         else:
             self._dissolve_from = None
         self.mode_name = name
@@ -325,20 +344,66 @@ class AudioVisualizer(Widget):
             self.settings.mode = name
         self.refresh()
 
+    def _morph_span(self) -> float:
+        """How long the morph that is running lasts.
+
+        One of the two lengths ``dissolve`` offers, never anything in between:
+        a shuffle between two modes of different families is the long one, and
+        everything else — the same family, or a switch someone made by hand —
+        is the short one. A keypress that starts a morph the length of a
+        shuffle would feel like a key that did nothing.
+        """
+        if self._dissolve_quick or self._same_family(
+            self._dissolve_from or "", self.mode_name
+        ):
+            return dissolve.FAMILY_SECONDS
+        return dissolve.SECONDS
+
+    def _start_morph(self, source: str, *, quick: bool) -> None:
+        """Begin morphing out of ``source``'s picture into the current mode.
+
+        ``source`` is normally the mode running now, and the frame it drew is
+        the picture being carried into the new one. It is not always — the
+        picker commits a mode it has already previewed, so what it morphs out
+        of is the mode the picker was opened on, which nothing has drawn
+        recently. Then there is no frame to hold and the outgoing mode is
+        redrawn live for the length of the morph, which is what a morph out of
+        a picture that is not on screen costs.
+        """
+        self._dissolve_from = source
+        self._dissolve_started = time.monotonic()
+        self._dissolve_quick = quick
+        self._dissolve_push = 0.0
+        self._frozen_old = (
+            self._last_frame if self._last_frame_mode == source else None
+        )
+
     def preview_mode(self, name: str) -> None:
-        """Show a mode without committing to it — for the picker."""
+        """Show a mode without committing to it — for the picker.
+
+        Instant, and deliberately: arrowing down the list changes modes faster
+        than a morph lasts, so every one of them would start a morph that the
+        next keypress would cut off. The morph belongs to the choice, not to
+        the browsing — see :meth:`commit_mode`.
+        """
         if self._preview_mode is None:
             self._preview_mode = self.mode_name
         self.set_mode(name, remember=False)
 
-    def commit_mode(self) -> None:
-        self._preview_mode = None
+    def commit_mode(self, *, dissolve: bool = False) -> None:
+        """Keep the previewed mode. ``dissolve`` morphs into it from where the
+        picker was opened, which is the change the commit actually makes."""
+        source, self._preview_mode = self._preview_mode, None
+        if dissolve and source is not None and source != self.mode_name:
+            self._start_morph(source, quick=True)
+            self._strips = None
         self.settings.mode = self.mode_name
 
     def cancel_mode_preview(self) -> None:
         if self._preview_mode is not None:
-            self.set_mode(self._preview_mode, remember=False)
+            back = self._preview_mode
             self._preview_mode = None
+            self.set_mode(back, remember=False, dissolve=True, quick=True)
 
     def cycle_mode(self, step: int = 1) -> str:
         names = self.mode_names
@@ -348,7 +413,7 @@ class AudioVisualizer(Widget):
             i = (names.index(self.mode_name) + step) % len(names)
         except ValueError:
             i = 0  # current mode was just quarantined out of the list
-        self.set_mode(names[i])
+        self.set_mode(names[i], dissolve=True, quick=True)
         return self.mode_name
 
     def _quarantine_mode(self, name: str, detail: str) -> None:
@@ -895,19 +960,29 @@ class AudioVisualizer(Widget):
         out = self._render_mode(self.mode_name, frame, w, h, onsets)
         if self._dissolve_from is not None:
             family = self._same_family(self._dissolve_from, self.mode_name)
-            span = dissolve.FAMILY_SECONDS if family else dissolve.SECONDS
-            progress = (time.monotonic() - self._dissolve_started) / span
+            progress = (time.monotonic() - self._dissolve_started) / self._morph_span()
             if progress >= 1.0:
                 self._dissolve_from = None
                 self._frozen_old = None
                 self._refresh_mode_window()
             else:
+                # A beat landing mid-morph shoves the shapes on: the change
+                # lands with the music rather than to its own schedule. Only
+                # the travel — the handover keeps its own clock, or a beat
+                # would swap the colours before the shapes had met.
+                if onsets:
+                    self._dissolve_push = min(
+                        dissolve.PUSH_MAX,
+                        self._dissolve_push + dissolve.PUSH * min(onsets, 2),
+                    )
                 out = dissolve.blend(
                     self._outgoing(self._dissolve_from, frame, w, h, onsets),
                     out, dissolve.ease(progress),
                     gather=0.0 if family else dissolve.GATHER,
+                    push=self._dissolve_push,
                 )
         self._last_frame = out
+        self._last_frame_mode = self.mode_name
 
         if len(out) == 3:
             codes, cidx, bidx = out
