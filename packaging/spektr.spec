@@ -21,7 +21,7 @@ import os
 import sys
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 ROOT = Path(SPECPATH).parent          # noqa: F821 — SPECPATH is injected
 sys.path.insert(0, str(ROOT))
@@ -72,6 +72,14 @@ for package in (
     "winrt", "dbus_next",
 ):
     pull(package)
+
+# Every mode module, because nothing imports them by name any more: a mode's
+# file is loaded when the mode is first used, through importlib, and static
+# analysis cannot see that. Without this the exe starts and then dies on its
+# first frame with "No module named 'spektr.modes.spectrum'" — which is how it
+# shipped once, because --version and --list-modes read the catalogue and
+# never load a mode at all.
+hiddenimports += collect_submodules("spektr.modes")
 
 hiddenimports += [
     # cffi ABI-mode shim that sounddevice imports, plus its C backend

@@ -86,6 +86,8 @@ jobs:
         run: |
           ./dist/spektr --version
           ./dist/spektr --list-modes
+          # loads every mode module: the frozen build has to carry them all
+          ./dist/spektr --check-modes
 
       - uses: actions/upload-artifact@v4
         with:

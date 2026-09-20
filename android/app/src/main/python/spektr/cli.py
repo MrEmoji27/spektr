@@ -268,6 +268,20 @@ def main() -> None:
             if p.error:
                 print(f"plugin {p.name}: {p.error.splitlines()[-1]}", file=sys.stderr)
 
+    if "--check-modes" in argv:
+        # Loads every mode's code, which is the one thing --version and
+        # --list-modes do not: they read the catalogue. A frozen build that is
+        # missing a mode module passes those two and dies on its first frame,
+        # which is exactly how 0.5.5 first shipped. The release builds run
+        # this, so that cannot happen quietly again.
+        mode_registry.load_all()
+        broken = [m.name for m in mode_registry.MODES if m.fn is None]
+        if broken:
+            print(f"modes that failed to load: {broken}", file=sys.stderr)
+            raise SystemExit(1)
+        print(f"{len(mode_registry.MODES)} modes loaded")
+        return
+
     if "--list-modes" in argv:
         # Hidden modes are listed here and nowhere else in the UI. They are
         # still selectable by name, so a listing that omitted them would make
