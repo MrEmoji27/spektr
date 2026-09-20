@@ -9,6 +9,70 @@ line because it moves at its own pace, and ships inside a spektr release: the
 APK carries the release's version number, and the heading below says which
 port version that is.
 
+## spektr 0.5.5
+
+A foundations release. No new modes and no new themes: this one is about what
+happens underneath, plus the two things you see every time you change mode.
+
+### Lighter to run
+
+The picture now goes straight to the terminal instead of through the interface
+framework a cell at a time, and only the cells that changed are sent. Measured
+here at a large terminal size, that is about a third off the processor time,
+and the light modes stopped dropping frames altogether.
+
+There is also an **eco** setting: 30 frames a second, fewer bars, and shuffle
+staying away from the visuals your machine has been measured struggling with.
+It is off until you turn it on.
+
+### Modes change by morphing
+
+A mode change used to cut. Now each column of the picture slides and stretches
+into the shape of the new one before handing over, so one picture becomes the
+other. Within a family it is quick and the outgoing picture keeps moving to the
+music while it changes; between families it takes longer and gathers in on
+itself on the way. Every switch morphs, including the ones you make yourself.
+
+### It hears the first beat
+
+A track's first hit used to be invisible, because the detector compares each
+moment with the one before it and at the start there is nothing before. It is
+found now, and so is the first hit after a pause.
+
+The analyser also stopped assuming every sound card runs at 48 kHz. On a 96 kHz
+device every timing inside the beat detector meant half as long as it should;
+on the test corpus, accuracy there rises from 0.888 to 0.905.
+
+### The JP meters
+
+**JP Bars** sheds on the way down: the bulbs a falling bar leaves keep their
+shape, detach, and climb. **JP Drift** is rebuilt from scratch. It was a
+sandpile that tipped sideways on a beat, which took a paragraph to explain and
+looked like the panel arguing with itself. Bulbs now break off a falling column
+and drop down the ladder, piling at the foot.
+
+**Terra** is gone.
+
+### Smaller things
+
+* The header and footer have an **auto** setting: they hide when you stop
+  pressing keys and come back when you press one.
+* Settings written by a newer version are no longer erased by an older one.
+* Running the tests from a checkout no longer overwrites your own settings.
+* Dither Storm drew five times its documented density in silence. Fixed.
+* The visualiser never shows a scrollbar over the picture.
+* The Linux binary is built against glibc 2.28, so it starts on Ubuntu 18.10
+  and newer. The previous build needed a glibc newer than Ubuntu 22.04 had.
+
+### Inside
+
+The package is split into layers: `audio/`, `platform/`, `render/`, `modes/`,
+`ui/` and `cli.py`, with every old import path still working. Modes load when
+they are first used rather than all at startup, and at most five keep their
+working memory. Every one of the 73 modes is pinned by a recorded fingerprint
+that the tests check on every push, so a change that alters a picture cannot
+pass unnoticed.
+
 ## spektr 0.5.0
 
 Four new modes, and a release mostly about making the pictures that already

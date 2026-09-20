@@ -1,6 +1,5 @@
 <!--
-Draft body of the GitHub release for v0.5.5, updated as each piece lands.
-Items marked "planned" are not finished yet. Publishing:
+Body of the GitHub release for v0.5.5. Publishing:
 
     gh release create v0.5.5 --draft --title "spektr 0.5.5" \
       --notes-file docs/release-notes-0.5.5.md
@@ -8,8 +7,6 @@ Items marked "planned" are not finished yet. Publishing:
     # once the exe, installer, Linux binary and APK are attached:
     gh release edit v0.5.5 --draft=false
 -->
-
-> **Still being built.** Anything marked *planned* is not finished yet.
 
 No new modes this time, and no new themes. 0.5.5 is the release that makes
 spektr lighter, smoother and harder to break — the groundwork for what comes
@@ -45,7 +42,7 @@ You can also have shuffle wait for the song to change instead of watching a
 clock. The settings panel says when the computer cannot provide now-playing
 information, so that option never fails silently.
 
-### Linux: it starts on older systems again — *planned*
+### Linux: it starts on older systems again
 
 The Linux binary was built on too new a system and refused to start on older
 ones with a `GLIBC` error. It's now built for **glibc 2.28** — Ubuntu 18.10,
@@ -112,3 +109,17 @@ release whose first rule is that nothing breaks.
 apart from each other, where the bar begins, build-ups and drops, colour that
 follows the key — with new JP meters built on top, and spektr on PyPI so `pip`
 can install it.
+
+### Which file
+
+| you have | download |
+|---|---|
+| Windows, no Python | `spektr.exe`, portable, double-click |
+| Windows, one line in PowerShell | `irm https://github.com/MrEmoji27/spektr/releases/latest/download/spektr.exe -OutFile spektr.exe; ./spektr.exe` |
+| Windows, want a Start Menu entry | `spektr-0.5.5.0-setup.exe` |
+| Linux, no Python | `spektr`, `chmod +x` and run. Needs glibc 2.28 or newer |
+| Android | `spektr-android-0.4.0-arm64-v8a.apk`, Android 10+, 64-bit ARM |
+| Python already | clone and `pip install -e .`, not on PyPI yet |
+
+The Windows and Linux builds are unsigned. SmartScreen will warn on first run:
+More info, then Run anyway.
