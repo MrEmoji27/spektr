@@ -46,10 +46,10 @@ def test_leaving_eco_restores_the_band_count_the_user_chose():
 def test_shuffle_only_skips_modes_measured_over_the_budget():
     viz = _viz(eco="on")
     viz._target_fps = 60
-    viz._mode_ms["Terra"] = 40.0        # far over a 16.7 ms budget
+    viz._mode_ms["Swell"] = 40.0        # far over a 16.7 ms budget
     viz._mode_ms["Bars"] = 1.0
     assert viz.affordable("Bars") is True
-    assert viz.affordable("Terra") is False
+    assert viz.affordable("Swell") is False
     # a mode nobody has drawn yet is not excluded on a guess
     assert viz.affordable("Flame") is True
 
@@ -60,7 +60,7 @@ def test_shuffle_only_skips_modes_measured_over_the_budget():
 def test_modes_in_one_family_are_recognised():
     viz = _viz()
     assert viz._same_family("Bars", "Bricks") is True        # both spectrum
-    assert viz._same_family("Bars", "Terra") is False
+    assert viz._same_family("Bars", "Swell") is False
     assert viz._same_family("Bars", "Not A Mode") is False
 
 
@@ -82,8 +82,8 @@ def test_an_expensive_switch_across_families_holds_the_last_frame():
 
     viz = _viz()
     viz._target_fps = viz._fps = 60
-    viz.mode_name = "Terra"
-    viz._mode_ms.update({"Terra": 30.0, "Chladni Extreme (o)": 20.0})
+    viz.mode_name = "Swell"
+    viz._mode_ms.update({"Swell": 30.0, "Chladni Extreme (o)": 20.0})
     frozen = (np.zeros((24, 80), dtype=np.int32), np.zeros((24, 80), dtype=np.int32))
     viz._frozen_old = frozen
     viz._render_mode = lambda *a: pytest.fail("should not re-render an expensive pair")

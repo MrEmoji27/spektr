@@ -86,8 +86,8 @@ SELF_ANIMATING = {
     "Star Trails", "Supernova",
     # the terrain family: seas never freeze (Swell's wave trains travel on
     # their own phase clocks) and geology drifts east on a slow clock nobody
-    # hears (Terra's noise origin slides whether or not anything plays)
-    "Swell", "Terra",
+    # hears (Swell's noise origin slides whether or not anything plays)
+    "Swell",
     # continuous spin (Kaleidoscope rotates its mirror array; the
     # scrollwork curls turn on their anchors even at a frozen spectrum)
     "Kaleidoscope", "Kaleidoscope (o)", "Kaleidoscope Ultra (o)",

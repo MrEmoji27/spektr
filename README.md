@@ -9,7 +9,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-00c853)](https://github.com/MrEmoji27/spektr/blob/main/LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20·%20Linux%20·%20macOS-546e7a)](#how-it-captures-audio)
-[![Modes](https://img.shields.io/badge/render%20modes-61-ff6d00)](#modes)
+[![Modes](https://img.shields.io/badge/render%20modes-60-ff6d00)](#modes)
 [![Themes](https://img.shields.io/badge/themes-55-7c4dff)](#themes)
 [![Built with Textual](https://img.shields.io/badge/built%20with-Textual-5e35b1)](https://textual.textualize.io/)
 
@@ -23,7 +23,7 @@ spektr draws it: overlapped FFTs across 32 log-spaced bands (settable) from 50 H
 out the way cava does it, rendered with braille sub-characters so the picture moves at
 four times the vertical resolution of a text cell.
 
-**Sixty-one render modes. Fifty-five themes. 60 fps, or your display's.**
+**Sixty render modes. Fifty-five themes. 60 fps, or your display's.**
 
 There is an **Android build** too — the same engine, on a tablet, as an ambient
 display for the desk. It is a second screen, not a second product: see
@@ -140,7 +140,7 @@ Listed in the order the picker cycles them.
 | **Orbit** | bodies on real elliptical orbits; loud bands swing out | **Shooting Star** | a night sky, with meteors thrown from a drifting radiant on the beat |
 | **Constellations** | beats draw lines between fixed stars; the figures fade like film | **Star Trails** | a long exposure: the sky turns and leaves its arcs behind |
 | **Supernova** | a mostly dark sky, waiting for the one hit worth a catastrophe | | |
-| **Swell** | an open sea — bass drives the swell, hits land ripples | **Terra** | a bass-lifted mountain range; every hit raises a hill |
+| **Swell** | an open sea — bass drives the swell, hits land ripples | | |
 | **Fireworks** | beat-triggered launches, bursts, and fall | **Maelstrom** | a real fluid sim, stirred by the music |
 | **Dune** | sand piles up by band, avalanching past a threshold | **Vinyl** | a record whose grooves light up as a radial spectrum |
 | **Murmuration** | a flock wheeling and scattering with the beat | **Rain** | rain on the glass, falling harder when it's loud |
@@ -174,8 +174,8 @@ shared reactivity budget. Each one maps real band data into its geometry,
 so what the music changes is what the object is doing, not just how bright
 the picture is.
 
-A sixty-second entry, **None**, is registered as the off switch — it draws nothing.
-That is why the test output counts 62 against the sixty-one listed here — and 74
+A sixty-first entry, **None**, is registered as the off switch — it draws nothing.
+That is why the test output counts 61 against the sixty listed here — and 73
 in total, because the twelve subcell variants below are registered whether or not
 the setting that offers them is on.
 

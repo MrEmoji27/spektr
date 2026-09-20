@@ -317,8 +317,16 @@ def mode(name: str, group: str = "spectrum", blurb: str = "",
     def wrap(fn):
         if name in _BY_NAME:
             if name in _PENDING and _LOADING is None:
+                # The catalogue seeded this entry so the picker could list the
+                # mode without importing it. Now the real module has loaded,
+                # its own decorator is the truth: copy every field across, not
+                # just the function, or editing a mode's group, blurb or
+                # hidden flag in source would change nothing at all.
                 pending = _BY_NAME[name]
                 object.__setattr__(pending, "fn", fn)
+                object.__setattr__(pending, "group", group)
+                object.__setattr__(pending, "blurb", blurb)
+                object.__setattr__(pending, "hidden", hidden)
                 _PENDING.remove(name)
                 return fn
             owner = _BY_NAME[name].plugin or "spektr"

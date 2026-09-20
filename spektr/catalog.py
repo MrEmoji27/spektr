@@ -76,7 +76,6 @@ CATALOG: tuple[tuple[str, str, str, bool, str], ...] = (
     ('Snow', 'lofi', 'snowfall in three planes, thickening and gusting with the track', False, 'lofi'),
     ('Ember', 'lofi', 'a coal bed burning by band, sparks rising off the hot spots', False, 'lofi'),
     ('Swell', 'terrain', 'an open sea in half-tones — built for the Android terrain view', False, 'terrain'),
-    ('Terra', 'terrain', 'a bass-lifted mountain range, hills raised by hits — for terrain view', False, 'terrain'),
     ('Shooting Star', 'cosmos', 'a night sky, with meteors thrown from a drifting radiant on the beat', False, 'cosmos'),
     ('Constellations', 'cosmos', 'beats draw lines between fixed stars, then the figures fade', False, 'cosmos'),
     ('Star Trails', 'cosmos', 'a long exposure: the sky turns, and the arcs it leaves are the show', False, 'cosmos'),

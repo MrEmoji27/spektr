@@ -177,7 +177,7 @@ def test_real_two_colour_modes_clear_only_their_floor():
     b = np.linspace(0.8, 0.2, 32)
     pal = Palette(BUILTIN["flexoki-light"], transparent=True)
     want = BUILTIN["flexoki-light"].bg.lower()
-    for name in ("Radial (o)", "Chladni", "Maelstrom (o)", "Plasma", "Kaleidoscope", "Swell", "Terra"):
+    for name in ("Radial (o)", "Chladni", "Maelstrom (o)", "Plasma", "Kaleidoscope", "Swell"):
         st: dict = {}
         for f in range(12):
             ctx = Ctx(w=40, h=12, bands=b, peaks=b, bands_l=b, bands_r=b, wave=np.sin(np.arange(512) / 9),

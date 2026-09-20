@@ -33,12 +33,12 @@ def test_importing_the_registry_loads_no_mode_implementation():
 def test_get_loads_only_the_requested_modes_catalogue_module():
     got = _probe(
         "import json, sys; import spektr.modes as modes; "
-        "mode = modes.get('Terra'); "
+        "mode = modes.get('Swell'); "
         "loaded = sorted(m for m in sys.modules if m.startswith('spektr.modes.')); "
         "print(json.dumps({'name': mode.name, 'module': mode.fn.__module__, "
         "'loaded': loaded}))"
     )
-    assert got["name"] == "Terra"
+    assert got["name"] == "Swell"
     assert got["module"] == "spektr.modes.terrain"
     assert got["loaded"] == ["spektr.modes._shared", "spektr.modes.terrain"]
 

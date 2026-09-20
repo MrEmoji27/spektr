@@ -11,7 +11,7 @@ signal. With no file it replays a synthetic loop (a four-to-the-floor kick
 under a mid wall), which is what the mode reactivity checks already use:
 
     python tests/render_cost.py                       # every default case
-    python tests/render_cost.py --mode Terra --size 400x100
+    python tests/render_cost.py --mode Swell --size 400x100
     python tests/render_cost.py --wav track.wav --seconds 20
 
 It reports, per case: process CPU as a share of one core, frame time at p50,
@@ -37,7 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from spektr import config, dissolve  # noqa: E402
 from spektr.analysis import N_BANDS  # noqa: E402
 
-CASES = (("Bars", 200, 50), ("Bars", 400, 100), ("Terra", 200, 50), ("Terra", 400, 100))
+CASES = (("Bars", 200, 50), ("Bars", 400, 100), ("Swell", 200, 50), ("Swell", 400, 100))
 SAMPLERATE = 48000
 
 
@@ -173,7 +173,7 @@ def main() -> int:
         cases = ((args.mode, w, h),)
         dissolve_from = "Kaleidoscope Ultra (o)"
         if args.mode == dissolve_from:
-            dissolve_from = "Terra"
+            dissolve_from = "Swell"
     else:
         cases = CASES
         dissolve_from = None

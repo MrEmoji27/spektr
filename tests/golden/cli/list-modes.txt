@@ -63,7 +63,6 @@
   Snow       snowfall in three planes, thickening and gusting with the track
   Ember      a coal bed burning by band, sparks rising off the hot spots
   Swell      an open sea in half-tones — built for the Android terrain view
-  Terra      a bass-lifted mountain range, hills raised by hits — for terrain view
   Shooting Star a night sky, with meteors thrown from a drifting radiant on the beat
   Constellations beats draw lines between fixed stars, then the figures fade
   Star Trails a long exposure: the sky turns, and the arcs it leaves are the show

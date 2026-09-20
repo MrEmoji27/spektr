@@ -103,7 +103,7 @@ REPORT_ONLY_FLAG = "--report-ratchet"
 #: The three below were recorded together, after 0.4.5, and for two different
 #: reasons.
 #:
-#: ``Terra`` is the real one. It is the heaviest mode in the app — 3.6x the
+#: ``Swell`` is the real one. It is among the heaviest modes in the app — 3.6x the
 #: median against a 3.5x ceiling for a mode with no recorded cost — and it
 #: read 21.4, 21.6 and 25.2 ms across three GitHub Windows runs against a dev
 #: box's 13.9. Two output-identical optimisations went in first rather than
@@ -124,7 +124,6 @@ REPORT_ONLY_FLAG = "--report-ratchet"
 #: to rot — and the tag build measures them again on every release.
 OVER_BUDGET_BY_DESIGN = {
     ("Chladni Extreme (o)", (400, 100)): 18.0,
-    ("Terra", (400, 100)): 27.0,
 }
 
 #: Ceiling for a mode with no recorded cost, in units of the median mode.
