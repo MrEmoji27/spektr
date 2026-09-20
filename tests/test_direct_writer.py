@@ -208,3 +208,28 @@ def test_every_mode_draws_one_glyph_a_cell():
                 if unicodedata.combining(ch) or unicodedata.east_asian_width(ch) in ("F", "W"):
                     bad.append(f"{mode.name} {case.id}: {ch!r} (U+{int(code):04X})")
     assert not bad, "a mode draws something wider than a cell: " + "; ".join(bad[:5])
+
+
+def test_direct_writing_stays_clear_of_the_header_and_footer():
+    """The visualiser's own region covers the whole screen and the chrome is
+    painted over it, so writing straight to the terminal across all of it wipes
+    the header and footer out. It has to keep off their rows."""
+    import asyncio
+
+    from spektr import config
+    from spektr.ui.app import Spektr
+
+    async def measure(chrome: bool):
+        app = Spektr(settings=config.Settings(mode="Bars", fps=30, chrome=chrome))
+        app.notify = lambda *a, **k: None  # type: ignore[method-assign]
+        async with app.run_test(size=(60, 20)) as pilot:
+            await pilot.pause()
+            r = app.viz._direct_region()
+            return r.y, r.y + r.height
+
+    top, bottom = asyncio.run(measure(True))
+    assert top >= 1, "the direct writer would paint over the header"
+    assert bottom <= 19, "the direct writer would paint over the footer"
+
+    top, bottom = asyncio.run(measure(False))
+    assert (top, bottom) == (0, 20), "with the chrome hidden it should take the screen"

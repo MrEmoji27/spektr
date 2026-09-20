@@ -1060,6 +1060,30 @@ class AudioVisualizer(Widget):
             ms if self._build_ms is None else self._build_ms * 0.85 + ms * 0.15
         )
 
+    def _direct_region(self):
+        """The part of this widget the chrome is not sitting on.
+
+        The visualiser fills the whole screen and the header and footer are
+        painted *over* it, so its own region includes their rows. Writing
+        straight to the terminal across all of it wipes them out, which is
+        what happened: the chrome vanished a frame after it was drawn. Whatever
+        else the screen holds is measured here and kept out of.
+        """
+        region = self.content_region
+        top = bottom = 0
+        for other in self.screen.children:
+            if other is self or not other.display:
+                continue
+            r = other.region
+            if not r.height or not r.overlaps(region):
+                continue
+            if r.y <= region.y:                       # docked above the picture
+                top = max(top, r.y + r.height - region.y)
+            elif r.y + r.height >= region.y + region.height:   # and below it
+                bottom = max(bottom, region.y + region.height - r.y)
+        height = max(0, region.height - top - bottom)
+        return region.__class__(region.x, region.y + top, region.width, height)
+
     def _painting_directly(self) -> bool:
         """Whether the picture can go straight to the terminal this frame.
 
@@ -1090,7 +1114,7 @@ class AudioVisualizer(Widget):
         """
         direct = self._painting_directly()
         if direct:
-            region = self.content_region
+            region = self._direct_region()
             self._screen.place(region.width, region.height, region.x, region.y)
         if direct != self._direct:
             # Handing over either way, whatever is on screen is not what the
