@@ -361,6 +361,7 @@ def test_chrome_auto_hides_when_idle_and_returns_on_a_key():
     """auto is the third setting: the chrome goes away once you stop typing."""
     import asyncio
 
+    from textual import events
     from textual.widgets import Footer, Header
 
     from spektr.ui.app import Spektr
@@ -373,7 +374,10 @@ def test_chrome_auto_hides_when_idle_and_returns_on_a_key():
             shown = [w.display for w in (app.query_one(Header), app.query_one(Footer))]
             app._hide_chrome_idle()          # the countdown running out
             hidden = [w.display for w in (app.query_one(Header), app.query_one(Footer))]
-            await pilot.press("m")           # any key brings them back
+            # The event itself, rather than pilot.press: whether a key press
+            # has been delivered by the time press() returns depends on the
+            # driver, and it differs between this machine and CI.
+            await app.on_event(events.Key("m", "m"))
             await pilot.pause()
             back = [w.display for w in (app.query_one(Header), app.query_one(Footer))]
             return shown, hidden, back
