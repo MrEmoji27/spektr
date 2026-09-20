@@ -393,6 +393,37 @@ def scenario_note_stream() -> tuple[np.ndarray, int, list[float]]:
     return _stereo(out), SR, []
 
 
+def scenario_cold_start() -> tuple[np.ndarray, int, list[float]]:
+    """A kick bed that begins after half a second of true silence.
+
+    Every other scenario starts with an attack at t=0, which the detector
+    structurally cannot see: the rectified difference has nothing behind it,
+    so the first hop of a track produces no flux. A real track begins after
+    silence, so the first hit is a hit like any other and has to be found.
+    """
+    lead_s = 0.5
+    bed, onsets = _four_on_floor(bpm=120.0, bars=3)
+    lead = np.zeros(round(lead_s * SR))
+    out = np.concatenate([lead, bed])
+    return _stereo(_norm(out)), SR, _quant([t + lead_s for t in onsets])
+
+
+def scenario_pause_resume() -> tuple[np.ndarray, int, list[float]]:
+    """Two runs of kicks with a second of silence between them.
+
+    What happens when a track is paused and started again. The resume must
+    not manufacture an onset out of the gap, and the first kick after it must
+    still be found.
+    """
+    gap_s = 1.0
+    first, first_on = _four_on_floor(bpm=120.0, bars=2)
+    second, second_on = _four_on_floor(bpm=120.0, bars=2)
+    gap = np.zeros(round(gap_s * SR))
+    out = np.concatenate([first, gap, second])
+    offset = len(first) / SR + gap_s
+    return _stereo(_norm(out)), SR, _quant(first_on + [t + offset for t in second_on])
+
+
 SCENARIOS: dict[str, Callable[[], tuple[np.ndarray, int, list[float]]]] = {
     "click": scenario_click,
     "four_on_floor": scenario_four_on_floor,
@@ -405,6 +436,8 @@ SCENARIOS: dict[str, Callable[[], tuple[np.ndarray, int, list[float]]]] = {
     "silence": scenario_silence,
     "noise": scenario_noise,
     "note_stream": scenario_note_stream,
+    "cold_start": scenario_cold_start,
+    "pause_resume": scenario_pause_resume,
 }
 
 

@@ -359,6 +359,9 @@ class OnsetDetector:
     #: real rate and keeping 0.7 shortened it to 120 hops and put false
     #: onsets into the tonal corpus, so 0.76 is what the detector was
     #: actually tuned with.
+    #: Flux-history entries needed before a peak can be judged at all.
+    MIN_HISTORY = 8
+
     HISTORY_S = 0.76
 
     #: Log compression constant. Standard in the onset literature; large
@@ -602,6 +605,15 @@ class OnsetDetector:
         self._level = 0.0
         self._band_avg: np.ndarray | None = None
         self._prev: np.ndarray | None = None
+        #: True when the next spectrum follows silence rather than the start
+        #: of the stream. Set by :meth:`reset_continuity`.
+        self._from_silence = False
+        #: Seed the flux history with silence on the first hop out of a gap,
+        #: for the same reason the peak window is seeded: the recent past
+        #: really was nothing, and a peak cannot be judged until the history
+        #: holds at least ``MIN_HISTORY`` entries. Without this the first
+        #: attack of every track waits for the history to fill and is missed.
+        self._seed_history = False
         self._hist: np.ndarray | None = None      # circular flux history
         self._hi = 0
         self._filled = 0
@@ -668,13 +680,28 @@ class OnsetDetector:
             self._level += (total - self._level) * 0.002
         cur = np.log1p(self.GAMMA * spectrum / max(self._level, 1e-12))
 
-        if self._prev is None or self._prev.shape != cur.shape:
-            # No previous spectrum to difference against, or the window
-            # changed size under us (a sample-rate change rebuilds the plan).
-            # Either way this hop has no meaningful flux.
+        if self._prev is not None and self._prev.shape != cur.shape:
+            # The window changed size under us — a sample-rate change rebuilds
+            # the plan — so there is nothing meaningful to difference against.
             self._prev = cur
             self.flux = 0.0
             return
+
+        if self._prev is None:
+            if not self._from_silence:
+                # Starting mid-stream: the music was already playing when
+                # spektr opened, so the first hop is not an attack and
+                # differencing it against nothing would invent one.
+                self._prev = cur
+                self.flux = 0.0
+                return
+            # Coming out of silence, which is what a track beginning looks
+            # like. The gate was shut, so the previous spectrum really was
+            # nothing, and the first hit is a hit like any other. Without
+            # this the first attack of every track is structurally invisible.
+            self._prev = np.zeros_like(cur)
+            self._from_silence = False
+            self._seed_history = True
 
         diff = cur - self._prev
         self._prev = cur
@@ -783,6 +810,15 @@ class OnsetDetector:
             self._hi = 0
             self._filled = 0
 
+        if self._seed_history:
+            # Out of a gap: the history is empty and the peak picker will not
+            # judge anything until it holds MIN_HISTORY entries. The gap was
+            # silence, so those entries are zeros — the same reasoning that
+            # seeds the peak window below.
+            self._filled = max(self._filled, self.MIN_HISTORY)
+            self._hi = self._filled % self._hist.shape[0]
+            self._seed_history = False
+
         if not self._win:
             # Seed the left half of the peak-picking neighbourhood with
             # silence rather than waiting for it to refill.
@@ -810,7 +846,7 @@ class OnsetDetector:
         if len(self._win) > self._span:
             self._win.pop(0)
 
-        if self._filled >= 8 and len(self._win) == self._span:
+        if self._filled >= self.MIN_HISTORY and len(self._win) == self._span:
             hist = self._hist[: self._filled]
             # The median, by partition rather than np.median. Identical
             # results — np.median partitions too — but it is asked for one
@@ -1139,6 +1175,7 @@ class OnsetDetector:
         survive, or a reader differencing it sees the gap as beats.
         """
         self._prev = None
+        self._from_silence = True
         self._band_avg = None
         self._win.clear()
         self.flux = 0.0
