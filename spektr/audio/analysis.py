@@ -73,13 +73,16 @@ N_BANDS = 32          # internal resolution; modes downsample for chunky looks
 #:
 #: Cost is linear in the rate: measured at 0.447 ms per analysis, 4.2% of one
 #: core at 94 Hz and ~8.4% at 188 Hz.
-HOP = 256
+from .rates import HOP, analyses_per_sec, hop_seconds  # noqa: E402
 
 #: Analyses per second at a nominal 48 kHz. Only used to size the ceiling on
 #: "unlimited" frame rate — past roughly twice this, consecutive frames read
 #: the same spectrum and the extra ones are interpolation, not new audio. The
 #: real device rate is whatever the capture reports; this is a planning figure.
-ANALYSES_PER_SEC = 48000 / HOP
+#: Hops a second at the rate the detector was tuned at. The live rate comes
+#: from the device through :func:`rates.analyses_per_sec`; this stays for
+#: callers that only need the design figure (the fps probe, for one).
+ANALYSES_PER_SEC = analyses_per_sec()
 WAVE_POINTS = 512     # downsampled scope trace
 
 #: Most hops drained in one wake-up of the analyser thread.
@@ -349,7 +352,14 @@ class OnsetDetector:
     #: Seconds of flux history behind the adaptive threshold. Long enough to
     #: span a bar at slow tempi, short enough to follow a track that changes
     #: density. Too long and a quiet intro sets the bar for a loud chorus.
-    HISTORY_S = 0.7
+    #: How long the adaptive threshold remembers. 0.76 s rather than the 0.7
+    #: it used to read: the old code sized this in hops at a hard-coded
+    #: 187.5 a second whatever the device ran at, which on the 44.1 kHz test
+    #: corpus meant 131 hops — 0.76 s. Sizing it in seconds at the device's
+    #: real rate and keeping 0.7 shortened it to 120 hops and put false
+    #: onsets into the tonal corpus, so 0.76 is what the detector was
+    #: actually tuned with.
+    HISTORY_S = 0.76
 
     #: Log compression constant. Standard in the onset literature; large
     #: enough that quiet spectral detail still registers.
@@ -573,7 +583,16 @@ class OnsetDetector:
     #: pad cannot leak into the comparison.
     REGION_PAST_HALF = (6, 4, 1)
 
-    def __init__(self) -> None:
+    def __init__(self, samplerate: float | None = None) -> None:
+        #: Hops a second, from the capture device. Every constant below is in
+        #: seconds and is converted through this, so a 96 kHz device gets the
+        #: same time constants as a 48 kHz one rather than half of them.
+        self.hop_rate = analyses_per_sec(samplerate)
+        self.hop_step = hop_seconds(samplerate)
+        #: Per-hop decay of the peak memory, scaled so it always spans the
+        #: same half second of audio. 0.996 a hop is that at 48 kHz; at
+        #: 96 kHz twice as many hops arrive, so each must decay half as much.
+        self._peak_decay = 0.996 ** (analyses_per_sec() / self.hop_rate)
         self.seq = 0
         self.strength = 0.0
         self.flux = 0.0
@@ -755,11 +774,11 @@ class OnsetDetector:
         # second-ish of memory: 0.996 per hop at 187.5 Hz is ~0.47 a second.
         if self._peak is None or self._peak.shape != curve.shape:
             self._peak = np.full(curve.shape, 1e-9)
-        np.maximum(curve, self._peak * 0.996, out=self._peak)
+        np.maximum(curve, self._peak * self._peak_decay, out=self._peak)
         self.flux = min(1.0, raw / self._peak[0]) if self._peak[0] > 0 else 0.0
 
         if self._hist is None or self._hist.shape[1] != curve.size:
-            n = max(8, int(self.HISTORY_S * 187.5))
+            n = max(8, int(self.HISTORY_S * self.hop_rate))
             self._hist = np.zeros((n, curve.size), dtype=np.float64)
             self._hi = 0
             self._filled = 0
@@ -781,7 +800,7 @@ class OnsetDetector:
             # recent past actually contained. The gate was shut, so the flux
             # was nothing, and a transient arriving now genuinely does tower
             # over the silence behind it.
-            step = 1.0 / 187.5
+            step = self.hop_step
             self._win = [
                 (now - (self.PEAK_SPAN - k) * step, np.zeros(curve.size))
                 for k in range(self.PEAK_SPAN)
@@ -905,7 +924,7 @@ class OnsetDetector:
         gates: there is no history to judge against, and saying nothing on
         the first beat is worse than risking a false positive on it.
         """
-        step = 1.0 / 187.5
+        step = self.hop_step
         hi_t = t_mid - step
         lo_t = t_mid - self.REGION_RISE_S - step
         old = None
@@ -974,7 +993,7 @@ class OnsetDetector:
         history to judge against; a detector that says nothing on the first
         beat of a song is worse than one that risks a false positive on it.
         """
-        step = 1.0 / 187.5
+        step = self.hop_step
         hi_t = t_mid - step
         lo_t = t_mid - self.REGION_RISE_S - step
         base = 0.0
@@ -1097,6 +1116,19 @@ class OnsetDetector:
         self.tempo_bpm = 60.0 / period
         self.beat_phase = float(((now - self._last_t) / period) % 1.0)
 
+    def set_rate(self, samplerate: float | None) -> None:
+        """Follow the device: called when capture opens or changes rate."""
+        rate = analyses_per_sec(samplerate)
+        if rate == self.hop_rate:
+            return
+        self.hop_rate = rate
+        self.hop_step = hop_seconds(samplerate)
+        self._peak_decay = 0.996 ** (analyses_per_sec() / rate)
+        # The flux history is sized in hops, so it has to be rebuilt at the
+        # new rate rather than reinterpreted at the old one.
+        self._hist = None
+        self._win = []
+
     def reset_continuity(self) -> None:
         """Called when the input goes silent.
 
@@ -1120,7 +1152,7 @@ class Analyser:
     def __init__(self, ring: RingBuffer, samplerate_getter, clock=time.monotonic):
         self._ring = ring
         self._get_sr = samplerate_getter
-        self._onset = OnsetDetector()
+        self._onset = OnsetDetector(samplerate_getter())
         # Injectable so an offline harness can drive the analyser on the
         # *signal's* timeline rather than the wall's. Onset detection is
         # judged on timing to within tens of milliseconds, and a corpus that
@@ -1291,6 +1323,7 @@ class Analyser:
     def _analyse_once(self, end: int | None = None, now: float | None = None) -> None:
         sr = int(self._get_sr() or 48000)
         self._ensure_plan(sr)
+        self._onset.set_rate(sr)
         plan = self._plan
 
         if end is None:
