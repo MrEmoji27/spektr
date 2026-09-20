@@ -117,6 +117,14 @@ async def measure(
             return out
 
         viz._build = timed_build  # type: ignore[method-assign]
+        if dissolve_from:
+            # Warm both modes so their measured costs are real, then start a
+            # dissolve: for its length the app draws the outgoing mode as well.
+            viz.set_mode(dissolve_from)
+            for _ in range(10):
+                viz._build()
+            viz.set_mode(mode, dissolve=True)
+            frames.clear()
         cpu0, wall0 = time.process_time(), time.perf_counter()
         active = dissolve_from
         switch_at = wall0
@@ -153,6 +161,8 @@ def main() -> int:
     ap.add_argument("--fps", type=int, default=60)
     ap.add_argument("--seconds", type=float, default=10.0)
     ap.add_argument("--wav", type=Path, help="16-bit WAV to replay instead of the synthetic loop")
+    ap.add_argument("--dissolve-from", help="switch from this mode with a dissolve "
+                                            "and measure the frames it costs")
     ap.add_argument("--repeats", type=int, default=1,
                     help="run each case this many times and report the median; "
                          "anything measured on a busy machine needs 3 or more")

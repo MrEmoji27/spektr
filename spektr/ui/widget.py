@@ -154,6 +154,10 @@ class AudioVisualizer(Widget):
         self._preview_mode: str | None = None
         self._dissolve_from: str | None = None
         self._dissolve_started = 0.0
+        #: The last picture the current mode drew, and the outgoing mode's
+        #: copy of it once a dissolve starts. See :meth:`_outgoing`.
+        self._last_frame: tuple | None = None
+        self._frozen_old: tuple | None = None
 
         self.quarantine = Quarantine()
         #: called with (mode_name, message) when a mode is disabled
@@ -306,6 +310,7 @@ class AudioVisualizer(Widget):
         if dissolve and name != previous:
             self._dissolve_from = previous
             self._dissolve_started = time.monotonic()
+            self._frozen_old = self._last_frame
         else:
             self._dissolve_from = None
         self.mode_name = name
@@ -787,6 +792,28 @@ class AudioVisualizer(Widget):
         self._mode_ms[m.name] = ms if prev is None else prev * 0.7 + ms * 0.3
         return out
 
+    def _outgoing(self, name: str, frame, w: int, h: int, onsets: int) -> tuple:
+        """The outgoing mode's picture: live if it fits, frozen if it does not.
+
+        Both modes have to be drawn for the length of a dissolve, so a pair of
+        expensive ones costs the sum of the two. Measured on the worst pair at
+        400x100 that is 39 ms a frame — the app drawing at 25 fps for the whole
+        0.6 s. When the pair does not fit the frame budget the outgoing mode's
+        last frame is held instead: it stops animating while it fades, which
+        over half a second reads as a still layer dissolving away rather than
+        as a stutter across the whole screen.
+        """
+        budget = 1000.0 / max(1, self._fps)
+        pair = self._mode_ms.get(name, 0.0) + self._mode_ms.get(self.mode_name, 0.0)
+        frozen = self._frozen_old
+        if pair <= budget or frozen is None:
+            return self._render_mode(name, frame, w, h, onsets)
+        if frozen[0].shape == (h, w):
+            return frozen
+        # The terminal was resized mid-dissolve, so the held frame is the wrong
+        # shape to blend against; drawing it live is the only correct answer.
+        return self._render_mode(name, frame, w, h, onsets)
+
     def _build(self) -> list[Strip]:
         w, h = self.size.width, self.size.height
         if w < 2 or h < 1:
@@ -811,10 +838,14 @@ class AudioVisualizer(Widget):
             progress = (time.monotonic() - self._dissolve_started) / dissolve.SECONDS
             if progress >= 1.0:
                 self._dissolve_from = None
+                self._frozen_old = None
                 self._refresh_mode_window()
             else:
-                old = self._render_mode(self._dissolve_from, frame, w, h, onsets)
-                out = dissolve.blend(old, out, dissolve.ease(progress))
+                out = dissolve.blend(
+                    self._outgoing(self._dissolve_from, frame, w, h, onsets),
+                    out, dissolve.ease(progress),
+                )
+        self._last_frame = out
 
         if len(out) == 3:
             codes, cidx, bidx = out
