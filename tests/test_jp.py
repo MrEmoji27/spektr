@@ -203,110 +203,54 @@ def _loud_spectrum(t):
     return np.clip(0.95 * np.exp(-((_X - 0.35) / 0.6) ** 2), 0, 1)
 
 
+def test_drift_sheds_bulbs_when_a_column_falls():
+    """The mechanic: a bar that drops loses bulbs, and they fall on their own.
+
+    Measured as ink above the bar. The level is held high, then dropped, and
+    the panel must still be lit well above where the bar now is.
+    """
+    state: dict = {}
+    _play("JP Drift", 120, 40, state, 0.0, 1.0, _steady(0.95))
+    codes = _play("JP Drift", 120, 40, state, 1.0, 0.15, _steady(0.05))[0]
+    rows = codes.shape[0]
+    above = int(np.count_nonzero(codes[: rows // 2] == K._LED))
+    assert above, "nothing fell: the panel is empty above the bar"
+
+
+def test_drift_bulbs_fall_downward():
+    """They travel toward the foot, not away from it."""
+    state: dict = {}
+    _play("JP Drift", 120, 40, state, 0.0, 1.0, _steady(0.95))
+    centres = []
+    for _ in range(3):
+        codes = _play("JP Drift", 120, 40, state, 1.0, 0.12, _steady(0.05))[0]
+        lit = np.argwhere(codes == K._LED)
+        centres.append(float(lit[:, 0].mean()) if lit.size else float("nan"))
+    assert centres[0] < centres[-1], f"ink rose instead of falling: {centres}"
+
+
+def test_drift_piles_at_the_foot_and_never_buries_the_bar():
+    """The pile is a floor, not a second reading."""
+    state: dict = {}
+    for _ in range(6):
+        _play("JP Drift", 120, 40, state, 0.0, 0.25, _steady(0.95))
+        _play("JP Drift", 120, 40, state, 0.0, 0.25, _steady(0.05))
+    # long enough that everything shed has landed: what is left is the pile
+    codes = _play("JP Drift", 120, 40, state, 0.0, 1.5, _steady(0.05))[0]
+    rows = codes.shape[0]
+    lit = np.argwhere(codes == K._LED)
+    assert lit.size, "the panel went dark while the pile should still be there"
+    # everything sits in the lower part of the ladder
+    assert lit[:, 0].min() > rows * 0.3, "the pile grew over the whole ladder"
+
+
 def test_drift_answers_quiet_input_without_accumulating():
-    """No cutoff at the bottom, no pile-up at the top.
-
-    A fixed drain sank every band under ≈ 0.47 to an empty column; no drain
-    let every band climb to the angle of repose. Height-dependent drainage
-    has to do neither: quiet input holds a small height, heights rise with
-    the level, and only loud input keeps collapsing.
-    """
-    quiet = _drift_run(_steady(0.2))
-    medium = _drift_run(_steady(0.5))
-    loud = _drift_run(_steady(0.9))
-    assert 0.05 < quiet["height"] < 0.2, f"steady 0.2 settled at {quiet['height']:.2f}"
-    assert quiet["height"] < medium["height"] < 0.8, f"steady 0.5 settled at {medium['height']:.2f}"
-    assert quiet["starts"] == 0 and medium["starts"] == 0, "a band below the avalanche level collapsed"
-    assert loud["per_band_s"] > 0.3, f"loud input avalanches only {loud['per_band_s']:.2f}/band/s"
-    assert loud["height"] < 0.9, f"loud input left the columns standing at {loud['height']:.2f}"
-
-
-def test_drift_avalanches_land_on_the_beat():
-    """A column past the edge topples on a hit, so avalanches keep time.
-
-    Tested on the onset frame alone this produced no avalanches at all on
-    bass: the onset is detected on a kick's first frame and the sand it feeds
-    crosses the edge a moment later. Hence the short window after each hit.
-    """
-    bass = _drift_run(_bass, secs=20.0, beat_every=0.5, settle=5.0)
-    assert bass["starts"] > 5, f"bass triggered {bass['starts']} avalanches in 15 s"
-    assert bass["on_beat"] > 0.8, f"only {100 * bass['on_beat']:.0f}% of bass avalanches landed on a beat"
-    loud = _drift_run(_loud_spectrum, beat_every=0.5)
-    assert loud["on_beat"] > 0.8, f"only {100 * loud['on_beat']:.0f}% of loud avalanches landed on a beat"
-
-
-def test_drift_quiet_top_stays_low_under_bass():
+    """Quiet material must not slowly fill the panel."""
     state: dict = {}
-    fn = M.get("JP Drift").fn
-    sm = np.zeros(N_BANDS)
-    for f in range(int(20.0 / DT)):
-        raw = _bass(f * DT)
-        sm = sm + (raw - sm) * np.where(raw > sm, 0.6, 0.12)
-        fn(_ctx(120, 40, state, f * DT, sm.copy(), onsets=int((f * DT) % 0.5 < DT)))
-    pile = _drift_state(state)["h"]
-    # the top quarter is fed 0.08: it should hold a trace, not a column
-    top = pile[3 * len(pile) // 4:]
-    assert top.max() < 0.1, f"the quiet top of the spectrum filled to {top.max():.2f}"
-
-
-@pytest.mark.parametrize("shape", ["uniform", "spectrum"])
-@pytest.mark.parametrize("beats", [None, 0.5])
-def test_drift_loud_avalanches_stay_distinct(shape, beats):
-    """Loud input: collapses keep happening, but as separate, readable events.
-
-    Before, a collapse tipped its neighbours over on the very next frame and
-    they tipped it back, column tops reversed within two frames, the flash was
-    retriggered faster than it faded so the panel stayed red, and a row
-    collapsing on one frame refilled itself straight back over the edge.
-    """
-    level = _steady(0.95) if shape == "uniform" else _loud_spectrum
-    r = _drift_run(level, beat_every=beats)
-    assert r["per_band_s"] > 0.3, f"loud input barely avalanches: {r['per_band_s']:.2f}/band/s"
-    assert r["reversals_per_band_s"] < 0.1, f"column tops reversed {r['reversals_per_band_s']:.2f}/band/s"
-    assert r["tinted"] < 0.35, f"{100 * r['tinted']:.0f}% of the panel sat tinted"
-    assert r["height"] < 0.9, f"the columns stood at {r['height']:.2f} on average"
-
-
-def test_an_avalanche_pours_out_rather_than_teleporting():
-    """A collapse takes several frames and only ever goes down while it does."""
-    state: dict = {}
-    fn = M.get("JP Drift").fn
-    z = np.zeros(N_BANDS)
-    fn(_ctx(120, 40, state, 0.0, z))
-    st = _drift_state(state)
-    st["h"][:] = 0.0
-    st["h"][8] = 1.25
-    heights = [1.25]
-    for f in range(1, 40):
-        fn(_ctx(120, 40, state, f * DT, z, onsets=int(f == 1)))
-        heights.append(float(st["h"][8]))
-    steps = np.diff(heights)
-    falling = np.flatnonzero(steps < -1e-9)
-    assert falling.size >= 8, f"the avalanche was over in {falling.size} frames"
-    assert np.all(steps[: falling.max() + 1] <= 1e-9), "the column rose again while it poured out"
-    assert heights[-1] < 0.6
-
-
-@pytest.mark.parametrize("edge", [0, -1])
-def test_drift_edge_spill_leaves_the_panel(edge):
-    """A collapsing edge band pours into its one neighbour, never itself."""
-    state: dict = {}
-    fn = M.get("JP Drift").fn
-    z = np.zeros(N_BANDS)
-    fn(_ctx(120, 40, state, 0.0, z))
-    pile = _drift_state(state)["h"]
-    pile[:] = 0.0
-    pile[edge] = 1.25
-    n = len(pile)
-    inner = 1 if edge == 0 else n - 2
-    far = [i for i in range(n) if i not in (edge % n, inner)]
-    for f in range(1, 30):
-        fn(_ctx(120, 40, state, f * DT, z, onsets=int(f == 1)))
-    assert pile[edge] <= 0.58, "the collapsing band took its own spill back"
-    assert pile[inner] > 0.05, "the neighbour received nothing"
-    assert np.all(pile[far] == 0.0), "sand landed beyond the one neighbour"
-
-
+    codes = _play("JP Drift", 120, 40, state, 0.0, 8.0, _steady(0.18))[0]
+    lit = int(np.count_nonzero(codes == K._LED))
+    panel = int(np.count_nonzero(codes != SPACE))
+    assert lit < panel * 0.4, f"quiet input filled {lit} of {panel} bulbs"
 def test_peaks_and_trails_never_cover_a_lit_bulb():
     """Lit bulbs are the heaviest ink and nothing is drawn over them."""
     state: dict = {}

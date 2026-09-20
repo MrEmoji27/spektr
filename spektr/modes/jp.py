@@ -88,6 +88,28 @@ _RING_SEGS = 12
 #: Sand per second into a band at full level, for Drift. Inflow goes with the
 #: square of the level, as in ``Dune``, so a loud band gains far more than
 #: twice what a band half as loud does. See :func:`jp_drift`.
+#: How many bulbs can be falling at once, across the whole panel. A fixed
+#: pool: loud material cannot grow it, and 512 is more than a 60-row ladder
+#: can show at one time.
+_FALL_MAX = 512
+
+#: Downward acceleration, in bulbs per second per second. Fast enough that a
+#: shed bulb reaches the foot inside a bar of music, slow enough to be read as
+#: falling rather than as a line being drawn.
+_FALL_GRAVITY = 26.0
+
+#: Bulbs a second the pile loses on top of its decay, so it reaches zero
+#: rather than approaching it.
+_PILE_DRAIN = 0.8
+
+#: The deepest the pile may get, as a share of the ladder.
+_PILE_MAX = 0.34
+
+#: How long the pile at the foot takes to fade, in seconds, as a time
+#: constant. Long enough that a busy passage builds a visible floor, short
+#: enough that a quiet one clears it.
+_PILE_LIFE_S = 2.5
+
 _DRIFT_FEED = 2.6
 
 #: Drift's drainage, per second: ``_DRIFT_DRAIN_LIN · h + _DRIFT_DRAIN_SQ · h²``
@@ -279,10 +301,10 @@ def bar_panel(ctx: Ctx, rows: int, levels: np.ndarray, active: np.ndarray,
         up = np.linspace(1.0, _LIT_FLOOR, rows)
         hot = ctx.ramp(up[:, None] * heat[None, :])
 
-    # ``unlit`` draws the bulbs above the level as dots, which is what makes
-    # this a panel with the power on rather than a bar chart. Drift turns it
-    # off: its columns are a sandpile rather than a reading, and a full
-    # lattice of dots behind falling sand reads as a grid over the picture.
+    # The bulbs above the level are drawn as dots rather than left blank,
+    # which is what makes this a panel with the power on rather than a bar
+    # chart. ``unlit=False`` blanks them, for a caller that wants the ladder
+    # without the lattice behind it.
     off = _OFF if unlit else SPACE
     codes = np.where(lit, _LED, np.where(panel, off, SPACE)).astype(np.int32)
     cidx = np.where(lit, hot, recede_index(ctx.palette)).astype(np.int32)
@@ -400,148 +422,152 @@ def jp_bars(ctx: Ctx):
     rws = bulb_row_index(rows)
     ghost = np.where(active[None, :], roll[:, col_band], np.float32(0.0))
     sub_c, sub_x = codes[rws], cidx[rws]
+    # A shed bar stays a bar. It used to thin to the lightest glyph on the
+    # panel the moment it detached, which read as smoke coming off the meter
+    # rather than as the top of the bar leaving in one piece; it keeps the lit
+    # bulb's own weight now and fades by colour alone as it climbs.
     show = (ghost > 0.25) & (sub_c == _OFF)
-    sub_c[show] = _TRAIL
+    sub_c[show] = _LED
     sub_x[show] = np.broadcast_to(ladder_colours(ctx, rows)[rws][:, None], show.shape)[show]
     codes[rws], cidx[rws] = sub_c, sub_x
     return codes, cidx
 
 
 @mode("JP Drift", group="jp",
-      blurb="the meter as a sandpile — bulbs stack up, and pour into their neighbours on the beat")
+      blurb="the meter shedding bulbs: they break off the top and fall, piling at the foot")
 def jp_drift(ctx: Ctx):
-    """The meter, blended with the sandpile out of ``Dune``.
+    """The meter, blended with the rain out of ``Rain``.
 
-    The other modes in this family draw the level: read it, light that many
-    bulbs. Here the bulbs are a running *balance*. Sand rains into each band in
-    proportion to the square of its level and drains out faster the taller the
-    pile is. A column that crosses the angle of repose waits there for a beat,
-    then pours most of itself out sideways into the two bands next to it. A
-    band steadily above about 0.68 keeps toppling; below that it settles at a
-    height, so what you see is a meter for the quiet and medium part of a mix
-    and a sandpile, keeping time, for the loud part.
+    ``JP Bars`` sheds a bar upward when the level drops. This sheds downward,
+    and keeps what it sheds: when a column falls, the bulbs it loses break off
+    and drop down the ladder under gravity, landing in a pile at the foot that
+    slowly fades. The panel is a reading at the top and a record of what has
+    already happened underneath it.
 
-    **Avalanches land on the beat.** A column past the edge topples on the next
-    hit (or within a few frames after one, since the sand a kick feeds arrives
-    a moment after the kick is detected), so on bass-heavy music the columns
-    come down with the kicks, and a spill that tips a neighbour over makes it
-    topple on a *later* beat — a cascade steps across the spectrum in time. A
-    column no beat comes for topples anyway after :data:`_DRIFT_HOLD`, so a
-    loud sustained pad cannot leave anything standing full.
+    **What breaks off.** A column's crest is compared with the crest it had
+    last frame. Every bulb between the two becomes a falling bulb, at the row
+    it was lit in, with no velocity: it starts where the bar left it. A beat
+    breaks off a little more than the drop alone would, which is what makes
+    the panel rain on the kicks rather than drizzle continuously.
 
-    **An avalanche pours.** The sand leaves over :data:`_DRIFT_POUR_S`, so the
-    column's top slides down bulb by bulb while its neighbours rise; the
-    column takes no new sand while it pours and holds still for a moment when
-    it lands. Only moving sand is tinted toward the top of the ramp — hardest on
-    the column pouring out, lightly on the ones it lands on.
+    **How it falls.** One acceleration for every bulb, in rows per second per
+    second, integrated through ``ctx.dt`` like everything else here, so the
+    fall looks the same at 15 fps and at 240. Nothing bounces: a bulb that
+    reaches the pile joins it.
 
-    **Drainage is what keeps it a meter.** Without it the pile only ever grew:
-    measured on bass-heavy input, after thirty seconds the *emptiest* column
-    was 55% lit, and once the music stopped the panel froze, full, forever. A
-    fixed drain fixed that and broke the other end — it was a cutoff, and every
-    band steadily under ≈ 0.47 sank to an empty column. The drain now grows
-    with the height of the pile (see :data:`_DRIFT_DRAIN_LIN`), which leaves a
-    small response to quiet input and still clears a full panel in about three
-    and a half seconds of silence.
+    **The pile.** Each column keeps a depth in bulbs. A landing adds one, and
+    the whole pile drains slowly and continuously, faster when it is deep, so
+    a loud passage builds a floor that recedes through a quiet one instead of
+    freezing there. The pile is drawn under the live bar and never above it,
+    so it can never be mistaken for the reading.
 
-    **The pile opens at rest.** It is seeded at the height each band would
-    settle at for the current level (:func:`_drift_rest`), so switching to the
-    mode shows the steady picture at once instead of the whole panel climbing
-    or sinking toward it — and a frozen spectrum below the avalanche level is a
-    frozen picture, as a meter's should be.
-
-    Before this, a collapse moved all its sand in one frame and a flash fired
-    on the collapsing column and its neighbours. Under loud input two thirds of
-    collapses were neighbours tipping each other over on consecutive frames,
-    the tops of the columns jumped every frame or two, and the flash was
-    retriggered faster than it faded, so the panel sat red. Sand that pours off
-    either end of the spectrum is lost; the first and last bands used to spill
-    into *themselves*.
+    Why not the sandpile this used to be: it tipped past an angle of repose
+    and poured sideways into its neighbours on a beat, which is a fine idea
+    that took a paragraph to explain and, on real music, looked like a panel
+    disagreeing with itself. Bulbs falling out of a bar need no explanation.
     """
-    w, h = ctx.w, ctx.h
-    if w < 10 or h < 4:
-        return empty(w, h)
-
-    n = int(np.clip(ctx.n_display, 6, 40))
+    rows, w = ctx.h, ctx.w
+    n = ctx.n_display
+    col_band, active = band_columns(w, n)
     lv = ctx.display_bands(n)
+    levels = np.where(active, lv[col_band], 0.0)
+    nb = bulb_count(rows)
 
-    st = ctx.scratch("jp_drift", lambda: {
-        "h": _drift_rest(lv),
-        "flash": np.zeros(n, dtype=np.float64),
-        "rest": np.zeros(n, dtype=np.float64),
-        "over": np.zeros(n, dtype=np.float64),
-        "pour": np.zeros(n, dtype=np.float64),
-        "rate": np.zeros(n, dtype=np.float64),
-        "settle": np.zeros(n, dtype=np.float64),
-        "beat_t": -9.0,
-        "rng": np.random.default_rng(53),
+    st = ctx.scratch("jp_fall", lambda: {
+        # One row of state per possible falling bulb: which column it is in,
+        # where it is, and how fast. A fixed pool rather than a list, so the
+        # whole step is array work and a loud passage cannot grow it without
+        # bound. y < 0 marks a free slot, the sentinel every particle system
+        # in this app uses.
+        "y": np.full(_FALL_MAX, -1.0, dtype=np.float32),
+        "v": np.zeros(_FALL_MAX, dtype=np.float32),
+        "band": np.zeros(_FALL_MAX, dtype=np.int32),
+        "pile": np.zeros(n, dtype=np.float32),
+        "was": np.full(n, -1, dtype=np.int32),
     })
-    if st["h"].shape[0] != n:
-        st["h"] = _drift_rest(lv)
-        for key in ("flash", "rest", "over", "pour", "rate", "settle"):
-            st[key] = np.zeros(n, dtype=np.float64)
-    pile, flash, rng = st["h"], st["flash"], st["rng"]
+    if st["pile"].shape != (n,):
+        st["pile"] = np.zeros(n, dtype=np.float32)
+        st["was"] = np.full(n, -1, dtype=np.int32)
+        st["y"][:] = -1.0
 
     dt = max(ctx.dt, 0.0)
-    # A column that is pouring out takes no new sand until it has finished.
-    # Fed while it poured, a loud band gained almost as fast as it lost — its
-    # inflow is about the pour rate — so the avalanche barely descended, ended
-    # well short of the rest height, and bounced back across a bulb boundary
-    # the moment it stopped. It also holds still for a moment after landing —
-    # neither fed nor drained: resumed on the next frame, the feed pushed the
-    # last bulb the pour had just emptied straight back on, and left draining
-    # it could slip one bulb and come straight back, either way a one-frame
-    # blink at the bottom of an avalanche.
-    settling = st["settle"] > 0.0
-    feed = np.where((st["pour"] > 0.0) | settling, 0.0, lv * lv * _DRIFT_FEED)
-    drain = np.where(settling, 0.0, (_DRIFT_DRAIN_LIN + _DRIFT_DRAIN_SQ * pile) * pile)
-    pile += (feed - drain) * dt
-    np.clip(pile, 0.0, 1.3, out=pile)
+    y, v, band, pile = st["y"], st["v"], st["band"], st["pile"]
 
-    rest, over, pour, rate = st["rest"], st["over"], st["pour"], st["rate"]
-    np.maximum(rest - dt, 0.0, out=rest)
-    np.maximum(st["settle"] - dt, 0.0, out=st["settle"])
+    # ── what breaks off this frame ───────────────────────────────────────────
+    crest = np.clip(crest_bulb(lv, rows), -1, nb - 1)
+    was = st["was"].copy()
+    lost = np.maximum(was - crest, 0)
+    if ctx.onsets:
+        lost = lost + (crest >= 0)
+    st["was"] = crest
 
-    # ── toppling: past the angle of repose, on the beat ──
-    edge = (pile > 1.0) & (pour <= 0.0)
-    over[:] = np.where(edge, over + dt, 0.0)
-    if ctx.onsets and ctx.onset_strength >= _DRIFT_TRIGGER:
-        st["beat_t"] = ctx.t
-    armed = ctx.t - st["beat_t"] <= _DRIFT_ARMED_S
-    go = edge & (rest <= 0.0) & (armed | (over >= _DRIFT_HOLD))
-    if go.any():
-        idx = np.flatnonzero(go)
-        pour[idx] = pile[idx] - 0.55 + rng.uniform(-0.03, 0.03, idx.size)
-        rate[idx] = pour[idx] / _DRIFT_POUR_S
-        over[idx] = 0.0
+    free = np.flatnonzero(y < 0.0)
+    if free.size and lost.any():
+        # Spawn from the top of the drop downward, so a column that lost four
+        # bulbs sheds the four it actually lost rather than four copies of one.
+        cols = np.repeat(np.arange(n, dtype=np.int32), lost)
+        offs = np.concatenate([np.arange(k, dtype=np.float32) for k in lost if k]) \
+            if lost.any() else np.zeros(0, dtype=np.float32)
+        take = min(free.size, cols.size)
+        slot = free[:take]
+        # Bulb 0 is the bottom one, so a bulb falls by its index going down.
+        # It starts where the bar *was*, not where it now is, or it would be
+        # spawned already at the level it fell to and land in the same frame.
+        y[slot] = (was[cols[:take]] - offs[:take]).astype(np.float32)
+        v[slot] = 0.0
+        band[slot] = cols[:take]
 
-    # ── pouring: the sand slides out over a fifth of a second ──
-    flowing = pour > 0.0
-    moving = np.zeros(n, dtype=np.float64)
-    if flowing.any():
-        idx = np.flatnonzero(flowing)
-        step = np.minimum(pour[idx], rate[idx] * dt)
-        pour[idx] -= step
-        landed = idx[pour[idx] <= 0.0]
-        st["settle"][landed] = _DRIFT_SETTLE_S
-        pile[idx] -= step
-        moving[idx] = 1.0
-        for side, ok in ((idx - 1, idx > 0), (idx + 1, idx < n - 1)):
-            np.add.at(pile, side[ok], step[ok] * 0.35)
-            # the columns it lands on warm only a little: the one pouring out
-            # is the event, and tinting its neighbours as hard spread the
-            # colour across most of a loud panel
-            np.maximum.at(moving, side[ok], 0.25)
-            np.maximum.at(rest, side[ok], _DRIFT_SPILL_REST)
-        np.clip(pile, 0.0, 1.3, out=pile)
-    np.maximum(flash * float(np.exp(-dt / _DRIFT_FLASH_TAU)), moving, out=flash)
+    # ── fall ─────────────────────────────────────────────────────────────────
+    live = y >= 0.0
+    if live.any():
+        v[live] -= _FALL_GRAVITY * dt
+        y[live] += v[live] * dt
+        floor = pile[band]
+        landed = live & (y <= floor)
+        if landed.any():
+            np.add.at(pile, band[landed], 1.0)
+            y[landed] = -1.0
+            v[landed] = 0.0
 
-    col_band, active = band_columns(w, n)
-    levels = np.where(active, np.clip(pile, 0.0, 1.0)[col_band], 0.0)
-    # ``heat`` above 1 is fine: ctx.ramp clips. Moving sand warms toward the
-    # top of the ramp; still sand is coloured by height alone.
-    heat = np.where(active, 1.0 + flash[col_band] * 0.9, 0.0)
-    return bar_panel(ctx, h, levels, active, heat=heat, unlit=False)
+    # ── the pile drains ──────────────────────────────────────────────────────
+    # Exponential decay alone never reaches zero, so a panel left in silence
+    # keeps one lit bulb per column for ever. A small absolute drain on top of
+    # it takes the last bulb away and lets the panel go properly dark.
+    pile *= np.float32(np.exp(-dt / _PILE_LIFE_S))
+    pile -= np.float32(dt * _PILE_DRAIN)
+    np.maximum(pile, 0.0, out=pile)
+    # The pile is a floor, not a second reading: capped at a third of the
+    # ladder so the live bar always has room above it. Without the cap a
+    # single loud-to-quiet drop filled every column to the top and the panel
+    # stopped saying anything at all.
+    np.minimum(pile, max(1.0, nb * _PILE_MAX), out=pile)
+
+    # ── draw ─────────────────────────────────────────────────────────────────
+    codes, cidx = bar_panel(ctx, rows, levels, active)
+    rws = bulb_row_index(rows)
+    sub_c, sub_x = codes[rws], cidx[rws]
+    ladder = ladder_colours(ctx, rows)[rws]
+
+    # the pile, from the foot upward, under the bar and only on unlit bulbs
+    depth = np.rint(pile).astype(np.int32)[col_band]
+    kk = np.arange(nb, dtype=np.int32)[:, None]
+    piled = (kk < depth[None, :]) & active[None, :] & (sub_c == _OFF)
+    sub_c[piled] = _LED
+    sub_x[piled] = np.broadcast_to(ladder[:, None], piled.shape)[piled]
+
+    # the bulbs still in the air
+    flying = np.flatnonzero(y >= 0.0)
+    if flying.size:
+        rb = np.clip(np.rint(y[flying]).astype(np.int32), 0, nb - 1)
+        for b, bulb in zip(band[flying], rb):
+            cols = np.flatnonzero(col_band == b)
+            if cols.size:
+                hit = sub_c[bulb, cols] == _OFF
+                sub_c[bulb, cols[hit]] = _LED
+                sub_x[bulb, cols[hit]] = ladder[bulb]
+
+    codes[rws], cidx[rws] = sub_c, sub_x
+    return codes, cidx
 
 
 @mode("JP Pulse", group="jp",

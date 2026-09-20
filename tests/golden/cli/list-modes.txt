@@ -68,6 +68,6 @@
   Star Trails a long exposure: the sky turns, and the arcs it leaves are the show
   Supernova  a mostly dark sky, waiting for the one hit worth a catastrophe
   JP Bars    a segmented LED meter whose bars peel off and rise as they fall away
-  JP Drift   the meter as a sandpile — bulbs stack up, and pour into their neighbours on the beat
+  JP Drift   the meter shedding bulbs: they break off the top and fall, piling at the foot
   JP Pulse   the meter bent into a ring — a spoke of bulbs per band, chased on the beat
   None       nothing at all
