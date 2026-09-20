@@ -23,13 +23,32 @@ import numpy as np
 from . import bluenoise
 from .render import BRAILLE_BASE, BRAILLE_BITS, SPACE, pack_braille
 
-#: How long a dissolve lasts. Long enough to read as a change of scene rather
-#: than a glitch, short enough that a shuffle interval still shows the mode.
-SECONDS = 0.6
+#: How long a morph lasts. Long enough to be seen as a change of scene —
+#: half a second reads as a glitch when the two modes look nothing alike —
+#: and short enough that a fifteen-second shuffle still shows the mode.
+SECONDS = 0.9
+
+#: How far the picture gathers in on itself at the half-way point, as a share
+#: of its own height. The travel alone is invisible between two modes that
+#: happen to fill the frame the same way; drawing in and blooming back out is
+#: what makes a change of family read as one picture becoming another.
+GATHER = 0.22
+
+#: When the handover from old ink to new runs, as a share of the morph. The
+#: first third is the old picture bending into the new shape, the last third
+#: is the new one settling; the swap happens in between, where the two are
+#: closest and it is least visible.
+HANDOVER = (0.30, 0.75)
 
 #: Size of the mask tiled over the frame. 32 is enough that the pattern does
 #: not repeat visibly at terminal sizes, and it builds in about half a second.
 MASK = 32
+
+
+def _handover(progress: float) -> float:
+    """Progress through the swap itself, held back until the ink has moved."""
+    lo, hi = HANDOVER
+    return ease((progress - lo) / (hi - lo))
 
 
 def ease(p: float) -> float:
@@ -84,16 +103,20 @@ def _profile(lit: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 
 def _warp(arrays: tuple, centre: np.ndarray, spread: np.ndarray,
           centre_t: np.ndarray, spread_t: np.ndarray) -> tuple:
-    """Resample each column so its ink sits at ``centre_t``/``spread_t``."""
+    """Resample each column so its ink sits at ``centre_t``/``spread_t``.
+
+    Returns the moved arrays and the mask of cells the move actually reached.
+    What to put outside that mask is the caller's business: blank for ink,
+    but a colour or a glyph code has no zero that means "nothing", and filling
+    those with 0 paints real ramp colour and invalid codepoints into the gap.
+    """
     rows = arrays[0].shape[0]
     ys = np.arange(rows, dtype=np.float32)[:, None]
     src = centre + (ys - centre_t) * (spread / spread_t)
     idx = np.rint(src).astype(np.int32)
     inside = (idx >= 0) & (idx < rows)
     idx = np.clip(idx, 0, rows - 1)
-    return tuple(
-        np.where(inside, np.take_along_axis(a, idx, axis=0), 0) for a in arrays
-    )
+    return tuple(np.take_along_axis(a, idx, axis=0) for a in arrays), inside
 
 
 def _morph(old: tuple, new: tuple, lit_old: np.ndarray, lit_new: np.ndarray,
@@ -112,6 +135,10 @@ def _morph(old: tuple, new: tuple, lit_old: np.ndarray, lit_new: np.ndarray,
     s_new = np.where(lonely, s_old, s_new)
     c_t = c_old + (c_new - c_old) * progress
     s_t = s_old + (s_new - s_old) * progress
+    # Gather in, then bloom back out: a half-cycle of sine, strongest at the
+    # half-way point and nothing at either end, so the morph starts and ends
+    # on the real picture.
+    s_t = s_t * (1.0 - GATHER * float(np.sin(np.pi * progress)))
     return (_warp(old, c_old, s_old, c_t, s_t),
             _warp(new, c_new, s_new, c_t, s_t))
 
@@ -145,24 +172,30 @@ def blend(old: tuple, new: tuple, progress: float) -> tuple:
     if braille:
         dots_old = _braille_dots(codes_old)
         dots_new = _braille_dots(codes_new)
-        (warped_old,), (warped_new,) = _morph(
-            (dots_old.astype(np.int8),), (dots_new.astype(np.int8),),
-            dots_old, dots_new, progress,
+        ((moved_old,), keep_old), ((moved_new,), keep_new) = _morph(
+            (dots_old,), (dots_new,), dots_old, dots_new, progress,
         )
+        # Ink that moved off the frame simply is not there any more.
+        warped_old = moved_old & keep_old
+        warped_new = moved_new & keep_new
         # Shapes are aligned now, so the handover from one to the other lands
         # on ink that is already in the right place: it reads as the picture
         # becoming the new one rather than as dots being swapped underneath it.
-        arrived = _dot_mask(rows * 4, cols * 2, progress)
-        mixed = np.where(arrived, warped_new.astype(bool), warped_old.astype(bool))
+        arrived = _dot_mask(rows * 4, cols * 2, _handover(progress))
+        mixed = np.where(arrived, warped_new, warped_old)
         codes = pack_braille(mixed)
         # Colour travels with the shape: the ramp indices are moved by the
         # same per-column slide, judged on where each cell's ink is, and a
         # cell takes the incoming colour once most of its dots have arrived.
         cells_old = dots_old.reshape(rows, 4, cols, 2).any(axis=(1, 3))
         cells_new = dots_new.reshape(rows, 4, cols, 2).any(axis=(1, 3))
-        (cidx_old,), (cidx_new,) = _morph(
+        ((moved_cidx_old,), cell_keep_old), ((moved_cidx_new,), cell_keep_new) = _morph(
             (old[1],), (new[1],), cells_old, cells_new, progress,
         )
+        # A cell the move did not reach keeps its own colour rather than
+        # taking ramp index 0, which is a colour like any other.
+        cidx_old = np.where(cell_keep_old, moved_cidx_old, old[1])
+        cidx_new = np.where(cell_keep_new, moved_cidx_new, new[1])
         new_share = arrived.reshape(rows, 4, cols, 2).sum(axis=(1, 3))
         return codes, np.where(new_share >= 4, cidx_new, cidx_old)
 
@@ -171,6 +204,15 @@ def blend(old: tuple, new: tuple, progress: float) -> tuple:
     # into place, and the handover is per cell rather than per dot.
     lit_old = codes_old != SPACE
     lit_new = codes_new != SPACE
-    warped_old, warped_new = _morph(old, new, lit_old, lit_new, progress)
-    cells = _dot_mask(rows, cols, progress)
+    (moved_old, keep_old), (moved_new, keep_new) = _morph(
+        old, new, lit_old, lit_new, progress)
+    # Outside the move: a blank cell where the glyph was, and the cell's own
+    # colour everywhere else.
+    blanks = (SPACE,) + old[1:]
+    warped_old = tuple(np.where(keep_old, m, f if np.isscalar(f) else f)
+                       for m, f in zip(moved_old, blanks))
+    blanks_new = (SPACE,) + new[1:]
+    warped_new = tuple(np.where(keep_new, m, f if np.isscalar(f) else f)
+                       for m, f in zip(moved_new, blanks_new))
+    cells = _dot_mask(rows, cols, _handover(progress))
     return tuple(np.where(cells, n, o) for o, n in zip(warped_old, warped_new))
