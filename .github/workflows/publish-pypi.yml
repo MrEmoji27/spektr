@@ -1,0 +1,87 @@
+name: publish to pypi
+
+# Runs on a v* tag, like the three build workflows, but only after the tests
+# have passed here on that exact commit. A release on PyPI cannot be replaced:
+# the version number is spent the moment it is accepted, so a bad upload is
+# fixed by publishing another version, never by correcting this one.
+#
+# Authentication is PyPI's trusted publishing: no token is stored anywhere.
+# GitHub signs a short-lived identity for this workflow and PyPI accepts it
+# because the project names this repository and this workflow file. That has
+# to be set up once, on the project's Publishing page on PyPI:
+#
+#   owner: MrEmoji27   repository: spektr   workflow: publish-pypi.yml
+#
+# Until that exists the upload step fails with "invalid-publisher", which is
+# the correct behaviour for an unconfigured project rather than a fallback to
+# something less safe.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Run the test suites
+        # The same gate the tests workflow runs. A tag is the one moment a
+        # mistake becomes permanent, so this does not trust the earlier run.
+        run: |
+          python -m pytest tests/ -q
+          python tests/test_app.py
+          python tests/test_plugins.py
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write          # the only permission trusted publishing needs
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build the wheel and the sdist
+        run: |
+          python -m pip install --upgrade build
+          python -m build
+
+      - name: Check what the page will say
+        # twine reads the metadata the way PyPI will. A README that does not
+        # render is rejected on upload, and finding that out here costs a
+        # minute rather than a version number.
+        run: |
+          python -m pip install --upgrade twine
+          twine check dist/*
+
+      - name: Install the wheel and run it
+        # The wheel, not the checkout: modes load by name at run time, and a
+        # packaging mistake that leaves them out is invisible until something
+        # tries to draw. This is the same check the frozen builds run.
+        run: |
+          python -m venv /tmp/check
+          /tmp/check/bin/python -m pip install --quiet dist/*.whl
+          /tmp/check/bin/spektr --version
+          /tmp/check/bin/spektr --check-modes
+
+      - uses: pypa/gh-action-pypi-publish@release/v1

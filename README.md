@@ -73,9 +73,16 @@ pip install -e .
 spektr
 ```
 
+Or from PyPI, once 0.6.0 is out:
+
+```bash
+pip install spektr-audio
+spektr
+```
+
 > [!NOTE]
-> A one-line `pip install` is on the way. It will not be under the name `spektr`, which
-> belongs to an unrelated project on PyPI, so the package name gets announced with it.
+> The package is `spektr-audio`, because `spektr` on PyPI belongs to an unrelated
+> project. The command is still `spektr`.
 
 ## Modes
 
