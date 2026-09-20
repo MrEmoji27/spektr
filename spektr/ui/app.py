@@ -52,8 +52,16 @@ class Spektr(App):
     # on the base layer; the docked panel rides on the overlay layer above it,
     # leaving the bands visible and repainting behind it.
     CSS = """
-    Screen { layers: base overlay; background: #000000; }
-    AudioVisualizer { layer: base; height: 1fr; }
+    Screen { layers: base overlay; background: #000000; overflow: hidden hidden; }
+    /* The visualiser fills whatever it is given and never scrolls: a
+       scrollbar down its right edge covers a column of the picture, and
+       there is nothing above or below the frame to scroll to. */
+    AudioVisualizer {
+        layer: base;
+        height: 1fr;
+        overflow: hidden hidden;
+        scrollbar-size: 0 0;
+    }
 
     Picker, SettingsPanel, NamePrompt, HelpPanel {
         layer: overlay;
