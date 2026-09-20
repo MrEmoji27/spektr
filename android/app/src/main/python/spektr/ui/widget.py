@@ -615,6 +615,12 @@ class AudioVisualizer(Widget):
         cost = self._mode_ms.get(name)
         return cost is None or cost <= 1000.0 / max(1, self._target_fps)
 
+    @staticmethod
+    def _same_family(a: str, b: str) -> bool:
+        """Whether two modes belong to the same group in the picker."""
+        one, two = mode_registry.get(a), mode_registry.get(b)
+        return one is not None and two is not None and one.group == two.group
+
     def eco_active(self) -> bool:
         """Whether eco is in force right now, by setting or by measurement."""
         if self.settings.eco == "on":
@@ -887,6 +893,14 @@ class AudioVisualizer(Widget):
         budget = 1000.0 / max(1, self._fps)
         pair = self._mode_ms.get(name, 0.0) + self._mode_ms.get(self.mode_name, 0.0)
         frozen = self._frozen_old
+        # Within a family both pictures are the same kind of thing and both
+        # are reacting to the same music, so the outgoing one keeps drawing:
+        # its bars go on bouncing while they become the new shape. Freezing it
+        # there would stop motion the eye is already following. Family modes
+        # are the cheap ones, so this is affordable; if the pair really cannot
+        # keep up the frozen frame is still the fallback below.
+        if self._same_family(name, self.mode_name) and pair <= budget * 2:
+            return self._render_mode(name, frame, w, h, onsets)
         if pair <= budget or frozen is None:
             return self._render_mode(name, frame, w, h, onsets)
         if frozen[0].shape == (h, w):
@@ -916,7 +930,9 @@ class AudioVisualizer(Widget):
         t0 = time.perf_counter()
         out = self._render_mode(self.mode_name, frame, w, h, onsets)
         if self._dissolve_from is not None:
-            progress = (time.monotonic() - self._dissolve_started) / dissolve.SECONDS
+            family = self._same_family(self._dissolve_from, self.mode_name)
+            span = dissolve.FAMILY_SECONDS if family else dissolve.SECONDS
+            progress = (time.monotonic() - self._dissolve_started) / span
             if progress >= 1.0:
                 self._dissolve_from = None
                 self._frozen_old = None
@@ -925,6 +941,7 @@ class AudioVisualizer(Widget):
                 out = dissolve.blend(
                     self._outgoing(self._dissolve_from, frame, w, h, onsets),
                     out, dissolve.ease(progress),
+                    gather=0.0 if family else dissolve.GATHER,
                 )
         self._last_frame = out
 

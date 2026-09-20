@@ -89,3 +89,39 @@ def test_shuffle_only_skips_modes_measured_over_the_budget():
     assert viz.affordable("Terra") is False
     # a mode nobody has drawn yet is not excluded on a guess
     assert viz.affordable("Flame") is True
+
+
+# ── morph between modes ──────────────────────────────────────────────────────
+
+
+def test_modes_in_one_family_are_recognised():
+    viz = _viz()
+    assert viz._same_family("Bars", "Bricks") is True        # both spectrum
+    assert viz._same_family("Bars", "Terra") is False
+    assert viz._same_family("Bars", "Not A Mode") is False
+
+
+def test_a_family_switch_keeps_the_outgoing_mode_drawing():
+    """Its bars must go on bouncing while they become the new shape."""
+    viz = _viz()
+    viz._target_fps = viz._fps = 60
+    viz.mode_name = "Bricks"
+    viz._mode_ms.update({"Bars": 1.0, "Bricks": 1.0})
+    viz._frozen_old = ("frozen",)
+    drawn = []
+    viz._render_mode = lambda name, *a: drawn.append(name) or ("live",)
+    assert viz._outgoing("Bars", None, 80, 24, 0) == ("live",)
+    assert drawn == ["Bars"]
+
+
+def test_an_expensive_switch_across_families_holds_the_last_frame():
+    import numpy as np
+
+    viz = _viz()
+    viz._target_fps = viz._fps = 60
+    viz.mode_name = "Terra"
+    viz._mode_ms.update({"Terra": 30.0, "Chladni Extreme (o)": 20.0})
+    frozen = (np.zeros((24, 80), dtype=np.int32), np.zeros((24, 80), dtype=np.int32))
+    viz._frozen_old = frozen
+    viz._render_mode = lambda *a: pytest.fail("should not re-render an expensive pair")
+    assert viz._outgoing("Chladni Extreme (o)", None, 80, 24, 0) is frozen

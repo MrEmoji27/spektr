@@ -28,6 +28,11 @@ from .render import BRAILLE_BASE, BRAILLE_BITS, SPACE, pack_braille
 #: and short enough that a fifteen-second shuffle still shows the mode.
 SECONDS = 0.9
 
+#: How long a morph between two modes of the same family lasts. Shorter,
+#: because there is less to say: both are drawing the same kind of picture,
+#: and the change is one of shape rather than of scene.
+FAMILY_SECONDS = 0.5
+
 #: How far the picture gathers in on itself at the half-way point, as a share
 #: of its own height. The travel alone is invisible between two modes that
 #: happen to fill the frame the same way; drawing in and blooming back out is
@@ -120,7 +125,7 @@ def _warp(arrays: tuple, centre: np.ndarray, spread: np.ndarray,
 
 
 def _morph(old: tuple, new: tuple, lit_old: np.ndarray, lit_new: np.ndarray,
-           progress: float) -> tuple[tuple, tuple]:
+           progress: float, gather: float = GATHER) -> tuple[tuple, tuple]:
     """Both pictures, each moved a share of the way to the other's shape.
 
     A column with ink on only one side has nothing to move towards, so it
@@ -138,12 +143,13 @@ def _morph(old: tuple, new: tuple, lit_old: np.ndarray, lit_new: np.ndarray,
     # Gather in, then bloom back out: a half-cycle of sine, strongest at the
     # half-way point and nothing at either end, so the morph starts and ends
     # on the real picture.
-    s_t = s_t * (1.0 - GATHER * float(np.sin(np.pi * progress)))
+    s_t = s_t * (1.0 - gather * float(np.sin(np.pi * progress)))
     return (_warp(old, c_old, s_old, c_t, s_t),
             _warp(new, c_new, s_new, c_t, s_t))
 
 
-def blend(old: tuple, new: tuple, progress: float) -> tuple:
+def blend(old: tuple, new: tuple, progress: float,
+          gather: float = GATHER) -> tuple:
     """The frame part way from ``old`` to ``new``.
 
     ``progress`` is 0 at the start and 1 at the end, eased by the caller or
@@ -152,6 +158,11 @@ def blend(old: tuple, new: tuple, progress: float) -> tuple:
     is nothing meaningful to mix — a braille cell and an octant cell do not
     share a subcell grid — so the frame simply changes over at the halfway
     point, where the eye is least likely to catch it.
+
+    ``gather`` is how far the picture draws in on itself half way through.
+    Pass 0 between two modes of the same family: there the two pictures are
+    already the same kind of thing, both still reacting to the music, and
+    gathering them would interrupt motion the eye is following.
     """
     if progress <= 0.0:
         return old
@@ -173,7 +184,7 @@ def blend(old: tuple, new: tuple, progress: float) -> tuple:
         dots_old = _braille_dots(codes_old)
         dots_new = _braille_dots(codes_new)
         ((moved_old,), keep_old), ((moved_new,), keep_new) = _morph(
-            (dots_old,), (dots_new,), dots_old, dots_new, progress,
+            (dots_old,), (dots_new,), dots_old, dots_new, progress, gather,
         )
         # Ink that moved off the frame simply is not there any more.
         warped_old = moved_old & keep_old
@@ -190,7 +201,7 @@ def blend(old: tuple, new: tuple, progress: float) -> tuple:
         cells_old = dots_old.reshape(rows, 4, cols, 2).any(axis=(1, 3))
         cells_new = dots_new.reshape(rows, 4, cols, 2).any(axis=(1, 3))
         ((moved_cidx_old,), cell_keep_old), ((moved_cidx_new,), cell_keep_new) = _morph(
-            (old[1],), (new[1],), cells_old, cells_new, progress,
+            (old[1],), (new[1],), cells_old, cells_new, progress, gather,
         )
         # A cell the move did not reach keeps its own colour rather than
         # taking ramp index 0, which is a colour like any other.
@@ -205,7 +216,7 @@ def blend(old: tuple, new: tuple, progress: float) -> tuple:
     lit_old = codes_old != SPACE
     lit_new = codes_new != SPACE
     (moved_old, keep_old), (moved_new, keep_new) = _morph(
-        old, new, lit_old, lit_new, progress)
+        old, new, lit_old, lit_new, progress, gather)
     # Outside the move: a blank cell where the glyph was, and the cell's own
     # colour everywhere else.
     blanks = (SPACE,) + old[1:]
