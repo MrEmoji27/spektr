@@ -19,6 +19,7 @@ from textual.strip import Strip
 from textual.widget import Widget
 
 from .. import display as display_probe
+from .. import dissolve
 from .. import modes as mode_registry
 from ..analysis import ANALYSES_PER_SEC, N_BANDS, Analyser
 from ..capture import Capture
@@ -151,11 +152,14 @@ class AudioVisualizer(Widget):
 
         self._preview: str | None = None  # theme name being previewed
         self._preview_mode: str | None = None
+        self._dissolve_from: str | None = None
+        self._dissolve_started = 0.0
 
         self.quarantine = Quarantine()
         #: called with (mode_name, message) when a mode is disabled
         self.on_mode_disabled = None
         self._mode_ms: dict[str, float] = {}
+        self._refresh_mode_window()
 
     # ── lifecycle ────────────────────────────────────────────────────────────
 
@@ -248,6 +252,30 @@ class AudioVisualizer(Widget):
         # empty a small loadout on its own. Fall back to the full list.
         return kept or names
 
+    def _mode_window(self, extra: str | None = None) -> list[str]:
+        """The selected mode and next four names in the existing order."""
+        names = self.mode_names
+        if self.mode_name not in names:
+            names = [mode.name for mode in mode_registry.MODES]
+        if not names:
+            return []
+        try:
+            start = names.index(self.mode_name)
+        except ValueError:
+            start = 0
+        count = min(5, len(names))
+        window = [names[(start + offset) % len(names)] for offset in range(count)]
+        if extra is not None and extra not in window:
+            window = [extra, *window[: max(0, count - 1)]]
+        return window
+
+    def _refresh_mode_window(self, extra: str | None = None) -> None:
+        previous = self._mode_state
+        window = self._mode_window(extra)
+        self._mode_state = {name: previous.get(name, {}) for name in window}
+        for name in window:
+            mode_registry.ensure_loaded(name)
+
     def redraw(self) -> None:
         """Throw away the cached frame and build the next one from scratch.
 
@@ -259,7 +287,13 @@ class AudioVisualizer(Widget):
         self._strips = None
         self.refresh()
 
-    def set_mode(self, name: str, *, remember: bool = True) -> None:
+    def set_mode(
+        self,
+        name: str,
+        *,
+        remember: bool = True,
+        dissolve: bool = False,
+    ) -> None:
         """Switch to a mode by name — including a hidden one, deliberately.
 
         Hiding is about what the interface *offers*, not about what it will
@@ -268,7 +302,14 @@ class AudioVisualizer(Widget):
         """
         if mode_registry.get(name) is None or self.quarantine.is_disabled(name):
             return
+        previous = self.mode_name
+        if dissolve and name != previous:
+            self._dissolve_from = previous
+            self._dissolve_started = time.monotonic()
+        else:
+            self._dissolve_from = None
         self.mode_name = name
+        self._refresh_mode_window(self._dissolve_from)
         self._strips = None
         if remember:
             self._preview_mode = None
@@ -510,6 +551,7 @@ class AudioVisualizer(Widget):
         # (Trace treats a shape change as a fresh start), which is the right
         # behaviour here too: a resized blend has no honest past.
         self._mode_state.clear()  # cached geometry is sized for the old count
+        self._refresh_mode_window(self._dissolve_from)
         self._strips = None
 
     def set_bands(self, n: int) -> int:
@@ -523,6 +565,7 @@ class AudioVisualizer(Widget):
         self.settings.bands = 0 if n <= 0 else max(8, min(64, n))
         self.analyser.set_bands(self.settings.bands or N_BANDS)
         self._mode_state.clear()
+        self._refresh_mode_window(self._dissolve_from)
         self._strips = None
         self.refresh()
         return self.settings.bands
@@ -687,28 +730,16 @@ class AudioVisualizer(Widget):
             bidx = np.where(lit, shifted_b, bidx)
         return cidx, bidx
 
-    def _build(self) -> list[Strip]:
-        w, h = self.size.width, self.size.height
-        if w < 2 or h < 1:
-            return []
-
-        m = mode_registry.get(self.mode_name)
+    def _render_mode(self, name: str, frame, w: int, h: int, onsets: int) -> tuple:
+        m = mode_registry.get(name)
         if m is None:
-            return []
+            from ..modes import empty
 
-        frame = getattr(self, "_frame_data", None)
-        if frame is None:
-            from ..analysis import Frame
-
-            frame = Frame()
-
-        # Difference the onset counter once, here, rather than in every mode
-        # that wants beats. Clamped at zero because a restarted analyser hands
-        # back a counter that begins again from nothing, and a negative delta
-        # is not a burst of beats played backwards.
-        onsets = max(0, frame.onset_seq - self._last_onset_seq)
-        self._last_onset_seq = frame.onset_seq
-
+            return empty(w, h)
+        state = self._mode_state.get(name)
+        if state is None:
+            self._refresh_mode_window(self._dissolve_from)
+            state = self._mode_state.get(name, {})
         ctx = Ctx(
             w=w,
             h=h,
@@ -724,7 +755,7 @@ class AudioVisualizer(Widget):
             energy=float(self._spring.x.mean()),
             silent=frame.silent,
             palette=self.palette,
-            state=self._mode_state.setdefault(m.name, {}),
+            state=state,
             bars=self.settings.bands,
             onset_seq=frame.onset_seq,
             onsets=onsets,
@@ -733,8 +764,6 @@ class AudioVisualizer(Widget):
             tempo_bpm=frame.tempo_bpm,
             beat_phase=frame.beat_phase,
         )
-
-        from ..modes import empty
 
         t0 = time.perf_counter()
         try:
@@ -746,10 +775,46 @@ class AudioVisualizer(Widget):
                 out = validate(out, w, h)
             self.quarantine.record_success(m.name)
         except (Exception, BadModeOutput):
+            from ..modes import empty
+
             detail = traceback.format_exc(limit=6)
             if self.quarantine.record_failure(m.name, detail):
                 self._quarantine_mode(m.name, detail)
             out = empty(w, h)
+
+        ms = (time.perf_counter() - t0) * 1000.0
+        prev = self._mode_ms.get(m.name)
+        self._mode_ms[m.name] = ms if prev is None else prev * 0.7 + ms * 0.3
+        return out
+
+    def _build(self) -> list[Strip]:
+        w, h = self.size.width, self.size.height
+        if w < 2 or h < 1:
+            return []
+
+        frame = getattr(self, "_frame_data", None)
+        if frame is None:
+            from ..analysis import Frame
+
+            frame = Frame()
+
+        # Difference the onset counter once, here, rather than in every mode
+        # that wants beats. Clamped at zero because a restarted analyser hands
+        # back a counter that begins again from nothing, and a negative delta
+        # is not a burst of beats played backwards.
+        onsets = max(0, frame.onset_seq - self._last_onset_seq)
+        self._last_onset_seq = frame.onset_seq
+
+        t0 = time.perf_counter()
+        out = self._render_mode(self.mode_name, frame, w, h, onsets)
+        if self._dissolve_from is not None:
+            progress = (time.monotonic() - self._dissolve_started) / dissolve.SECONDS
+            if progress >= 1.0:
+                self._dissolve_from = None
+                self._refresh_mode_window()
+            else:
+                old = self._render_mode(self._dissolve_from, frame, w, h, onsets)
+                out = dissolve.blend(old, out, dissolve.ease(progress))
 
         if len(out) == 3:
             codes, cidx, bidx = out
@@ -773,8 +838,6 @@ class AudioVisualizer(Widget):
 
         strips = make_strips(codes, cidx, self.palette, bidx, clear)
         ms = (time.perf_counter() - t0) * 1000.0
-        prev = self._mode_ms.get(m.name)
-        self._mode_ms[m.name] = ms if prev is None else prev * 0.7 + ms * 0.3
         self._build_ms = (
             ms if self._build_ms is None else self._build_ms * 0.85 + ms * 0.15
         )

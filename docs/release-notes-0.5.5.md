@@ -27,7 +27,7 @@ There is also a new **eco** setting: 30 frames a second, fewer bars, and
 shuffle keeping away from the heaviest visuals. It switches itself on when
 your machine can't keep up, or you can turn it on yourself.
 
-### Shuffle fades instead of cutting — *planned*
+### Shuffle fades instead of cutting
 
 Shuffle used to jump straight to the next visual. Now the old picture
 dissolves into the new one over about half a second, dot by dot. Pressing `m`
@@ -35,7 +35,8 @@ or picking from the list still switches instantly — a key press should feel
 immediate.
 
 You can also have shuffle wait for the song to change instead of watching a
-clock.
+clock. The settings panel says when the computer cannot provide now-playing
+information, so that option never fails silently.
 
 ### Linux: it starts on older systems again — *planned*
 
@@ -74,9 +75,12 @@ alters a picture fails the build. A 0.5.0 config folder — settings, loadouts,
 a theme, a plugin — has to survive an upgrade untouched, and every flag and
 key is pinned too.
 
-Behind that, the project is being reorganised into clear parts. Audio capture,
-analysis, modes and the interface now live in focused packages behind the same
-compatibility surface; the five-mode memory cap is still planned.
+Behind that, the project is now organised into clear parts. Audio capture,
+analysis, modes, the interface and the command line live in focused packages
+behind the same compatibility surface. Mode code loads only as it is needed,
+and the running visualiser keeps a moving five-mode window — the current mode
+and the next four in the same familiar order — rather than retaining state for
+every mode visited in a long session.
 
 ### For plugin authors
 

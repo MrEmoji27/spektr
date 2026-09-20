@@ -34,7 +34,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from spektr import config  # noqa: E402
+from spektr import config, dissolve  # noqa: E402
 from spektr.analysis import N_BANDS  # noqa: E402
 
 CASES = (("Bars", 200, 50), ("Bars", 400, 100), ("Terra", 200, 50), ("Terra", 400, 100))
@@ -79,17 +79,26 @@ async def _feed(ring, blocks, block: int = 256) -> None:
             await asyncio.sleep(delay)
 
 
-async def measure(mode: str, w: int, h: int, fps: int, seconds: float, blocks) -> dict:
+async def measure(
+    mode: str,
+    w: int,
+    h: int,
+    fps: int,
+    seconds: float,
+    blocks,
+    dissolve_from: str | None = None,
+) -> dict:
     from spektr.app import Spektr
 
-    settings = config.Settings(mode=mode, fps=fps, bands=N_BANDS)
+    settings = config.Settings(mode=dissolve_from or mode, fps=fps, bands=N_BANDS)
     app = Spektr(settings=settings)
     app.notify = lambda *a, **k: None  # type: ignore[method-assign]
     frames: list[float] = []
 
     async with app.run_test(size=(w, h)) as pilot:
         viz = app.viz
-        viz.set_mode(mode)
+        if dissolve_from is None:
+            viz.set_mode(mode)
         # Live capture would mix the machine's real audio into the replay, so
         # the device is closed and the ring is fed by hand instead. The
         # analyser reads the ring either way.
@@ -109,9 +118,15 @@ async def measure(mode: str, w: int, h: int, fps: int, seconds: float, blocks) -
 
         viz._build = timed_build  # type: ignore[method-assign]
         cpu0, wall0 = time.process_time(), time.perf_counter()
+        active = dissolve_from
+        switch_at = wall0
         # Sleep between samples: a tight await loop would spend this process's
         # own CPU and land in the number being measured.
         while time.perf_counter() - wall0 < seconds:
+            if dissolve_from is not None and time.perf_counter() >= switch_at:
+                active = mode if active == dissolve_from else dissolve_from
+                viz.set_mode(active, dissolve=True)
+                switch_at += dissolve.SECONDS + 0.05
             await asyncio.sleep(0.05)
         cpu = time.process_time() - cpu0
         wall = time.perf_counter() - wall0
@@ -146,9 +161,15 @@ def main() -> int:
     if args.mode:
         w, h = (int(x) for x in (args.size or "200x50").split("x"))
         cases = ((args.mode, w, h),)
+        dissolve_from = "Kaleidoscope Ultra (o)"
+        if args.mode == dissolve_from:
+            dissolve_from = "Terra"
     else:
         cases = CASES
+        dissolve_from = None
 
+    if dissolve_from is not None:
+        print(f"dissolve pair: {dissolve_from} <-> {args.mode}")
     print(f"{'mode':<10} {'size':>8} {'fps':>4} {'cpu%core':>9} "
           f"{'p50 ms':>7} {'p95 ms':>7} {'p99 ms':>7} {'missed':>7}")
     for mode, w, h in cases:
@@ -156,7 +177,19 @@ def main() -> int:
         for _ in range(max(1, args.repeats)):
             blocks = (wav_blocks(args.wav, args.seconds + 2) if args.wav
                       else synth_blocks(args.seconds + 2))
-            runs.append(asyncio.run(measure(mode, w, h, args.fps, args.seconds, blocks)))
+            runs.append(
+                asyncio.run(
+                    measure(
+                        mode,
+                        w,
+                        h,
+                        args.fps,
+                        args.seconds,
+                        blocks,
+                        dissolve_from=dissolve_from,
+                    )
+                )
+            )
         med = {k: statistics.median([r[k] for r in runs])
                for k in ("cpu", "p50", "p95", "p99", "missed", "asked")}
         spread = max(r["cpu"] for r in runs) - min(r["cpu"] for r in runs)

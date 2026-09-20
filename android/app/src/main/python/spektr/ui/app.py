@@ -191,6 +191,9 @@ class Spektr(App):
         self._capture_status = self.SUB_TITLE
         #: "Artist — Title" from the OS media session, or None
         self._now_playing: str | None = None
+        #: Last non-empty identity observed by track-timed shuffle. The first
+        #: observation establishes a baseline rather than causing a switch.
+        self._shuffle_track: str | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -581,6 +584,16 @@ class Spektr(App):
             self.settings.shuffle_scope = scope
             self._save_settings()
 
+    def _set_shuffle_timing(self, timing: str) -> None:
+        if timing not in config.SHUFFLE_TIMINGS:
+            return
+        self.settings.shuffle_timing = timing
+        self._shuffle_track = self._now_playing
+        self._stop_shuffle()
+        if self.settings.shuffle:
+            self._start_shuffle()
+        self._save_settings()
+
     def action_toggle_shuffle(self) -> None:
         self.settings.shuffle = not self.settings.shuffle
         self._save_settings()
@@ -592,7 +605,9 @@ class Spektr(App):
             self.notify("shuffle off", timeout=2)
 
     def _start_shuffle(self) -> None:
-        if self._shuffle_timer is None:
+        if self.settings.shuffle_timing == "track":
+            self._shuffle_track = self._now_playing
+        elif self._shuffle_timer is None:
             self._shuffle_count = 0
             self._shuffle_timer = self.set_interval(SHUFFLE_MODE_SECONDS, self._shuffle_tick)
 
@@ -615,7 +630,7 @@ class Spektr(App):
         if scope in ("modes", "both"):
             others = [n for n in viz.mode_names if n != viz.mode_name]
             if others:
-                viz.set_mode(random.choice(others))
+                viz.set_mode(random.choice(others), dissolve=True)
                 viz.commit_mode()
 
         # Every tick when themes are the only thing moving, every
@@ -814,7 +829,18 @@ class Spektr(App):
 
     async def _poll_now_playing(self) -> None:
         track = await nowplaying.current()
-        self._now_playing = str(track) if track else None
+        current = str(track) if track else None
+        previous = self._shuffle_track
+        self._now_playing = current
+        if current is not None:
+            self._shuffle_track = current
+            if (
+                previous is not None
+                and current != previous
+                and self.settings.shuffle
+                and self.settings.shuffle_timing == "track"
+            ):
+                self._shuffle_tick()
         self._update_subtitle()
 
     def _update_subtitle(self) -> None:
@@ -894,8 +920,9 @@ class Spektr(App):
                 ("", "pick a few and the rest stop turning up."),
                 ("", "pick all, and nothing is held back."),
                 ("★", "a loadout you named. space loads it."),
-                ("shuffle", "swaps mode and/or theme on a timer."),
-                ("", "s starts it, c chooses which it swaps."),
+                ("shuffle", "swaps mode and/or theme on a timer"),
+                ("", "or when the song changes."),
+                ("", "s starts it; c chooses what and when."),
                 ("subcells", "(o) draws 2x4 dots per character, (q) 2x2."),
                 ("", "the extra pairs are opt-in in c, and want"),
                 ("", "a font with Unicode 16 octants."),
@@ -973,6 +1000,10 @@ class Spektr(App):
             # something is worse than one that admits it did not.
             return f"{v}" if s.shuffle else f"{v}  (off — press s)"
 
+        def show_shuffle_timing(v):
+            label = "every track change" if v == "track" else "every 15 seconds"
+            return label if s.shuffle else f"{label}  (off — press s)"
+
         def show_fps(v):
             if v != config.FPS_UNLIMITED:
                 return f"{v} fps"
@@ -1035,6 +1066,18 @@ class Spektr(App):
                 show_shuffle,
                 self._set_shuffle_scope,
                 f"cycles modes/themes every {int(SHUFFLE_MODE_SECONDS)}s",
+            ),
+            Setting(
+                "shuffle_timing",
+                "shuffle when",
+                config.SHUFFLE_TIMINGS,
+                show_shuffle_timing,
+                self._set_shuffle_timing,
+                (
+                    "song changes use the OS now-playing service"
+                    if nowplaying.available()
+                    else "song changes unavailable here — no OS now-playing service"
+                ),
             ),
             Setting(
                 "transparent_background",
@@ -1120,6 +1163,7 @@ class Spektr(App):
             "chrome": s.chrome,
             "transparent_background": s.transparent_background,
             "shuffle_scope": s.shuffle_scope,
+            "shuffle_timing": s.shuffle_timing,
         }
 
         return rows, values

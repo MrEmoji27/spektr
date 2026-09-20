@@ -43,6 +43,23 @@ def _os(name: str):
     from importlib import import_module
     return getattr(import_module(f".{name}", __package__), f"_{'nowplaying' if name == 'macos' else name}")
 
+def available() -> bool:
+    """Whether this platform has the optional now-playing backend installed."""
+    try:
+        if sys.platform == "win32":
+            from winrt.windows.media.control import (  # noqa: F401
+                GlobalSystemMediaTransportControlsSessionManager,
+            )
+
+            return True
+        if sys.platform.startswith("linux"):
+            from dbus_next.aio import MessageBus  # noqa: F401
+
+            return True
+    except ImportError:
+        pass
+    return False
+
 
 async def current() -> Track | None:
     """The track the OS says is playing right now, or ``None``.

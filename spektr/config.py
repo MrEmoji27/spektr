@@ -49,6 +49,11 @@ SHUFFLE_SCOPES = ("modes", "themes", "both")
 #: Scope used when a config names one that no longer exists.
 SHUFFLE_DEFAULT = "both"
 
+#: What advances shuffle: its normal interval, or a change reported by the
+#: operating system's now-playing service.
+SHUFFLE_TIMINGS = ("timer", "track")
+SHUFFLE_TIMING_DEFAULT = "timer"
+
 #: Frame rates offered in the settings panel. Anything in 15..240 is valid via
 #: ``--fps``; these are just the useful stops — 24 and 48 for people who want
 #: the film-ish look, 30/60 for the obvious ones, 90/120/144 for high-refresh.
@@ -105,6 +110,10 @@ class Settings:
     #: One of :data:`SHUFFLE_SCOPES`. Kept even while shuffle is off, so
     #: turning it back on resumes what you last chose.
     shuffle_scope: str = SHUFFLE_DEFAULT
+    #: Timer shuffle remains the default. ``track`` uses the existing
+    #: now-playing poll and advances only after one known track changes to
+    #: another known track.
+    shuffle_timing: str = SHUFFLE_TIMING_DEFAULT
     #: Which cell geometry the subcell modes draw with: ``"octant"`` (2x4
     #: subcells, Unicode 16) or ``"quadrant"`` (2x2, Block Elements only).
     #:
@@ -210,6 +219,8 @@ class Settings:
             self.shuffle = bool(raw)
         if self.shuffle_scope not in SHUFFLE_SCOPES:
             self.shuffle_scope = SHUFFLE_DEFAULT
+        if self.shuffle_timing not in SHUFFLE_TIMINGS:
+            self.shuffle_timing = SHUFFLE_TIMING_DEFAULT
         return self
 
 
