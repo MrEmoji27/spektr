@@ -175,7 +175,7 @@ def test_a_config_full_of_junk_still_builds_a_panel():
     """The panel is built from settings; settings can come off disk corrupt."""
     junk = Settings(
         fps="soon", bands=None, sensitivity=[], gate="low", cells="sextants",
-        fine_modes="yes", chrome=None, shuffle_scope="everything",
+        fine_modes="yes", chrome_mode=None, shuffle_scope="everything",
         mode=None, theme=42,
     ).clamp()
     app = Spektr(settings=junk)
@@ -191,10 +191,10 @@ def test_a_config_full_of_junk_still_builds_a_panel():
 # ── the setters actually reach the object that gets saved ────────────────────
 
 #: Rows whose setter needs a running Textual app: ``fps`` starts a timer and
-#: ``chrome`` walks the screen stack. Excluded from the end-to-end check below
+#: ``chrome_mode`` walks the screen stack. Excluded from the end-to-end check below
 #: and pinned separately, so that if either starts failing for some *other*
 #: reason it is not mistaken for the lifecycle they legitimately need.
-NEEDS_A_LIVE_APP = {"fps", "chrome"}
+NEEDS_A_LIVE_APP = {"fps", "chrome_mode"}
 
 
 def test_the_app_and_the_widget_share_one_settings_object():
@@ -352,3 +352,53 @@ def test_the_readme_counts_agree_with_the_registry():
         f"the app has {modes} render modes and {themes} themes; the README "
         f"does not say so in: {missing}"
     )
+
+
+# ── the header and footer, on a timer ────────────────────────────────────────
+
+
+def test_chrome_auto_hides_when_idle_and_returns_on_a_key():
+    """auto is the third setting: the chrome goes away once you stop typing."""
+    import asyncio
+
+    from textual.widgets import Footer, Header
+
+    from spektr.ui.app import Spektr
+
+    async def run():
+        app = Spektr(settings=Settings(chrome_mode="auto"))
+        app.notify = lambda *a, **k: None  # type: ignore[method-assign]
+        async with app.run_test(size=(60, 20)) as pilot:
+            await pilot.pause()
+            shown = [w.display for w in (app.query_one(Header), app.query_one(Footer))]
+            app._hide_chrome_idle()          # the countdown running out
+            hidden = [w.display for w in (app.query_one(Header), app.query_one(Footer))]
+            await pilot.press("m")           # any key brings them back
+            await pilot.pause()
+            back = [w.display for w in (app.query_one(Header), app.query_one(Footer))]
+            return shown, hidden, back
+
+    shown, hidden, back = asyncio.run(run())
+    assert all(shown), "auto should start with the chrome on screen"
+    assert not any(hidden), "the chrome should go when the countdown runs out"
+    assert all(back), "a key press should bring the chrome back"
+
+
+def test_chrome_shown_and_hidden_ignore_the_timer():
+    """The other two settings mean what they say, whatever the timer does."""
+    import asyncio
+
+    from textual.widgets import Header
+
+    from spektr.ui.app import Spektr
+
+    async def run(mode: str):
+        app = Spektr(settings=Settings(chrome_mode=mode))
+        app.notify = lambda *a, **k: None  # type: ignore[method-assign]
+        async with app.run_test(size=(60, 20)) as pilot:
+            await pilot.pause()
+            app._hide_chrome_idle()
+            return app.query_one(Header).display
+
+    assert asyncio.run(run("shown")) is True
+    assert asyncio.run(run("hidden")) is False

@@ -41,6 +41,11 @@ SHUFFLE_THEME_EVERY = 3
 #: trip (WinRT or D-Bus) rather than a free local read.
 NOWPLAYING_POLL_SECONDS = 5.0
 
+#: How long the header and footer wait, with no key pressed, before hiding
+#: themselves when the chrome is set to auto. Long enough to read the mode and
+#: theme you just chose, short enough that the picture is soon alone.
+CHROME_IDLE_S = 4.0
+
 
 class Spektr(App):
     # The screen colour is taken over by the active spektr theme once the
@@ -222,6 +227,7 @@ class Spektr(App):
         self._ask_for_synchronized_output()
         if not self.settings.chrome:
             self._set_chrome(False)
+        self._rearm_chrome()
         self.viz.on_mode_disabled = self._mode_disabled
         # give the capture thread a moment, then say what it found
         self.set_timer(1.5, self.action_show_status)
@@ -1126,12 +1132,12 @@ class Spektr(App):
                 "see-through shows terminal opacity; light themes want a light terminal",
             ),
             Setting(
-                "chrome",
+                "chrome_mode",
                 "header + footer",
-                (True, False),
-                lambda v: "shown" if v else "hidden",
-                self._set_chrome,
-                "same as f",
+                ("shown", "auto", "hidden"),
+                lambda v: {"auto": f"auto, hides after {CHROME_IDLE_S:.0f}s"}.get(v, v),
+                self._set_chrome_mode,
+                "f toggles; auto hides them once you stop pressing keys",
             ),
             Setting(
                 "fine_modes",
@@ -1208,7 +1214,7 @@ class Spektr(App):
             "cells": s.cells,
             "sensitivity": s.sensitivity,
             "gate": s.gate,
-            "chrome": s.chrome,
+            "chrome_mode": s.chrome_mode,
             "transparent_background": s.transparent_background,
             "shuffle_scope": s.shuffle_scope,
             "shuffle_timing": s.shuffle_timing,
@@ -1220,6 +1226,39 @@ class Spektr(App):
         self.notify(f"{self.viz.perf}\n{self.viz.level}", timeout=4)
 
     # ── chrome ───────────────────────────────────────────────────────────────
+
+    def _set_chrome_mode(self, mode: str) -> str:
+        """Take the three-way choice and apply it at once."""
+        self.settings.chrome_mode = mode
+        self._set_chrome(mode != "hidden")
+        self._rearm_chrome()
+        return mode
+
+    def _rearm_chrome(self) -> None:
+        """Start, restart or stop the idle countdown."""
+        timer, self._chrome_timer = getattr(self, "_chrome_timer", None), None
+        if timer is not None:
+            timer.stop()
+        if self.settings.chrome_mode == "auto":
+            self._chrome_timer = self.set_timer(CHROME_IDLE_S, self._hide_chrome_idle)
+
+    def _hide_chrome_idle(self) -> None:
+        """The countdown ran out: hide the chrome, but remember it is wanted."""
+        self._chrome_timer = None
+        if self.settings.chrome_mode == "auto":
+            for w in (self.query_one(Header), self.query_one(Footer)):
+                w.display = False
+
+    def _wake_chrome(self) -> None:
+        """A key was pressed: show the chrome again and restart the countdown."""
+        if self.settings.chrome_mode != "auto":
+            return
+        for w in (self.query_one(Header), self.query_one(Footer)):
+            w.display = True
+        self._rearm_chrome()
+
+    def on_key(self, event) -> None:
+        self._wake_chrome()
 
     def _set_chrome(self, visible: bool) -> None:
         for w in (self.query_one(Header), self.query_one(Footer)):

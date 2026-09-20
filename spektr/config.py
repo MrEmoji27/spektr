@@ -56,6 +56,9 @@ SHUFFLE_DEFAULT = "both"
 #: the frame budget. Off unless asked for — spektr does not decide this for
 #: you, because a machine that dips below the rate for a moment is not one
 #: that wants fewer bars for the rest of the evening.
+CHROME_CHOICES = ("shown", "auto", "hidden")
+CHROME_DEFAULT = "shown"
+
 ECO_CHOICES = ("on", "off")
 ECO_DEFAULT = "off"
 
@@ -136,6 +139,12 @@ class Settings:
     #: draw them, and ``--cells quadrant`` is the fallback that works
     #: everywhere.
     #: One of :data:`ECO_CHOICES`. See that constant for what eco does.
+    #: ``shown``, ``auto`` or ``hidden``. ``auto`` hides the header and footer
+    #: once you stop pressing keys and brings them back when you press one.
+    #: ``chrome`` stays the plain on/off it always was and is kept in step by
+    #: :meth:`clamp`, so a config written by an older version still means what
+    #: it said and one written here still works in an older version.
+    chrome_mode: str = CHROME_DEFAULT
     eco: str = ECO_DEFAULT
     cells: str = "octant"
     #: Offer the twelve subcell variants — the ``Fine`` modes and
@@ -233,6 +242,15 @@ class Settings:
             self.shuffle = bool(raw)
         if self.shuffle_scope not in SHUFFLE_SCOPES:
             self.shuffle_scope = SHUFFLE_DEFAULT
+        if self.chrome_mode not in CHROME_CHOICES:
+            # An older config knows only the boolean, so take its answer.
+            self.chrome_mode = CHROME_DEFAULT if self.chrome else "hidden"
+        elif self.chrome_mode == CHROME_DEFAULT and not self.chrome:
+            # Built in code as Settings(chrome=False), which every caller
+            # writing that means literally. The boolean wins where the two
+            # disagree and the default is all the mode has to say.
+            self.chrome_mode = "hidden"
+        self.chrome = self.chrome_mode != "hidden"
         if self.eco not in ECO_CHOICES:
             self.eco = ECO_DEFAULT
         if self.shuffle_timing not in SHUFFLE_TIMINGS:
@@ -270,7 +288,13 @@ def load(config_dir: Path | None = None) -> Settings:
         if not isinstance(raw, dict):
             return Settings()
         known = {f.name for f in fields(Settings)}
-        settings = Settings(**{k: v for k, v in raw.items() if k in known}).clamp()
+        values = {k: v for k, v in raw.items() if k in known}
+        # A config written before chrome_mode existed says only chrome, and it
+        # is the answer: without this, "hidden" came back as "shown" on the
+        # first run of this version.
+        if "chrome_mode" not in values and "chrome" in values:
+            values["chrome_mode"] = CHROME_DEFAULT if values["chrome"] else "hidden"
+        settings = Settings(**values).clamp()
         # Keys this version does not know are kept and written back by save(),
         # so a setting added by a later version survives this one, and one
         # this version adds survives a downgrade and an upgrade again.
