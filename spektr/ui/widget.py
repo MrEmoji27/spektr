@@ -56,6 +56,12 @@ SLOW_MODE_MS = 11.0
 #: animation — the two used to share one constant and silently coupled.
 RAINBOW_SECONDS_PER_CYCLE = 10.7
 
+#: The tempo a morph's sweep is tuned for. A faster track crosses the screen
+#: sooner and a slower one takes its time, within the clamp in
+#: :meth:`AudioVisualizer._morph_style`: past a point the sweep is either so
+#: quick it is not one, or so slow that the change arrives in two halves.
+TEMPO_REFERENCE = 120.0
+
 
 class AudioVisualizer(Widget):
     # background is set from the active theme in _paint_background(); the
@@ -358,6 +364,26 @@ class AudioVisualizer(Widget):
         ):
             return dissolve.FAMILY_SECONDS
         return dissolve.SECONDS
+
+    def _morph_style(self, frame, family: bool) -> dissolve.Style:
+        """How this frame of the morph should move.
+
+        The sweep is shortened inside one family — the two pictures are nearly
+        the same shape and that morph is the short one — and shortened again
+        by a fast tempo, so the change crosses the screen in time with the
+        music rather than to a schedule of its own. The bands go in as they
+        are and the morph reorders its own sweep with them: the loud parts of
+        the picture set off first.
+        """
+        scale = dissolve.SWEEP_FAMILY if family else 1.0
+        tempo = float(getattr(frame, "tempo_bpm", 0.0) or 0.0)
+        if tempo > 0.0:
+            scale *= max(0.7, min(1.4, TEMPO_REFERENCE / tempo))
+        return dissolve.Style(
+            sweep=dissolve.SWEEP * scale,
+            wavefront=dissolve.WAVEFRONT * scale,
+            levels=self._spring.x,
+        )
 
     def _start_morph(self, source: str, *, quick: bool) -> None:
         """Begin morphing out of ``source``'s picture into the current mode.
@@ -980,6 +1006,7 @@ class AudioVisualizer(Widget):
                     out, dissolve.ease(progress),
                     gather=0.0 if family else dissolve.GATHER,
                     push=self._dissolve_push,
+                    style=self._morph_style(frame, family),
                 )
         self._last_frame = out
         self._last_frame_mode = self.mode_name

@@ -12,6 +12,14 @@ travels across the frame instead of sliding up and down in place. Two
 pictures the same shape as each other are what make the swap underneath read
 as one picture becoming the other rather than as dots being replaced.
 
+How the change gets there is a separate matter from where it is going, and it
+is all in :class:`Style`: the travel sweeps across the frame rather than
+setting off everywhere at once, lands a little past its target and settles,
+leans out of the straight line on the way, and swaps its dots behind a
+wavefront that the music has a say in. Each of those is a strength that can be
+turned down to zero on its own, and the widget decides what each is worth for
+the switch being made.
+
 Frame kinds do not mix in one output. A braille frame is ``(codes, cidx)``,
 where every cell is eight dots packed into one codepoint, so a cell can hold
 dots from both frames at once and the dissolve happens inside it. Every other
@@ -26,6 +34,8 @@ Nothing here is per-frame expensive: the mask is cached, and each call is a
 handful of whole-array operations.
 """
 from __future__ import annotations
+
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -87,29 +97,169 @@ EDGE = 0.04
 #: not repeat visibly at terminal sizes, and it builds in about half a second.
 MASK = 32
 
+# ── what gives a morph its life ─────────────────────────────────────────────
+#
+# Everything below is manner rather than content: none of it changes which
+# picture the morph is heading for, only the way it gets there. Each one is a
+# strength and each one can be taken out on its own by setting it to zero —
+# that is the switch for keeping the ones that work and dropping the rest.
+# They are read per call rather than bound as defaults, so a running app can
+# be talked out of any of them without a restart.
 
-def ease(p: float) -> float:
-    """Smoothstep: start and finish gently, travel quickly in the middle."""
-    p = 0.0 if p < 0.0 else 1.0 if p > 1.0 else float(p)
+#: How much of a morph the sweep across the frame takes: the leading column
+#: sets off when the morph does, the trailing one this much later. Zero moves
+#: every column together — the change happening everywhere at once, which is
+#: what reads as mechanical however well it is timed.
+SWEEP = 0.15
+
+#: The share of that sweep a morph inside one family uses. The two pictures
+#: are nearly the same shape already and its morph is the short one, where the
+#: full delay would be most of the change.
+SWEEP_FAMILY = 0.35
+
+#: How far past its target the travel lands, as a share of the way it came,
+#: before settling back onto it. Zero eases flat into place, which is correct
+#: and lifeless: nothing with weight stops dead on the mark.
+OVERSHOOT = 0.03
+
+#: Where the travel has arrived, as a share of its own window, when there is a
+#: spring in the landing. The rest of the window is the settle, so the shapes
+#: come to rest on their target instead of reaching it at the last instant.
+ARRIVE = 0.85
+
+#: How far the picture leans sideways at the top of its flight, as a share of
+#: the frame's width. Nothing at either end, so it starts and ends straight
+#: and the ink is carried through an arc rather than slid down the screen.
+SWAY = 0.02
+
+#: The share of a morph the handover's wavefront takes to cross the frame.
+#: Zero swaps dots everywhere at once — an even scatter, which the eye reads
+#: as a flicker — and anything larger lets it watch the change travel.
+WAVEFRONT = 0.15
+
+#: How much the frame's own bands reorder a sweep, as a share of it either
+#: way: a loud column sets off early, a quiet one waits, so the front runs
+#: through the loud parts of the picture. Zero sweeps by position alone.
+MUSIC = 0.5
+
+
+@dataclass(frozen=True)
+class Style:
+    """How a morph moves, as opposed to what it changes.
+
+    Built once per morph and handed to every frame of it — the widget shortens
+    the sweep for a switch inside one family and for a fast tempo, and passes
+    the bands in as they are. A test wanting one of these out of the way turns
+    that one to zero and leaves the others alone.
+    """
+
+    #: Share of the morph the sweep across the frame takes. 0: all at once.
+    sweep: float = SWEEP
+    #: Share of the morph the handover's wavefront takes to cross it.
+    wavefront: float = WAVEFRONT
+    #: How far past its target the travel lands, of the way it came.
+    overshoot: float = OVERSHOOT
+    #: How far the picture leans sideways in flight, of the frame's width.
+    sway: float = SWAY
+    #: The frame's bands, for the sweep to be reordered by. None: in order.
+    levels: np.ndarray | None = None
+    #: How much of the sweep those bands may reorder.
+    music: float = MUSIC
+
+
+def ease(p):
+    """Smoothstep: start and finish gently, travel quickly in the middle.
+
+    Takes an array as readily as a number: once the swap has a wavefront in it
+    the handover has a threshold per column rather than one for the frame.
+    """
+    p = np.clip(p, 0.0, 1.0)
     return p * p * (3.0 - 2.0 * p)
 
 
-def _handover(progress: float) -> float:
-    """Progress through the swap itself, held back until the ink has moved."""
-    lo, hi = HANDOVER
-    return ease((progress - lo) / (hi - lo))
+def _curve(u, over: float = -1.0):
+    """Where the travel has got to at ``u``, its own clock from 0 to 1.
+
+    Eased, and with a little spring in the landing: the shapes are at their
+    target by ``ARRIVE`` of the way through and then settle onto it from
+    ``over`` past it, which is what anything with weight does. Zero ``over``
+    is the plain ease, arriving at the last instant.
+
+    ``over`` is how far past the target it lands, as a share of the way it
+    came; below zero it is read from ``OVERSHOOT``, so that the constant stays
+    a switch a running app can be talked out of.
+    """
+    over = OVERSHOOT if over < 0.0 else over
+    if over <= 0.0:
+        return ease(u)
+    # Rise to the target early, then bow out and back. The sine squared
+    # settles at both ends, so the picture leaves the rise and lands on the
+    # target without a step in speed at either join.
+    settle = np.clip((u - ARRIVE) / (1.0 - ARRIVE), 0.0, 1.0)
+    return ease(np.minimum(u, ARRIVE) / ARRIVE) + over * np.sin(np.pi * settle) ** 2
 
 
-def _travel(progress: float, push: float = 0.0) -> float:
+def _sweep(cols: int, levels: np.ndarray | None = None,
+           music: float = MUSIC) -> np.ndarray:
+    """Where each column sits in a sweep: 0 leads, 1 trails.
+
+    With ``levels`` — the bands the frame was drawn from — the sweep is
+    reordered by what the music is doing, loud columns setting off before
+    quiet ones, so the front runs through the loud parts of the picture. The
+    levels are read against their own mean, which keeps the pattern at any
+    volume and leaves a silent frame sweeping in order of position.
+    """
+    q = np.arange(cols, dtype=np.float32) / max(1, cols - 1)
+    if levels is None or music <= 0.0 or len(levels) == 0:
+        return q
+    mean = float(levels.mean())
+    if mean <= 1e-6:
+        return q
+    bands = len(levels)
+    band = np.minimum((q * bands).astype(np.intp), bands - 1)
+    loud = np.asarray(levels, dtype=np.float32) / mean
+    return np.clip(q - music * (loud[band] - 1.0), 0.0, 1.0)
+
+
+def _travel(progress: float, push: float = 0.0, sweep: float = 0.0,
+            delay: np.ndarray | None = None, over: float = -1.0):
     """Progress through the shapes' move: done before the colours are.
 
     ``TRAVEL`` finishes the travel with the morph still going, and the
     handover runs past it, so the picture has stopped moving by the time the
     last dot of the new one lands. ``push`` — beats that landed earlier in the
     morph — moves the whole thing along; it is spent, not borrowed, so the
-    travel stays monotone and never runs backwards.
+    travel never runs backwards except for the settle the overshoot puts at
+    the end of it, which is the picture coming to rest rather than setting off
+    again.
+
+    ``delay`` is where each column sits in the sweep, 0 leading and 1
+    trailing (None: one clock for the whole frame). The trailing column still
+    lands by ``TRAVEL``, so however wide the sweep is the shapes are all in
+    place before the handover is over; the columns ahead of it arrive early
+    and wait.
     """
-    return ease(min(1.0, progress / TRAVEL + push))
+    if delay is None:
+        return _curve(min(1.0, progress / TRAVEL + push), over)
+    span = TRAVEL - sweep
+    return _curve(
+        np.clip((progress - sweep * delay) / span + push, 0.0, 1.0), over
+    )
+
+
+def _handover(progress: float, wavefront: float = 0.0,
+              delay: np.ndarray | None = None):
+    """Progress through the swap itself, held back until the ink has moved.
+
+    ``delay`` gives each column the same head start the sweep gives it, so the
+    swap crosses the frame behind the front rather than arriving everywhere at
+    once. The trailing column keeps the plain window, so the colours still
+    finish where they finished before.
+    """
+    lo, hi = HANDOVER
+    if delay is None or wavefront <= 0.0:
+        return ease((progress - lo) / (hi - lo))
+    return ease((progress + wavefront * (1.0 - delay) - lo) / (hi - lo))
 
 
 def _rank(rows: int, cols: int) -> np.ndarray:
@@ -330,7 +480,8 @@ def _warp(arrays: tuple, centre: np.ndarray, spread: np.ndarray,
 
 
 def _morph(old: tuple, new: tuple, lit_old: np.ndarray, lit_new: np.ndarray,
-           progress: float, gather: float, push: float, rank: np.ndarray) -> tuple:
+           progress: float, gather: float, push: float, rank: np.ndarray,
+           style: Style) -> tuple:
     """Both pictures, each moved a share of the way to the other's shape.
 
     A column with ink on only one side has nothing to move towards, so it
@@ -349,17 +500,25 @@ def _morph(old: tuple, new: tuple, lit_old: np.ndarray, lit_new: np.ndarray,
         x_old, w_old = x_new, w_new
     elif not ink_new:
         x_new, w_new = x_old, w_old
-    t = _travel(progress, push)
-    c_t = c_old + (c_new - c_old) * t
-    s_t = s_old + (s_new - s_old) * t
-    # Gather in, then bloom back out: a half-cycle of sine, strongest half way
-    # through the travel and nothing at either end, so the morph starts and
-    # ends on the real picture. On the travel's clock rather than the morph's,
-    # so the shapes are still by the time the colours finish.
-    s_t = s_t * (1.0 - gather * float(np.sin(np.pi * t)))
-    x_t = x_old + (x_new - x_old) * t
-    w_t = w_old + (w_new - w_old) * t
     cols = n_old.size
+    t = _travel(progress, push, style.sweep,
+                _sweep(cols, style.levels, style.music), style.overshoot)
+    # The gather and the sideways lean both belong to the flight, and the
+    # flight is over by the time the travel passes its target: they ride the
+    # travel up to 1 and stop there, so only the shapes settle.
+    held = np.clip(t, 0.0, 1.0)
+    c_t = c_old + (c_new - c_old) * t
+    s_t = (s_old + (s_new - s_old) * t) * (
+        1.0 - gather * np.sin(np.pi * held)
+    )
+    # Across the frame the two pictures move as one, on the average of the
+    # column clocks: there is one width to share between them, so it cannot
+    # sweep. The lean bows it out and back, which is what carries the ink
+    # through an arc instead of down a straight line.
+    mid = float(t.mean())
+    in_flight = float(np.sin(np.pi * min(mid, 1.0)))
+    x_t = x_old + (x_new - x_old) * mid + style.sway * cols * in_flight
+    w_t = w_old + (w_new - w_old) * mid
     return (_warp(old, c_old, s_old, c_t, s_t,
                   _across(cols, x_old, w_old, x_t, w_t), rank),
             _warp(new, c_new, s_new, c_t, s_t,
@@ -367,8 +526,8 @@ def _morph(old: tuple, new: tuple, lit_old: np.ndarray, lit_new: np.ndarray,
 
 
 def _settle(arrays: tuple, lit_old: np.ndarray, lit_new: np.ndarray,
-            progress: float, gather: float, push: float,
-            rank: np.ndarray) -> tuple:
+            progress: float, gather: float, push: float, rank: np.ndarray,
+            style: Style) -> tuple:
     """The incoming picture alone, on its way out of the outgoing one's shape.
 
     Where :func:`_morph` moves both pictures towards a shape between them,
@@ -388,19 +547,25 @@ def _settle(arrays: tuple, lit_old: np.ndarray, lit_new: np.ndarray,
     x_new, w_new, _ = _span(n_new)
     if not ink_old:
         x_old, w_old = x_new, w_new
-    t = _travel(progress, push)
+    cols = n_new.size
+    t = _travel(progress, push, style.sweep,
+                _sweep(cols, style.levels, style.music), style.overshoot)
+    held = np.clip(t, 0.0, 1.0)
     c_t = c_from + (c_new - c_from) * t
-    s_t = s_from + (s_new - s_from) * t
-    s_t = s_t * (1.0 - gather * float(np.sin(np.pi * t)))
-    x_t = x_old + (x_new - x_old) * t
-    w_t = w_old + (w_new - w_old) * t
+    s_t = (s_from + (s_new - s_from) * t) * (
+        1.0 - gather * np.sin(np.pi * held)
+    )
+    mid = float(t.mean())
+    in_flight = float(np.sin(np.pi * min(mid, 1.0)))
+    x_t = x_old + (x_new - x_old) * mid + style.sway * cols * in_flight
+    w_t = w_old + (w_new - w_old) * mid
     return _warp(arrays, c_new, s_new, c_t, s_t,
-                 _across(n_new.size, x_new, w_new, x_t, w_t), rank)
+                 _across(cols, x_new, w_new, x_t, w_t), rank)
 
 
 def _grow(old: tuple, new: tuple, kind_old: tuple[int, bool],
           kind_new: tuple[int, bool], progress: float, gather: float,
-          push: float) -> tuple:
+          push: float, style: Style) -> tuple:
     """The incoming picture, starting out in the outgoing picture's shape.
 
     Two frames of different kinds cannot share one, so past the first instant
@@ -417,13 +582,13 @@ def _grow(old: tuple, new: tuple, kind_old: tuple[int, bool],
         dots_new = _ink(new, True)
         (moved,), _ = _settle((dots_new,), _ink_onto(old, kind_old, True),
                               dots_new, progress, gather, push,
-                              _rank(*dots_new.shape))
+                              _rank(*dots_new.shape), style)
         (moved_cidx,), keep = _settle((new[1],), cells_old,
                                       new[0] != BRAILLE_BASE, progress,
-                                      gather, push, _rank(rows, cols))
+                                      gather, push, _rank(rows, cols), style)
         return pack_braille(moved), np.where(keep, moved_cidx, new[1])
     moved, keep = _settle(new, cells_old, _ink(new, False), progress, gather,
-                          push, _rank(rows, cols))
+                          push, _rank(rows, cols), style)
     blanks = (SPACE,) + new[1:]
     return tuple(np.where(keep, m, f) for m, f in zip(moved, blanks))
 
@@ -445,7 +610,7 @@ def _refit(frame: tuple, shape: tuple[int, int]) -> tuple:
 
 
 def _dots(old: tuple, new: tuple, progress: float, gather: float,
-          push: float) -> tuple:
+          push: float, style: Style) -> tuple:
     """Both frames braille, so the dissolve happens inside the cells too."""
     codes_old, codes_new = old[0], new[0]
     rows, cols = codes_old.shape
@@ -453,13 +618,16 @@ def _dots(old: tuple, new: tuple, progress: float, gather: float,
     dots_new = _braille_dots(codes_new)
     rank = _rank(rows * 4, cols * 2)
     ((moved_old,), keep_old), ((moved_new,), keep_new) = _morph(
-        (dots_old,), (dots_new,), dots_old, dots_new, progress, gather, push, rank,
+        (dots_old,), (dots_new,), dots_old, dots_new, progress, gather, push,
+        rank, style,
     )
     # Ink the move pushed off the frame, or faded out at the edge, is not
     # there any more: the mask says which cells the move reached at all.
     warped_old = moved_old & keep_old
     warped_new = moved_new & keep_new
-    arrived = rank < _handover(progress)
+    arrived = rank < _handover(
+        progress, style.wavefront, _sweep(cols * 2, style.levels, style.music)
+    )
     mixed = np.where(arrived, warped_new, warped_old)
     codes = pack_braille(mixed)
     # Colour travels with the shape: the ramp indices are moved by the same
@@ -469,7 +637,7 @@ def _dots(old: tuple, new: tuple, progress: float, gather: float,
     cells_new = codes_new != BRAILLE_BASE
     ((moved_cidx_old,), cell_keep_old), ((moved_cidx_new,), cell_keep_new) = _morph(
         (old[1],), (new[1],), cells_old, cells_new, progress, gather, push,
-        _rank(rows, cols),
+        _rank(rows, cols), style,
     )
     # A cell the move did not reach keeps its own colour rather than
     # taking ramp index 0, which is a colour like any other.
@@ -480,7 +648,7 @@ def _dots(old: tuple, new: tuple, progress: float, gather: float,
 
 
 def _cells(old: tuple, new: tuple, progress: float, gather: float,
-           push: float) -> tuple:
+           push: float, style: Style) -> tuple:
     """Frames of one glyph per cell: columns move, the handover is per cell."""
     codes_old, codes_new = old[0], new[0]
     rows, cols = codes_old.shape
@@ -488,7 +656,7 @@ def _cells(old: tuple, new: tuple, progress: float, gather: float,
     lit_new = codes_new != SPACE
     rank = _rank(rows, cols)
     (moved_old, keep_old), (moved_new, keep_new) = _morph(
-        old, new, lit_old, lit_new, progress, gather, push, rank,
+        old, new, lit_old, lit_new, progress, gather, push, rank, style,
     )
     # Outside the move: a blank cell where the glyph was, and the cell's own
     # colour everywhere else.
@@ -496,12 +664,15 @@ def _cells(old: tuple, new: tuple, progress: float, gather: float,
                        for m, f in zip(moved_old, (SPACE,) + old[1:]))
     warped_new = tuple(np.where(keep_new, m, f)
                        for m, f in zip(moved_new, (SPACE,) + new[1:]))
-    cells = rank < _handover(progress)
+    cells = rank < _handover(
+        progress, style.wavefront, _sweep(cols, style.levels, style.music)
+    )
     return tuple(np.where(cells, n, o) for o, n in zip(warped_old, warped_new))
 
 
 def blend(old: tuple, new: tuple, progress: float,
-          gather: float = GATHER, push: float = 0.0) -> tuple:
+          gather: float = GATHER, push: float = 0.0,
+          style: Style | None = None) -> tuple:
     """The frame part way from ``old`` to ``new``.
 
     ``progress`` is 0 at the start and 1 at the end, eased by the caller or
@@ -516,6 +687,10 @@ def blend(old: tuple, new: tuple, progress: float,
     so far, 0 to ``PUSH_MAX``: the shapes move on with the music, while the
     handover and the morph itself keep to their own clock.
 
+    ``style`` is how it moves rather than what it changes — the sweep, the
+    landing, the lean, the wavefront and the music's say in them. None is the
+    house style; see :class:`Style` for taking any one of them out.
+
     Two frames of different kinds — a braille pair against a half-block or
     octant triple, a block-glyph pair against either — are not mixed at all;
     the incoming one is drawn in the outgoing one's shape and settles out of
@@ -526,6 +701,8 @@ def blend(old: tuple, new: tuple, progress: float,
     if progress >= 1.0:
         return new
 
+    if style is None:
+        style = Style()
     codes_old, codes_new = old[0], new[0]
     if codes_old.shape != codes_new.shape:
         # A resize part way through. Nothing can be blended against a frame of
@@ -537,7 +714,7 @@ def blend(old: tuple, new: tuple, progress: float,
 
     kind_old, kind_new = _kind(old), _kind(new)
     if kind_old != kind_new:
-        return _grow(old, new, kind_old, kind_new, progress, gather, push)
+        return _grow(old, new, kind_old, kind_new, progress, gather, push, style)
     if kind_new == (2, True):
-        return _dots(old, new, progress, gather, push)
-    return _cells(old, new, progress, gather, push)
+        return _dots(old, new, progress, gather, push, style)
+    return _cells(old, new, progress, gather, push, style)

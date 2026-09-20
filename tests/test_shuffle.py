@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 
 import numpy as np
+import pytest
 
 from spektr import config, dissolve
 from spektr.analysis import Frame
@@ -142,6 +143,36 @@ def test_both_modes_render_during_a_dissolve(monkeypatch, tmp_path):
             calls.clear()
             viz._build()
             assert calls == ["Wave", "Bars"]
+
+    asyncio.run(run())
+
+
+def test_the_morph_style_follows_the_family_and_the_tempo(tmp_path):
+    """How a morph moves is the widget's call: the sweep is shorter inside a
+    family and shorter again under a quick tempo, and the bands go in with it
+    so the morph can run its front through the loud parts of the picture."""
+    async def run() -> None:
+        app = Spektr(settings=config.Settings(fps=15), config_dir=tmp_path)
+        async with app.run_test(size=(80, 24)):
+            viz = app.viz
+            steady = viz._morph_style(Frame(), family=False)
+            assert steady.sweep == pytest.approx(dissolve.SWEEP)
+            assert steady.wavefront == pytest.approx(dissolve.WAVEFRONT)
+            assert steady.levels is viz._spring.x, "the music was left out of it"
+
+            kin = viz._morph_style(Frame(), family=True)
+            assert kin.sweep == pytest.approx(dissolve.SWEEP * dissolve.SWEEP_FAMILY)
+            assert kin.sweep < steady.sweep
+
+            # a quick track crosses the screen sooner, a slow one takes longer
+            quick = viz._morph_style(Frame(tempo_bpm=180.0), family=False)
+            slow = viz._morph_style(Frame(tempo_bpm=50.0), family=False)
+            assert slow.sweep > steady.sweep > quick.sweep
+            # and neither extreme can take the sweep with it
+            driven = [viz._morph_style(Frame(tempo_bpm=bpm), family=False).sweep
+                      for bpm in (30.0, 60.0, 120.0, 240.0, 400.0)]
+            assert max(driven) <= dissolve.SWEEP * 1.4 + 1e-9
+            assert min(driven) >= dissolve.SWEEP * 0.7 - 1e-9
 
     asyncio.run(run())
 

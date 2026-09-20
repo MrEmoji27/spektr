@@ -14,6 +14,13 @@ from spektr.render import BRAILLE_BASE  # noqa: E402
 
 H, W = 8, 16
 
+#: The mechanics of a morph with none of its manner: no sweep, no wavefront,
+#: nothing landing past its target, no lean. Tests about travelling, arriving
+#: and not inventing anything use this, so that how a morph moves cannot
+#: quietly move the goalposts under them — the manner has tests of its own
+#: below, and each of those turns one thing on at a time.
+PLAIN = dissolve.Style(sweep=0.0, wavefront=0.0, overshoot=0.0, sway=0.0)
+
 
 def braille(fill: int, colour: int) -> tuple:
     """A frame where every cell holds the same dots and the same ramp index."""
@@ -139,12 +146,17 @@ def test_frames_of_different_kinds_grow_out_of_the_old_shape():
 
     # the incoming kind is what is drawn, from the first frame on
     assert all(len(dissolve.blend(old, new, p)) == 2 for p in (0.05, 0.4, 0.9))
-    # and nothing is invented: every glyph comes from the incoming frame
+    # and nothing of the other kind: a 2-tuple is braille or it is not one
     for p in (0.05, 0.4, 0.9):
-        mixed = dissolve.blend(old, new, p)
+        assert dissolve._braille(dissolve.blend(old, new, p)[0]), p
+    # with the picture not being resampled across the frame, nothing is
+    # invented either: every glyph is one the incoming frame drew
+    for p in (0.05, 0.4, 0.9):
+        mixed = dissolve.blend(old, new, p, style=PLAIN)
         assert set(np.unique(mixed[0])) <= set(np.unique(new[0])) | {SPACE}
 
-    walk = [centre(dissolve.blend(old, new, p)) for p in (0.05, 0.4, 0.7, 0.95)]
+    walk = [centre(dissolve.blend(old, new, p, style=PLAIN))
+            for p in (0.05, 0.4, 0.7, 0.95)]
     own = centre(new)
     assert walk == sorted(walk), f"the new picture did not settle: {walk}"
     assert walk[0] < rows * 0.25, f"did not start in the old shape: {walk[0]}"
@@ -247,11 +259,137 @@ def test_the_shapes_arrive_before_the_colours_do():
     assert dissolve._travel(1.0) == 1.0  # and holds there
     assert dissolve._handover(dissolve.TRAVEL) < 1.0  # colours still going
     assert dissolve._handover(1.0) == 1.0
-    travel = [dissolve._travel(p) for p in (0.1, 0.3, 0.5, 0.7, 0.9)]
+    travel = [dissolve._travel(p, over=0.0) for p in (0.1, 0.3, 0.5, 0.7, 0.9)]
     assert travel == sorted(travel), travel
-    # a beat can only ever push it further on
-    assert dissolve._travel(0.5, dissolve.PUSH_MAX) > dissolve._travel(0.5)
+    # A beat pushes the travel further along its curve. On the way up, which
+    # is where a beat has somewhere to push it to: past the peak the travel is
+    # settling onto its target and there is nothing left to shove along.
+    assert dissolve._travel(0.25, dissolve.PUSH_MAX) > dissolve._travel(0.25)
     assert dissolve._travel(1.0, dissolve.PUSH_MAX) == 1.0
+
+
+def test_the_travel_lands_past_its_target_and_settles_back():
+    """Idea two: the shapes overshoot the mark and come to rest on it.
+
+    Nothing with weight stops dead where it was aimed, and a travel that eases
+    flat into place is most of what makes a morph read as a slide rather than
+    as a move. The picture is at its target early and the rest of the clock is
+    the settle, so the overshoot is the whole of the extra travel.
+    """
+    walk = [dissolve._travel(p) for p in np.linspace(0.0, dissolve.TRAVEL, 201)]
+    peak = int(np.argmax(walk))
+    assert walk[peak] == pytest.approx(1.0 + dissolve.OVERSHOOT, abs=1e-5), (
+        f"the peak is not the overshoot asked for: {walk[peak]}"
+    )
+    # it rises to the target, overshoots once, and comes back onto it
+    assert walk[:peak] == sorted(walk[:peak]), "not on its way to the target"
+    assert walk[peak:] == sorted(walk[peak:], reverse=True), "more than one settle"
+    assert walk[peak] > 1.0, "it never went past its target"
+    assert walk[-1] == 1.0, "it did not settle on the target"
+
+    # taken out, the travel is the plain ease again
+    plain = [dissolve._travel(p, over=0.0) for p in (0.3, 0.5, 0.7, 0.8)]
+    assert max(plain) == 1.0 and plain == sorted(plain)
+
+
+def test_the_frames_travel_is_split_into_a_sweep():
+    """Idea one, on its own switch: the change crosses the frame.
+
+    With a sweep the columns set off one after another, so part way through
+    the ones on the left are further along than the ones on the right. Without
+    one every column is at the same place at the same moment, which is what
+    the morph did before it had a sweep and reads as a change that happens
+    rather than one that arrives.
+    """
+    from spektr.render import pack_braille
+
+    rows, cols = H * 4, W * 2
+    top = _band(rows, cols, 0, rows // 4)
+    bottom = _band(rows, cols, -rows // 4, rows)
+    old = (pack_braille(top), np.full((H, W), 5, dtype=np.int32))
+    new = (pack_braille(bottom), np.full((H, W), 9, dtype=np.int32))
+
+    def per_column(frame) -> np.ndarray:
+        dots = dissolve._braille_dots(frame[0])
+        ys = np.arange(dots.shape[0], dtype=np.float64)[:, None]
+        lit = dots.sum(axis=0)
+        return np.where(lit > 0, (dots * ys).sum(axis=0) / np.maximum(lit, 1), np.nan)
+
+    ahead = dissolve.Style(sweep=0.25, wavefront=0.0, overshoot=0.0, sway=0.0)
+    walked = per_column(dissolve.blend(old, new, 0.35, style=ahead))
+    left, right = np.nanmean(walked[: cols // 4]), np.nanmean(walked[-cols // 4:])
+    assert left > right + 1.0, f"the frame did not sweep: {left:.1f} then {right:.1f}"
+
+    even = per_column(dissolve.blend(old, new, 0.35, style=PLAIN))
+    left, right = np.nanmean(even[: cols // 4]), np.nanmean(even[-cols // 4:])
+    assert abs(left - right) < 0.5, f"the sweep leaked into the plain morph: {left}"
+
+
+def test_the_handover_crosses_the_frame_behind_the_sweep():
+    """Idea four, on its own switch: the swap has a front.
+
+    An even scatter of dots swapping everywhere at once reads as a flicker;
+    a front crossing the frame is a change you can watch travel. The column
+    that trails keeps the window the whole frame used to share, so the colours
+    still finish where they finished before.
+    """
+    cols = 16
+    delay = dissolve._sweep(cols)  # 0 leading, 1 trailing
+    lead = dissolve._handover(0.6, 0.3, delay)
+    assert lead[0] > lead[-1], "the swap does not lead on the left"
+    assert lead[-1] == pytest.approx(dissolve._handover(0.6)), "the window moved"
+    assert lead[0] > 0.0 and lead[-1] < 1.0, "the front is not inside the window"
+
+    flat = dissolve._handover(0.6, 0.0, delay)
+    assert np.ndim(flat) == 0, "a threshold per column for no wavefront"
+    assert flat == pytest.approx(dissolve._handover(0.6))
+
+
+def test_the_picture_leans_into_its_flight():
+    """Idea three, on its own switch: the ink travels through an arc.
+
+    The lean is a bow across the frame's width, nothing at either end of the
+    morph, so the picture sets off straight and lands straight and bulges out
+    of the way in between.
+    """
+    from spektr.render import pack_braille
+
+    rows, cols = H * 4, W * 2
+    left = _band(rows, cols, 0, rows, slice(0, cols // 4))
+    right = _band(rows, cols, 0, rows, slice(-cols // 4, None))
+    old = (pack_braille(left), np.full((H, W), 5, dtype=np.int32))
+    new = (pack_braille(right), np.full((H, W), 9, dtype=np.int32))
+
+    leaning = dissolve.Style(sweep=0.0, wavefront=0.0, overshoot=0.0, sway=0.1)
+    straight = _x_marks(dissolve.blend(old, new, 0.35, style=PLAIN))[0]
+    bowed = _x_marks(dissolve.blend(old, new, 0.35, style=leaning))[0]
+    assert bowed > straight + 1.0, f"the picture did not lean: {straight} -> {bowed}"
+
+    # nothing at either end: it starts and lands where it would have anyway
+    for p, styles in ((0.0, (PLAIN, leaning)), (1.0, (PLAIN, leaning))):
+        ends = [_x_marks(dissolve.blend(old, new, p, style=s))[0] for s in styles]
+        assert ends[0] == pytest.approx(ends[1]), f"a lean at {p}: {ends}"
+
+
+def test_the_music_reorders_the_sweep():
+    """Idea five: the front runs through the loud parts of the picture.
+
+    The bands are read against their own mean, so the pattern holds whatever
+    the volume is, and a frame with nothing in it sweeps in order of position
+    like any other.
+    """
+    cols = 40
+    ordered = dissolve._sweep(cols, None)
+    assert np.array_equal(ordered, np.arange(cols, dtype=np.float32) / (cols - 1))
+    assert np.array_equal(dissolve._sweep(cols, np.zeros(4, np.float32)), ordered)
+
+    # loud on the left, quiet on the right: the left sets off, the right waits
+    loud = np.array([2.0, 0.5], dtype=np.float32)
+    moved = dissolve._sweep(cols, loud)
+    assert moved[10] < ordered[10], "the loud half did not go first"
+    assert moved[30] > ordered[30], "the quiet half did not wait"
+    assert moved[0] == 0.0 and moved.max() <= 1.0, "the sweep left its window"
+    assert moved[19] <= moved[20], "the front doubled back on itself"
 
 
 def test_the_incoming_picture_is_settled_by_the_time_the_swap_ends():
@@ -307,10 +445,11 @@ def test_ink_travels_between_the_two_shapes():
         dots = dissolve._braille_dots(frame[0])
         return float((dots * ys).sum() / max(1, dots.sum()))
 
-    walk = [centre(dissolve.blend(old, new, p)) for p in (0.0, 0.25, 0.5, 0.75, 1.0)]
+    walk = [centre(dissolve.blend(old, new, p, style=PLAIN))
+            for p in (0.0, 0.25, 0.5, 0.75, 1.0)]
     assert walk == sorted(walk), f"ink did not travel steadily: {walk}"
     assert walk[0] < rows * 0.2 and walk[-1] > rows * 0.8
     # and it is the same picture moving, not two pictures overlapping
-    lit = [dissolve._braille_dots(dissolve.blend(old, new, p)[0]).sum()
+    lit = [dissolve._braille_dots(dissolve.blend(old, new, p, style=PLAIN)[0]).sum()
            for p in (0.25, 0.5, 0.75)]
     assert max(lit) <= top.sum() * 1.2, f"ink appeared out of nowhere: {lit}"
