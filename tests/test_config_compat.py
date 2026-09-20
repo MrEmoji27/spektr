@@ -20,18 +20,18 @@ def _read(folder: Path) -> dict:
 
 
 def test_unknown_keys_survive_a_load_and_a_save(tmp_path):
-    _write(tmp_path, {"mode": "Tunnel", "eco": "auto", "from_the_future": [1, 2]})
+    _write(tmp_path, {"mode": "Tunnel", "a_later_setting": "auto", "from_the_future": [1, 2]})
     settings = config.load(tmp_path)
     assert settings.mode == "Tunnel"
     config.save(settings, tmp_path)
     saved = _read(tmp_path)
-    assert saved["eco"] == "auto"
+    assert saved["a_later_setting"] == "auto"
     assert saved["from_the_future"] == [1, 2]
     assert saved["mode"] == "Tunnel"
 
 
 def test_a_known_setting_is_saved_from_its_field_not_from_the_extras(tmp_path):
-    _write(tmp_path, {"mode": "Tunnel", "eco": "auto"})
+    _write(tmp_path, {"mode": "Tunnel", "a_later_setting": "auto"})
     settings = config.load(tmp_path)
     settings.mode = "Bars"
     config.save(settings, tmp_path)
