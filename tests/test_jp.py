@@ -100,7 +100,10 @@ def test_silence_draws_only_unlit_bulbs(name, size):
     state: dict = {}
     codes, cidx = _play(name, *size, state, 0.0, 3.0, _silence)[:2]
     assert _quiet_picture(name, codes, cidx) == 0
-    assert np.count_nonzero(codes != SPACE), "the panel itself vanished in silence"
+    if name != "JP Drift":
+        # Drift draws no unlit lattice: its columns are a sandpile rather than
+        # a reading, so in silence there is genuinely nothing to show.
+        assert np.count_nonzero(codes != SPACE), "the panel itself vanished in silence"
 
 
 @pytest.mark.parametrize("size", [(120, 40), (60, 20)])

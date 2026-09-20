@@ -251,7 +251,7 @@ def ladder_colours(ctx: Ctx, rows: int) -> np.ndarray:
 
 
 def bar_panel(ctx: Ctx, rows: int, levels: np.ndarray, active: np.ndarray,
-              heat: np.ndarray | None = None):
+              heat: np.ndarray | None = None, unlit: bool = True):
     """The ladder itself — ``(codes, cidx)`` of shape ``(rows, ctx.w)``.
 
     ``levels`` and ``active`` are per *column*, already gathered through
@@ -279,7 +279,12 @@ def bar_panel(ctx: Ctx, rows: int, levels: np.ndarray, active: np.ndarray,
         up = np.linspace(1.0, _LIT_FLOOR, rows)
         hot = ctx.ramp(up[:, None] * heat[None, :])
 
-    codes = np.where(lit, _LED, np.where(panel, _OFF, SPACE)).astype(np.int32)
+    # ``unlit`` draws the bulbs above the level as dots, which is what makes
+    # this a panel with the power on rather than a bar chart. Drift turns it
+    # off: its columns are a sandpile rather than a reading, and a full
+    # lattice of dots behind falling sand reads as a grid over the picture.
+    off = _OFF if unlit else SPACE
+    codes = np.where(lit, _LED, np.where(panel, off, SPACE)).astype(np.int32)
     cidx = np.where(lit, hot, recede_index(ctx.palette)).astype(np.int32)
     return codes, cidx
 
@@ -318,16 +323,16 @@ def peak_bulbs(ctx: Ctx, codes, cidx, peaks: np.ndarray, levels: np.ndarray,
 
 
 @mode("JP Bars", group="jp",
-      blurb="a segmented LED meter whose crest peels off and rises, like notes leaving a key")
+      blurb="a segmented LED meter whose bars peel off and rise as they fall away")
 def jp_bars(ctx: Ctx):
     """The meter, blended with the note roll out of ``Keys``.
 
     ``Bars`` shows a level as a height of ink and nothing else. A graphic
     equalizer's panel is fully there at all times — the bulbs above the level
     are unlit, not absent — and on top of that this keeps what the bar *did*:
-    when a bar rises, the bulbs it gained detach and climb the ladder as a
-    thin trail, the way a struck note leaves the keyboard and travels up the
-    roll in ``Keys``.
+    when a bar falls, the bulbs it is leaving keep their shape, detach, and
+    climb the ladder as a thin trail, the way a struck note leaves the
+    keyboard and travels up the roll in ``Keys``.
 
     The trail is the lightest lit thing on the panel, and it is short: it
     stops being drawn once it has decayed to a quarter of the level that shed
@@ -351,11 +356,13 @@ def jp_bars(ctx: Ctx):
     st = ctx.scratch("jp_roll", lambda: {
         "roll": np.zeros((nb, n), dtype=np.float32),
         "was": np.full(n, -1, dtype=np.int32),
+        "lv": np.zeros(n, dtype=np.float32),
         "acc": 0.0,
     })
     if st["roll"].shape != (nb, n):
         st["roll"] = np.zeros((nb, n), dtype=np.float32)
         st["was"] = np.full(n, -1, dtype=np.int32)
+        st["lv"] = np.zeros(n, dtype=np.float32)
     roll = st["roll"]
 
     # Paced in seconds, not frames, like every other scroll in the app: the
@@ -374,9 +381,15 @@ def jp_bars(ctx: Ctx):
     # nothing, and that is correct; it is not doing anything.
     crest = np.clip(crest_bulb(lv, rows), -1, nb - 1)
     kk = np.arange(nb, dtype=np.int32)[:, None]
-    raised = (kk > st["was"][None, :]) & (kk <= crest[None, :])
-    np.maximum(roll, raised * lv.astype(np.float32)[None, :], out=roll)
+    # The bulbs a *falling* bar has just vacated are the ones that peel off:
+    # the top of the bar keeps its shape, detaches, and climbs the ladder
+    # while the bar drops away underneath it. Seeding on the rise instead put
+    # the trail above a bar that was still growing into it, so the two were
+    # never apart and the peeling never read.
+    released = (kk <= st["was"][None, :]) & (kk > crest[None, :])
+    np.maximum(roll, released * st["lv"][None, :], out=roll)
     st["was"] = crest
+    st["lv"] = lv.astype(np.float32)
 
     codes, cidx = bar_panel(ctx, rows, levels, active)
     peak_bulbs(ctx, codes, cidx, peaks, levels, rows)
@@ -528,7 +541,7 @@ def jp_drift(ctx: Ctx):
     # ``heat`` above 1 is fine: ctx.ramp clips. Moving sand warms toward the
     # top of the ramp; still sand is coloured by height alone.
     heat = np.where(active, 1.0 + flash[col_band] * 0.9, 0.0)
-    return bar_panel(ctx, h, levels, active, heat=heat)
+    return bar_panel(ctx, h, levels, active, heat=heat, unlit=False)
 
 
 @mode("JP Pulse", group="jp",

@@ -80,7 +80,7 @@ CATALOG: tuple[tuple[str, str, str, bool, str], ...] = (
     ('Constellations', 'cosmos', 'beats draw lines between fixed stars, then the figures fade', False, 'cosmos'),
     ('Star Trails', 'cosmos', 'a long exposure: the sky turns, and the arcs it leaves are the show', False, 'cosmos'),
     ('Supernova', 'cosmos', 'a mostly dark sky, waiting for the one hit worth a catastrophe', False, 'cosmos'),
-    ('JP Bars', 'jp', 'a segmented LED meter whose crest peels off and rises, like notes leaving a key', False, 'jp'),
+    ('JP Bars', 'jp', 'a segmented LED meter whose bars peel off and rise as they fall away', False, 'jp'),
     ('JP Drift', 'jp', 'the meter as a sandpile — bulbs stack up, and pour into their neighbours on the beat', False, 'jp'),
     ('JP Pulse', 'jp', 'the meter bent into a ring — a spoke of bulbs per band, chased on the beat', False, 'jp'),
     ('None', 'off', 'nothing at all', False, 'modes'),

@@ -107,7 +107,9 @@ SELF_ANIMATING = {
     # it settles at, and a band below the avalanche level (≈ 0.68, above the
     # 0.6 this check holds) stays at that height — a frozen spectrum is a
     # frozen picture until it is loud enough to topple.
-    "JP Bars", "JP Pulse",
+    # JP Bars is no longer here: its trail is shed by a bar *falling*, so on
+    # steady input there is nothing to shed and the panel rightly holds still.
+    "JP Pulse",
     # both ring streams drift at a floor speed whether or not anything plays,
     # so a frozen spectrum still carries rings out and in (Crosscurrent)
     "Crosscurrent",
