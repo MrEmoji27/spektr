@@ -108,3 +108,32 @@ def test_easing_starts_and_ends_gently():
     assert dissolve.ease(0.9) > 0.9      # slow at the end
     assert dissolve.ease(-1.0) == 0.0    # clamped
     assert dissolve.ease(2.0) == 1.0
+
+
+def test_ink_travels_between_the_two_shapes():
+    """The point of the morph: ink moves, rather than one picture swapping
+    for the other. Old ink sits in the top quarter, new ink in the bottom;
+    part way through, it should be somewhere between the two."""
+    rows, cols = H * 4, W * 2
+    top = np.zeros((rows, cols), bool)
+    top[: rows // 4] = True
+    bottom = np.zeros((rows, cols), bool)
+    bottom[-rows // 4:] = True
+    from spektr.render import pack_braille
+
+    old = (pack_braille(top), np.full((H, W), 5, dtype=np.int32))
+    new = (pack_braille(bottom), np.full((H, W), 9, dtype=np.int32))
+
+    ys = np.arange(rows)[:, None]
+
+    def centre(frame) -> float:
+        dots = dissolve._braille_dots(frame[0])
+        return float((dots * ys).sum() / max(1, dots.sum()))
+
+    walk = [centre(dissolve.blend(old, new, p)) for p in (0.0, 0.25, 0.5, 0.75, 1.0)]
+    assert walk == sorted(walk), f"ink did not travel steadily: {walk}"
+    assert walk[0] < rows * 0.2 and walk[-1] > rows * 0.8
+    # and it is the same picture moving, not two pictures overlapping
+    lit = [dissolve._braille_dots(dissolve.blend(old, new, p)[0]).sum()
+           for p in (0.25, 0.5, 0.75)]
+    assert max(lit) <= top.sum() * 1.2, f"ink appeared out of nowhere: {lit}"

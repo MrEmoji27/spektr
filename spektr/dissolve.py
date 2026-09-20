@@ -21,7 +21,7 @@ from __future__ import annotations
 import numpy as np
 
 from . import bluenoise
-from .render import BRAILLE_BASE, BRAILLE_BITS, pack_braille
+from .render import BRAILLE_BASE, BRAILLE_BITS, SPACE, pack_braille
 
 #: How long a dissolve lasts. Long enough to read as a change of scene rather
 #: than a glitch, short enough that a shuffle interval still shows the mode.
@@ -58,6 +58,64 @@ def _braille_dots(codes: np.ndarray) -> np.ndarray:
     return dots
 
 
+def _profile(lit: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Where each column's ink sits: how much, its centre, and its spread.
+
+    Three numbers a column at a time is enough to move one picture onto
+    another: a bar that is tall on the left and short on the right becomes a
+    wave by sliding and stretching each column, which is what the eye reads as
+    the picture changing shape rather than being replaced.
+    """
+    rows = lit.shape[0]
+    ys = np.arange(rows, dtype=np.float32)[:, None]
+    count = lit.sum(axis=0).astype(np.float32)
+    safe = np.maximum(count, 1.0)
+    centre = (lit * ys).sum(axis=0) / safe
+    var = (lit * (ys - centre) ** 2).sum(axis=0) / safe
+    spread = np.sqrt(np.maximum(var, 0.0))
+    # An empty column has no centre of its own; it keeps the grid's, so ink
+    # arriving into it grows from the middle instead of leaping in from row 0.
+    empty = count < 1.0
+    centre = np.where(empty, (rows - 1) * 0.5, centre)
+    # A single lit dot has no spread; one dot-row keeps the scale finite.
+    spread = np.maximum(spread, 1.0)
+    return count, centre.astype(np.float32), spread.astype(np.float32)
+
+
+def _warp(arrays: tuple, centre: np.ndarray, spread: np.ndarray,
+          centre_t: np.ndarray, spread_t: np.ndarray) -> tuple:
+    """Resample each column so its ink sits at ``centre_t``/``spread_t``."""
+    rows = arrays[0].shape[0]
+    ys = np.arange(rows, dtype=np.float32)[:, None]
+    src = centre + (ys - centre_t) * (spread / spread_t)
+    idx = np.rint(src).astype(np.int32)
+    inside = (idx >= 0) & (idx < rows)
+    idx = np.clip(idx, 0, rows - 1)
+    return tuple(
+        np.where(inside, np.take_along_axis(a, idx, axis=0), 0) for a in arrays
+    )
+
+
+def _morph(old: tuple, new: tuple, lit_old: np.ndarray, lit_new: np.ndarray,
+           progress: float) -> tuple[tuple, tuple]:
+    """Both pictures, each moved a share of the way to the other's shape.
+
+    A column with ink on only one side has nothing to move towards, so it
+    keeps its own geometry and simply fades. Without that, ink heading into an
+    empty column gets squeezed onto a single row on its way out, which looks
+    like the picture collapsing rather than changing.
+    """
+    n_old, c_old, s_old = _profile(lit_old)
+    n_new, c_new, s_new = _profile(lit_new)
+    lonely = (n_old < 1.0) | (n_new < 1.0)
+    c_new = np.where(lonely, c_old, c_new)
+    s_new = np.where(lonely, s_old, s_new)
+    c_t = c_old + (c_new - c_old) * progress
+    s_t = s_old + (s_new - s_old) * progress
+    return (_warp(old, c_old, s_old, c_t, s_t),
+            _warp(new, c_new, s_new, c_t, s_t))
+
+
 def blend(old: tuple, new: tuple, progress: float) -> tuple:
     """The frame part way from ``old`` to ``new``.
 
@@ -85,14 +143,34 @@ def blend(old: tuple, new: tuple, progress: float) -> tuple:
         return new if progress >= 0.5 else old
 
     if braille:
-        dots = _dot_mask(rows * 4, cols * 2, progress)
-        mixed = np.where(dots, _braille_dots(codes_new), _braille_dots(codes_old))
+        dots_old = _braille_dots(codes_old)
+        dots_new = _braille_dots(codes_new)
+        (warped_old,), (warped_new,) = _morph(
+            (dots_old.astype(np.int8),), (dots_new.astype(np.int8),),
+            dots_old, dots_new, progress,
+        )
+        # Shapes are aligned now, so the handover from one to the other lands
+        # on ink that is already in the right place: it reads as the picture
+        # becoming the new one rather than as dots being swapped underneath it.
+        arrived = _dot_mask(rows * 4, cols * 2, progress)
+        mixed = np.where(arrived, warped_new.astype(bool), warped_old.astype(bool))
         codes = pack_braille(mixed)
-        # A cell's colour follows whichever frame owns more of its dots, so
-        # the colour arrives with the shape rather than ahead of it.
-        new_share = dots.reshape(rows, 4, cols, 2).sum(axis=(1, 3))
-        take_new = new_share >= 4
-        return codes, np.where(take_new, new[1], old[1])
+        # Colour travels with the shape: the ramp indices are moved by the
+        # same per-column slide, judged on where each cell's ink is, and a
+        # cell takes the incoming colour once most of its dots have arrived.
+        cells_old = dots_old.reshape(rows, 4, cols, 2).any(axis=(1, 3))
+        cells_new = dots_new.reshape(rows, 4, cols, 2).any(axis=(1, 3))
+        (cidx_old,), (cidx_new,) = _morph(
+            (old[1],), (new[1],), cells_old, cells_new, progress,
+        )
+        new_share = arrived.reshape(rows, 4, cols, 2).sum(axis=(1, 3))
+        return codes, np.where(new_share >= 4, cidx_new, cidx_old)
 
+    # Half-block and octant frames have no free subcells to mix inside a cell,
+    # so the morph happens cell by cell: the columns still slide and stretch
+    # into place, and the handover is per cell rather than per dot.
+    lit_old = codes_old != SPACE
+    lit_new = codes_new != SPACE
+    warped_old, warped_new = _morph(old, new, lit_old, lit_new, progress)
     cells = _dot_mask(rows, cols, progress)
-    return tuple(np.where(cells, n, o) for o, n in zip(old, new))
+    return tuple(np.where(cells, n, o) for o, n in zip(warped_old, warped_new))
