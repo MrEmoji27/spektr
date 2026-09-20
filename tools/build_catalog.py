@@ -56,6 +56,7 @@ def module_for(name: str) -> str | None:
 
 
 def rows() -> list[tuple[str, str, str, bool, str]]:
+    M.load_all()
     return [
         (m.name, m.group, m.blurb, m.hidden, m.fn.__module__.split(".")[-1])
         for m in M.MODES
