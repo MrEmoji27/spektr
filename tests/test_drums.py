@@ -97,6 +97,7 @@ def test_band_frequencies_cover_the_range_in_order(n):
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import onset_eval as corpus  # noqa: E402
 from onset_eval import SCENARIOS  # noqa: E402
 
 from spektr.analysis import HOP, Analyser  # noqa: E402
@@ -148,3 +149,76 @@ def test_kicks_and_snares_alternate_the_way_they_were_played():
 def test_nothing_is_claimed_where_nothing_was_played():
     for scenario in ("silence", "note_stream"):
         assert named_hits(scenario) == [], f"{scenario} produced onsets"
+
+
+# ── a hit is named by its attack, not by its tail ────────────────────────────
+
+def tilted_noise(amp: float, dur: float, decay: float, rng, order: int = 4):
+    """A noise burst with its energy up top, which is what a hi-hat is.
+
+    The corpus's own ``hat`` is flat white noise -- measured, 84% of its
+    energy lands in the same band as its snare's, because both come from the
+    same generator. Nothing can tell those two apart from the spectrum, so a
+    real hat has to be built here to test hat detection at all.
+    """
+    x = np.asarray(corpus._noise_burst(amp, dur, decay, rng), dtype=float)
+    for _ in range(order):         # differentiating is a cheap high-pass
+        x = np.diff(np.concatenate([[0.0], x]))
+    return x / (np.abs(x).max() + 1e-12) * amp
+
+
+def one_hit(sample) -> list[str]:
+    """What the analyser calls a single hit, in order, one entry per onset."""
+    rate = corpus.SR
+    signal = np.zeros(int(rate * 1.5))
+    start = int(rate * 0.5)
+    signal[start:start + len(sample)] += sample
+    stereo = corpus._stereo(signal * 0.8)
+
+    ring = RingBuffer(1 << 16)
+    now = [0.0]
+    an = Analyser(ring, lambda: rate, clock=lambda: now[0])
+    an._ensure_plan(rate)
+    out, last = [], 0
+    for i in range(0, stereo.shape[0] - HOP + 1, HOP):
+        ring.push(stereo[i:i + HOP])
+        now[0] = (i + HOP) / rate
+        an._analyse_once()
+        frame = an._frame
+        if frame.onset_seq != last:
+            last = frame.onset_seq
+            likely = dict(frame.drums)
+            out.append(max(likely, key=likely.get) if max(likely.values()) > 0 else "-")
+    return out
+
+
+def test_a_real_hat_reads_as_a_hat_and_stays_one():
+    """The bug :data:`spektr.analysis.SAME_HIT_S` exists for.
+
+    A hat with 99.6% of its energy above 3.5 kHz fired a second onset 52 ms
+    after its own attack -- just past the detector's 50 ms refractory, so the
+    detector was right to report it. By then all that was left was decay, the
+    classifier called that decay a snare, and it overwrote the correct "hat".
+    """
+    named = one_hit(tilted_noise(0.35, 0.05, 0.012, np.random.default_rng(21)))
+    assert named, "the hit produced no onsets at all"
+    assert set(named) == {"hat"}, f"named {named}"
+
+
+@pytest.mark.parametrize("make, expected", [
+    (lambda rng: corpus._noise_burst(0.7, 0.12, 0.03, rng), "snare"),
+    (lambda rng: corpus._struck(55.0, 0.9, 0.4, 0.003, 0.08), "kick"),
+])
+def test_the_other_two_are_still_named_from_one_hit(make, expected):
+    named = one_hit(make(np.random.default_rng(21)))
+    assert named and set(named) == {expected}, f"named {named}"
+
+
+def test_a_louder_hit_landing_soon_still_renames_the_beat():
+    """Only a *weaker* follow-up is absorbed as a tail. A real hit that
+    happens to land inside the window is still a new drum."""
+    from spektr.analysis import SAME_HIT_S
+    assert SAME_HIT_S < 0.086, (
+        "sixteenths at 174 BPM are 86 ms apart; a window at or above that "
+        "would merge genuine fast drumming into one hit"
+    )

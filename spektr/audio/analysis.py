@@ -89,10 +89,40 @@ from .rates import HOP, analyses_per_sec, hop_seconds  # noqa: E402
 ANALYSES_PER_SEC = analyses_per_sec()
 WAVE_POINTS = 512     # downsampled scope trace
 
+#: The range tempo is folded into: 180 BPM down to 60 BPM.
+#:
+#: The old range stopped at 150 BPM, which halved everything above it --
+#: house at 128 was fine, but the corpus's own 174 BPM breakbeat, and drum
+#: and bass generally, came back at half speed. Since ``beat_phase`` and the
+#: ``ctx.pulse`` every mode is pointed at are both derived from this, a track
+#: reported at half its tempo makes every mode in the app pulse on every
+#: other beat.
+#:
+#: The cost is at the other end: a 50 BPM piece now reports 100. That is the
+#: better trade for a music visualiser, where the fast half of the range is
+#: where the material actually is.
+TEMPO_MIN_S = 1.0 / 3.0     # 180 BPM
+TEMPO_MAX_S = 1.0           # 60 BPM
+
 #: How fast the pitch classes follow the spectrum, per analysis hop. Slow
 #: enough that a held chord reads as one steady colour, quick enough that a
 #: change of chord is on screen within a beat.
 CHROMA_FOLLOW = 0.08
+
+#: How close two onsets have to be before the second is treated as the tail
+#: of the first hit rather than as a new drum.
+#:
+#: A drum is identified by its attack. Fifty milliseconds later what is left
+#: is filtered noise, and filtered noise looks like a snare whatever struck
+#: it -- a hi-hat with 99.6% of its energy above 3.5 kHz fired a second onset
+#: 52 ms after its own attack, and that tail overwrote a correct "hat" with
+#: "snare". The detector is right to report both (its refractory is 50 ms and
+#: they were 52 ms apart); it is the naming that must not be fooled.
+#:
+#: Only a *weaker* follow-up is absorbed, so a genuinely louder hit landing
+#: this soon still renames the beat. Below the 86 ms between sixteenths at
+#: 174 BPM, so real fast drumming is never merged.
+SAME_HIT_S = 0.07
 
 #: How long the gate has to stay shut before the musical state -- the last
 #: hit, the chord, the bar grid -- is thrown away. Longer than the gap between
@@ -1203,9 +1233,15 @@ class OnsetDetector:
         # Fold into a musically plausible range. A detector that fires on
         # every eighth note is not wrong about the music, but 240 BPM is the
         # wrong number to hand something trying to pulse on the beat.
-        while period < 0.4:
+        #
+        # The epsilon is not decoration. The old floor was 0.4 s exactly,
+        # which is 150 BPM exactly, and a 150 BPM track measures 0.39999...
+        # -- so it fell through the floor, doubled, and was reported as 75.
+        # A boundary that halves one of the most common tempos in dance music
+        # has to be nudged off it.
+        while period < TEMPO_MIN_S - 1e-6:
             period *= 2.0
-        while period > 1.2:
+        while period > TEMPO_MAX_S + 1e-6:
             period *= 0.5
 
         self.tempo_bpm = 60.0 / period
@@ -1259,10 +1295,17 @@ class Analyser:
         #: The onset counter as of the last classification, so a hit is
         #: classified once rather than on every hop that follows it.
         self._drums_seq = 0
+        #: When the classification in force was made, and how strong that
+        #: onset was. See :data:`SAME_HIT_S`.
+        self._drums_t = -1e9
+        self._drums_strength = 0.0
         #: Centre frequency of each band, rebuilt with the plan.
         self._band_hz: np.ndarray | None = None
         #: The eased pitch classes. ``None`` until the first tonal frame.
         self._chroma: np.ndarray | None = None
+        #: The chroma as it stood at the previous onset, so the bar tracker
+        #: can be told how far the harmony moved between one hit and the next.
+        self._chroma_at_onset: np.ndarray | None = None
         #: When the gate last shut, or ``None`` while it is open. See
         #: :data:`FORGET_AFTER_S`.
         self._quiet_since: float | None = None
@@ -1494,7 +1537,9 @@ class Analyser:
                 self._quiet_since = now
             elif now - self._quiet_since > FORGET_AFTER_S:
                 self._drums = {"kick": 0.0, "snare": 0.0, "hat": 0.0}
+                self._drums_t, self._drums_strength = -1e9, 0.0
                 self._chroma = None
+                self._chroma_at_onset = None
                 self._bar_track.reset()
                 self._key.reset()
             # The musical state rides through a shut gate rather than
@@ -1672,10 +1717,37 @@ class Analyser:
         rise, hz = self._onset.rise, self._band_hz
         if rise is None or hz is None or rise.size != hz.size:
             return
+
+        at, strength = self._onset.last_t, self._onset.strength
+        if at - self._drums_t < SAME_HIT_S and strength <= self._drums_strength:
+            # The tail of the hit that is already named. Naming it again would
+            # describe the decay rather than the drum.
+            return
+        self._drums_t, self._drums_strength = at, strength
         self._drums = _drums.classify(rise, hz)
         # The tracker only ever sees hits, which is what a bar is made of.
         period = 60.0 / self._onset.tempo_bpm if self._onset.tempo_bpm > 0 else 0.0
-        self._bar_track.feed(self._onset.last_t, period, self._drums)
+        self._bar_track.feed(
+            self._onset.last_t, period, self._drums, self._harmony_move()
+        )
+
+    def _harmony_move(self) -> float:
+        """How far the chord moved since the previous onset, 0..1-ish.
+
+        The bar tracker needs this because the drums alone cannot resolve a
+        symmetric pattern, and a chord change is what a listener uses instead.
+        Distance between the pitch-class vectors rather than anything
+        cleverer: a chord change moves several classes at once and a repeated
+        chord moves none, which is the whole of the signal.
+        """
+        now = self._chroma
+        if now is None:
+            self._chroma_at_onset = None
+            return 0.0
+        was, self._chroma_at_onset = self._chroma_at_onset, now.copy()
+        if was is None or was.shape != now.shape:
+            return 0.0
+        return float(np.abs(now - was).sum() / 12.0)
 
     def _chroma_now(self, spectrum, rate: float) -> np.ndarray:
         """This frame's pitch classes, eased so they do not flicker.
