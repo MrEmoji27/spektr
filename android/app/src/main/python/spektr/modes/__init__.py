@@ -134,6 +134,20 @@ class Ctx:
     #: four-on-the-floor has no downbeat in its drums, and plenty of music has
     #: no drums at all.
     bar_confidence: float = 0.0
+    #: ``"C major"``, ``"A minor"``, or ``None`` — what key the music has
+    #: settled into over the last several seconds.
+    #:
+    #: There are two ways to have no key and they mean different things:
+    #: ``key_uncertain`` False means not enough has been heard yet, and True
+    #: means enough has been heard and nothing fits. A mode that recolours on
+    #: the key should treat the second as its own state rather than hiding it,
+    #: and should not recolour on a low :attr:`key_confidence`.
+    key: str | None = None
+    #: 0..1 in how sure the key is. A relative major and minor share every
+    #: note, so a thin win between them is normal and honest.
+    key_confidence: float = 0.0
+    #: True when enough has been heard and no key fits.
+    key_uncertain: bool = False
 
     # ── derived geometry ──
     @property

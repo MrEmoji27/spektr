@@ -920,6 +920,9 @@ class AudioVisualizer(Widget):
             bar_phase=frame.bar_phase,
             beat_in_bar=frame.beat_in_bar,
             bar_confidence=frame.bar_confidence,
+            key=frame.key,
+            key_confidence=frame.key_confidence,
+            key_uncertain=frame.key_uncertain,
         )
 
         t0 = time.perf_counter()

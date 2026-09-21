@@ -76,6 +76,7 @@ N_BANDS = 32          # internal resolution; modes downsample for chunky looks
 from . import bars as _bars  # noqa: E402
 from . import chroma as _chroma  # noqa: E402
 from . import drums as _drums  # noqa: E402
+from . import key as _key  # noqa: E402
 from .rates import HOP, analyses_per_sec, hop_seconds  # noqa: E402
 
 #: Analyses per second at a nominal 48 kHz. Only used to size the ceiling on
@@ -194,6 +195,17 @@ class Frame:
     #: 0..1 in how sure the downbeat is. Zero is common and not a failure:
     #: plenty of music has no downbeat anything can find.
     bar_confidence: float = 0.0
+    #: ``"C major"``, ``"A minor"``, or ``None``. See
+    #: :attr:`key_uncertain` for the difference between the two ways of
+    #: having no key.
+    key: str | None = None
+    #: 0..1 in how sure the key is. Low is normal for a relative major and
+    #: minor, which share every note.
+    key_confidence: float = 0.0
+    #: True when enough has been heard and no key fits — atonal, chromatic,
+    #: or percussion only. With ``key`` ``None`` and this ``False``, not
+    #: enough has been heard yet.
+    key_uncertain: bool = False
     #: Estimated tempo. 0.0 means unknown, which is a state modes must handle —
     #: never divide by this without checking.
     tempo_bpm: float = 0.0
@@ -1242,6 +1254,8 @@ class Analyser:
         self._drums = {"kick": 0.0, "snare": 0.0, "hat": 0.0}
         #: Where the bar starts, from the pattern the drums make.
         self._bar_track = _bars.BarTracker()
+        #: What key the tonal content settles into, over seconds.
+        self._key = _key.KeyEstimator()
         #: The onset counter as of the last classification, so a hit is
         #: classified once rather than on every hop that follows it.
         self._drums_seq = 0
@@ -1482,6 +1496,7 @@ class Analyser:
                 self._drums = {"kick": 0.0, "snare": 0.0, "hat": 0.0}
                 self._chroma = None
                 self._bar_track.reset()
+                self._key.reset()
             # The musical state rides through a shut gate rather than
             # blinking to zero in every gap between hits. Once the silence has
             # outlasted FORGET_AFTER_S the state above has already been
@@ -1500,6 +1515,9 @@ class Analyser:
                 bar_phase=self._bar_track.phase(now),
                 beat_in_bar=self._bar_track.beat,
                 bar_confidence=self._bar_track.confidence,
+                key=self._key.key,
+                key_confidence=self._key.confidence,
+                key_uncertain=self._key.uncertain,
             ))
             return
 
@@ -1635,6 +1653,9 @@ class Analyser:
                 bar_phase=self._bar_track.phase(now),
                 beat_in_bar=self._bar_track.beat,
                 bar_confidence=self._bar_track.confidence,
+                key=self._key.key,
+                key_confidence=self._key.confidence,
+                key_uncertain=self._key.uncertain,
             )
         )
 
@@ -1664,6 +1685,10 @@ class Analyser:
         spectrum with a time constant the way the bands do.
         """
         now = _chroma.fold(spectrum, rate)
+        # The key estimator gets the raw fold rather than the eased one: it
+        # does its own averaging over seconds, and easing first would only
+        # smooth what is already being smoothed.
+        self._key.feed(now, hop_seconds(rate))
         if self._chroma is None or self._chroma.shape != now.shape:
             self._chroma = now.astype(np.float32)
         else:
