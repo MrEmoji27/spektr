@@ -41,12 +41,25 @@ MIN_CHURN = 0.004
 #: its shockwaves are thrown from the blob's rim and cross it in a quarter of
 #: a second instead of hanging in flight for longer than a bar — before that
 #: its idle animation moved more of the screen than its waves did, and it
-#: measured 0.81 here. ``Bubbles`` never reads ``ctx.onsets``, so 1.0 is the
-#: honest answer for it.
+#: measured 0.81 here. ``Fireworks`` answered a beat with one more climbing
+#: shell in a sky that already held ten, which measured 1.02; a beat now fires
+#: a salvo of mines that burst where they are lit, and it measures 1.93.
+#: ``Shooting Star`` laid a beat's meteor train behind the edge of the frame,
+#: so the beat landed as one fragment and the rest arrived over the next third
+#: of a second; the train now enters head-first and whole, and it measures 1.32.
+#: ``Bubbles`` reads no rhythm field at all — its spawn rate follows the low
+#: band's *level* (``particles.py:492``), and the ``ctx.pulse`` reads in that
+#: file are ``_radial``'s and ``_sonar``'s, neither of which ``bubbles`` calls
+#: — so 1.0 is the honest answer for a mode whose blurb promises bubbles from
+#: the low end and claims nothing about beats. Saying "no rhythm field" here
+#: means the mode *and* everything it calls: ``Radial`` is a one-liner over
+#: ``_radial``, which does read ``ctx.pulse``, and a scan of the decorated
+#: function alone reports it as reading nothing.
 #:
 #: These are here so a change that damps a mode's response shows up as a
 #: number that fell, not as something someone notices months later.
-BASELINE = {"Bars": 2.45, "Pulse": 1.89, "Bubbles": 1.01}
+BASELINE = {"Bars": 2.45, "Pulse": 1.89, "Bubbles": 1.01, "Fireworks": 1.93,
+            "Shooting Star": 1.32}
 
 #: How far a baseline may fall before it counts as a regression. Generous,
 #: because the corpus is synthetic and a retune is allowed to cost a little.
