@@ -99,6 +99,27 @@ class Ctx:
     #: 0..1 position within the current beat, 0.0 on the beat. 0.0 whenever
     #: :attr:`tempo_bpm` is 0.0.
     beat_phase: float = 0.0
+    #: What the last hit sounded like: ``{"kick": ..., "snare": ..., "hat": ...}``,
+    #: each 0..1. All zero in silence and on music with no drums in it. Held
+    #: between hits, like :attr:`onset_strength`, so it says "the last beat was
+    #: a kick" rather than going blank the frame after.
+    #:
+    #: These are likelihoods, not verdicts, and a mode should lean on them
+    #: rather than branch on them: a bass note reads much like a kick, a rim
+    #: shot sits between snare and hat, and plenty of music has no drums at
+    #: all. Reach for :attr:`onsets` when all you need is "did anything hit".
+    drums: dict = field(
+        default_factory=lambda: {"kick": 0.0, "snare": 0.0, "hat": 0.0}
+    )
+    #: The twelve pitch classes, C first, each 0..1 against the loudest one.
+    #: Twelve zeros when nothing tonal is playing.
+    #:
+    #: Every octave of a note lands in the same class, so a chord is a shape
+    #: rather than a spread and colour can follow harmony instead of height.
+    #: It is not a key: naming one needs a longer memory than a frame has.
+    chroma: np.ndarray = field(
+        default_factory=lambda: np.zeros(12, dtype=np.float32)
+    )
 
     # ── derived geometry ──
     @property

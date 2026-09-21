@@ -73,6 +73,8 @@ N_BANDS = 32          # internal resolution; modes downsample for chunky looks
 #:
 #: Cost is linear in the rate: measured at 0.447 ms per analysis, 4.2% of one
 #: core at 94 Hz and ~8.4% at 188 Hz.
+from . import chroma as _chroma  # noqa: E402
+from . import drums as _drums  # noqa: E402
 from .rates import HOP, analyses_per_sec, hop_seconds  # noqa: E402
 
 #: Analyses per second at a nominal 48 kHz. Only used to size the ceiling on
@@ -84,6 +86,11 @@ from .rates import HOP, analyses_per_sec, hop_seconds  # noqa: E402
 #: callers that only need the design figure (the fps probe, for one).
 ANALYSES_PER_SEC = analyses_per_sec()
 WAVE_POINTS = 512     # downsampled scope trace
+
+#: How fast the pitch classes follow the spectrum, per analysis hop. Slow
+#: enough that a held chord reads as one steady colour, quick enough that a
+#: change of chord is on screen within a beat.
+CHROMA_FOLLOW = 0.08
 
 #: Most hops drained in one wake-up of the analyser thread.
 #:
@@ -159,6 +166,18 @@ class Frame:
     #: picking. Continuous, so it is safe to read at any rate; useful for
     #: modes that want "how percussive is right now" rather than discrete hits.
     flux: float = 0.0
+    #: What the most recent onset sounded like: ``{"kick", "snare", "hat"}``,
+    #: each 0..1. All three zero in silence, and on music with no drums in it.
+    #: Likelihoods rather than verdicts — see :mod:`spektr.audio.drums` for why
+    #: a bass note reads much like a kick. Carried between hits, like
+    #: :attr:`onset_strength`.
+    drums: dict = field(
+        default_factory=lambda: {"kick": 0.0, "snare": 0.0, "hat": 0.0}
+    )
+    #: The twelve pitch classes, C first, each 0..1 against the loudest. Twelve
+    #: zeros when there is nothing tonal to report. See
+    #: :mod:`spektr.audio.chroma`.
+    chroma: np.ndarray = field(default_factory=lambda: np.zeros(12, dtype=np.float32))
     #: Estimated tempo. 0.0 means unknown, which is a state modes must handle —
     #: never divide by this without checking.
     tempo_bpm: float = 0.0
@@ -598,6 +617,11 @@ class OnsetDetector:
         self._peak_decay = 0.996 ** (analyses_per_sec() / self.hop_rate)
         self.seq = 0
         self.strength = 0.0
+        #: This hop's rectified per-band rise — the flux the peak picker is
+        #: about to read, kept so a caller with the band frequencies can ask
+        #: what the hit sounded like. Reading it costs nothing and cannot
+        #: change what the detector finds. ``None`` until the first hop.
+        self.rise: np.ndarray | None = None
         self.flux = 0.0
         self.tempo_bpm = 0.0
         self.beat_phase = 0.0
@@ -706,6 +730,7 @@ class OnsetDetector:
         diff = cur - self._prev
         self._prev = cur
         np.maximum(diff, 0.0, out=diff)
+        self.rise = diff
 
         # Two readings of the same flux, mixed.
         #
@@ -1190,6 +1215,16 @@ class Analyser:
         self._ring = ring
         self._get_sr = samplerate_getter
         self._onset = OnsetDetector(samplerate_getter())
+        #: What the last onset sounded like, carried between hits the way
+        #: ``onset_strength`` is, and cleared when the gate closes.
+        self._drums = {"kick": 0.0, "snare": 0.0, "hat": 0.0}
+        #: The onset counter as of the last classification, so a hit is
+        #: classified once rather than on every hop that follows it.
+        self._drums_seq = 0
+        #: Centre frequency of each band, rebuilt with the plan.
+        self._band_hz: np.ndarray | None = None
+        #: The eased pitch classes. ``None`` until the first tonal frame.
+        self._chroma: np.ndarray | None = None
         # Injectable so an offline harness can drive the analyser on the
         # *signal's* timeline rather than the wall's. Onset detection is
         # judged on timing to within tens of milliseconds, and a corpus that
@@ -1302,6 +1337,14 @@ class Analyser:
         # periodic Hann, matching cava's 0.5*(1-cos(2*pi*i/(N-1)))
         self._bass_win = np.hanning(self._plan.bass_size)
         self._mid_win = np.hanning(self._plan.mid_size)
+        # The drum classifier reads the same per-band flux the peak picker
+        # does, so it needs to know what frequency each of those bands sits
+        # at. The plan already worked that out; using its cut-offs rather than
+        # a nominal spread keeps the two in step when the bar count changes.
+        edges = np.asarray(self._plan.cutoff[:self._bars + 1], dtype=np.float64)
+        self._band_hz = np.sqrt(
+            np.maximum(edges[:-1], 1e-9) * np.maximum(edges[1:], 1e-9)
+        ).astype(np.float32)
         self._sens = 1.0
         self._sens_init = True
 
@@ -1399,6 +1442,11 @@ class Analyser:
             # backwards, and anyone differencing it across the gap would read
             # the recovery as a burst of beats that never played.
             self._onset.reset_continuity()
+            # Nothing is playing, so nothing sounds like anything: the last
+            # hit and the last chord both stop being true here, unlike the
+            # onset counter, which has to carry across the gap.
+            self._drums = {"kick": 0.0, "snare": 0.0, "hat": 0.0}
+            self._chroma = None
             self._publish(Frame(
                 seq=self._seq + 1, rms=rms, silent=True,
                 bands=quiet, bands_l=quiet, bands_r=quiet,
@@ -1465,6 +1513,7 @@ class Analyser:
         # few bins carrying an actual attack. A dead-steady drone scored 72
         # onsets. Thirty-two band sums average that jitter away, and cost less.
         self._onset.feed(raw_l + raw_r, now)
+        self._classify_drums()
 
         # ── cava's autosens ──
         # Judged before the manual trim, so pressing ] actually makes the bars
@@ -1529,8 +1578,39 @@ class Analyser:
                 flux=self._onset.flux,
                 tempo_bpm=self._onset.tempo_bpm,
                 beat_phase=self._onset.beat_phase,
+                drums=self._drums,
+                chroma=self._chroma_now(spec_mid_l + spec_mid_r, sr),
             )
         )
+
+    def _classify_drums(self) -> None:
+        """Name the hit the detector just found, if it found one.
+
+        Only on the hop an onset fired: in between, the last hit stands, the
+        way its strength does. Classifying every hop would report whatever the
+        decay tail happened to look like, which is not a drum.
+        """
+        if self._onset.seq == self._drums_seq:
+            return
+        self._drums_seq = self._onset.seq
+        rise, hz = self._onset.rise, self._band_hz
+        if rise is None or hz is None or rise.size != hz.size:
+            return
+        self._drums = _drums.classify(rise, hz)
+
+    def _chroma_now(self, spectrum, rate: float) -> np.ndarray:
+        """This frame's pitch classes, eased so they do not flicker.
+
+        A chord held across a bar should read as one steady colour rather than
+        twelve bins arguing every few milliseconds, so the classes follow the
+        spectrum with a time constant the way the bands do.
+        """
+        now = _chroma.fold(spectrum, rate)
+        if self._chroma is None or self._chroma.shape != now.shape:
+            self._chroma = now.astype(np.float32)
+        else:
+            self._chroma += (now - self._chroma) * CHROMA_FOLLOW
+        return self._chroma.copy()
 
     def _publish(self, frame: Frame) -> None:
         self._seq = frame.seq
