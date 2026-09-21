@@ -81,3 +81,70 @@ def test_band_frequencies_cover_the_range_in_order(n):
     assert hz.size == n
     assert np.all(np.diff(hz) > 0)
     assert 50 <= hz[0] < hz[-1] <= 10000
+
+
+# ── against real material, not rectangles ────────────────────────────────────
+#
+# Everything above feeds ``classify`` idealised bursts: a range of bands either
+# fully lit or not. Real audio is nothing like that, and the first version of
+# this module passed every test above while calling all fifteen kicks of a
+# four-on-the-floor a snare. The analyser hands it thirty-two log-spaced band
+# sums, the mid range covers more of them than the low range, and a kick's
+# click spreads upward -- so share alone said "snare" on every hit.
+#
+# These drive the real analyser over the real corpus, which is the only thing
+# that would have caught it.
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from onset_eval import SCENARIOS  # noqa: E402
+
+from spektr.analysis import HOP, Analyser  # noqa: E402
+from spektr.capture import RingBuffer  # noqa: E402
+
+
+def named_hits(scenario: str) -> list[str]:
+    """What each onset in ``scenario`` was called, in order.
+
+    ``"-"`` where nothing cleared the floor, which is a legitimate answer.
+    """
+    signal, rate, _truth = SCENARIOS[scenario]()
+    ring = RingBuffer(1 << 16)
+    now = [0.0]
+    an = Analyser(ring, lambda: rate, clock=lambda: now[0])
+    an._ensure_plan(rate)
+
+    out: list[str] = []
+    last = 0
+    for start in range(0, signal.shape[0] - HOP + 1, HOP):
+        ring.push(signal[start:start + HOP])
+        now[0] = (start + HOP) / rate
+        an._analyse_once()
+        frame = an._frame
+        if frame.onset_seq != last:
+            last = frame.onset_seq
+            likely = dict(frame.drums)
+            out.append(max(likely, key=likely.get) if max(likely.values()) > 0 else "-")
+    return out
+
+
+@pytest.mark.parametrize("scenario", ["four_on_floor", "pad_under_kick"])
+def test_a_track_of_nothing_but_kicks_reads_as_kicks(scenario):
+    named = named_hits(scenario)
+    assert named, "the corpus produced no onsets to name"
+    kicks = named.count("kick")
+    assert kicks >= len(named) - 1, f"{scenario} named {named}"
+
+
+def test_kicks_and_snares_alternate_the_way_they_were_played():
+    """The corpus puts a kick on 1 and 3 and a snare on 2 and 4."""
+    named = named_hits("kick_snare")
+    assert len(named) >= 12, f"too few onsets to judge: {named}"
+    assert set(named) == {"kick", "snare"}, f"unexpected names: {set(named)}"
+    swapped = [a != b for a, b in zip(named, named[1:])]
+    assert all(swapped), f"the two drums did not alternate: {named}"
+
+
+def test_nothing_is_claimed_where_nothing_was_played():
+    for scenario in ("silence", "note_stream"):
+        assert named_hits(scenario) == [], f"{scenario} produced onsets"
