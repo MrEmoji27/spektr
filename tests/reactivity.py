@@ -23,6 +23,21 @@ things per mode:
     falls to 1.0 is still animating -- it has simply stopped animating to the
     music.
 
+What this cannot measure
+------------------------
+The corpus is mono: ``onset_eval._stereo`` duplicates one channel into both,
+so every frame's left and right are identical. A mode whose subject is the
+*difference* between the channels therefore has nothing to draw here --
+``Gonio`` is a stereo phase scope and sees a straight diagonal line whatever
+the music does, so the 0.22 it measures is a property of this corpus and not
+of the mode. Read a low number for a stereo mode as "not measured".
+
+A low number is not by itself a fault either. Ask what the mode promises
+before believing it: ``Bubbles`` never reads ``ctx.onsets`` and sits at 1.0
+honestly. That cuts both ways -- ``Bars`` reads no rhythm field at all and
+still measures 2.45, because it is redrawn from the level every frame -- so
+"reads no onset field" excuses nothing on its own.
+
 The clock is injected, like everywhere else offline. The widget reads the wall
 clock for ``dt``, for ``ctx.t`` and for the morph, and a harness that renders
 ten seconds of audio in one second of CPU would hand all three a ``dt`` of
