@@ -1002,11 +1002,21 @@ def orbit(ctx: Ctx):
 #: speed, gravity and lifetime, so a hit-heavy stretch doesn't just replay the
 #: same spherical pop over and over.
 _FW_SHELL, _FW_WILLOW, _FW_CRACKLE = 0, 1, 2
+#: The beat's own burst. Not in the ``pick_kind`` draw — only a detected onset
+#: fires one — and built to a different brief from the weather shells: twice
+#: the sparks of a crackle, thrown faster, gone in half a second. What a beat
+#: has to do is change a lot of the screen at once and then get out of the way
+#: before the next one, and a burst that lingers does neither. Measured over a
+#: four-on-the-floor at 120x30: the shell that climbs and bursts on its own
+#: schedule leaves churn flat at 0.12 across the bar, this leaves 0.066 on the
+#: frames around a beat against 0.019 between them.
+_FW_MINE = 3
 _FW_KIND_PARAMS = {
     #        count       speed (x dr)   gravity (x dr)  life (s)
     _FW_SHELL:   ((34, 52), (0.28, 0.80), 1.6, (1.1, 1.5)),
     _FW_WILLOW:  ((26, 40), (0.14, 0.34), 0.9, (1.8, 2.4)),
     _FW_CRACKLE: ((48, 72), (0.35, 0.95), 1.9, (0.45, 0.75)),
+    _FW_MINE:    ((22, 34), (0.9, 1.7), 1.7, (0.22, 0.34)),
 }
 
 #: A spark is drawn as a small cross rather than a single dot. One dot per
@@ -1081,16 +1091,24 @@ def fireworks(ctx: Ctx):
             return _FW_WILLOW
         return _FW_SHELL if r < 0.82 else _FW_CRACKLE
 
-    # A barrage, not one shell per onset. Rockets also launch on sustained
-    # loudness rather than only on a rising bass edge, so a dense passage
-    # keeps the sky busy instead of going dark between transients.
+    # A barrage under the beat, not one shell per onset. Rockets also launch on
+    # sustained loudness rather than only on a rising bass edge, so a dense
+    # passage keeps the sky busy instead of going dark between transients.
     #
     # This rate is also what keeps the mode alive where the detector is weak.
     # Onsets punctuate the barrage; they no longer constitute it. Recall falls
     # to roughly 0.4 on dense fast drums, and a sky that only lights on
     # detected onsets would visibly thin out on exactly the music that should
     # fill it.
-    st["launch_acc"] += (0.35 + ctx.energy * 7.0) * ctx.dt
+    #
+    # It was 0.35 + 7.0 * energy, which on a busy track is a rocket every third
+    # of a second on top of the beat's own. With 200 sparks in the air at once
+    # the sky was a permanent haze, and the measure showed it: churn was
+    # 0.120 on the frame of a beat against 0.118 between them, i.e. a detected
+    # onset made no difference to the picture. Weather is weather — it is here
+    # so the sky is never empty, and it has to stay thin enough that a shell
+    # landing on it is an event.
+    st["launch_acc"] += (0.25 + ctx.energy * 2.2) * ctx.dt
     # Open with a shell instead of making the accumulator earn the first one:
     # at a moderate level that takes most of a second, and a fireworks mode
     # that begins on an empty sky reads as not working.
@@ -1100,12 +1118,29 @@ def fireworks(ctx: Ctx):
     if want:
         st["launch_acc"] -= want
         st["launched"] += want
+
+    # A detected onset fires a salvo of mines: shells that burst where they are
+    # lit rather than climbing first, which is what a mine is. This is the fix
+    # for the mode measuring 1.02.
+    #
+    # Two things were wrong with what a beat used to do. It added one to three
+    # *climbers* to a sky that already had ten, and a climber is five lit dots
+    # that become a burst a second later — outside the frames a beat is
+    # measured over, and invisible against the sparks of the last one. And a
+    # burst is *small* on the frame it happens: a shell's sparks all leave one
+    # dot and take a second to spread, so its change arrives as a slow bloom
+    # rather than as a hit. Both are fixed by the same move — several mines at
+    # once, spread across the width, each bursting immediately — so what lands
+    # on the beat is a line of eruptions across the sky instead of a dot that
+    # grows.
+    #
+    # Several onsets inside one frame each earn their own salvo — at a low
+    # frame rate or on fast drums ctx.onsets can be 2 or 3, and collapsing
+    # that to one would quietly drop beats the analyser did detect. A harder
+    # hit widens the salvo.
+    mines = 0
     if hit:
-        # A harder onset throws more shells, and several onsets inside one
-        # frame each earn their own — at a low frame rate or on fast drums
-        # ctx.onsets can be 2 or 3, and collapsing that to a single shell
-        # would quietly drop beats the analyser did detect.
-        want += ctx.onsets + int(min(2, ctx.onset_strength * 2.5))
+        mines = ctx.onsets * (3 + int(ctx.onset_strength >= 0.6))
 
     # stage 1: rockets climb toward a randomly chosen burst height, easing
     # off their speed over the final stretch — a constant-velocity climb that
@@ -1115,11 +1150,11 @@ def fireworks(ctx: Ctx):
     dist = st["ry"][ralive] - st["rtarget"][ralive]
     ease = np.clip(dist / (dr * 0.3), 0.3, 1.0)
     st["ry"][ralive] -= st["rvy"][ralive] * ease * ctx.dt
-    burst = ralive & (st["ry"] <= st["rtarget"])
 
-    if want:
-        free = np.flatnonzero(~ralive)[:want]
-        for i in free:
+    if want or mines:
+        free = np.flatnonzero(~ralive)[:want + mines]
+        n_climb = max(0, free.size - mines)
+        for i in free[:n_climb]:
             st["ry"][i] = dr - 1.0
             st["rx"][i] = rng.uniform(dc * 0.10, dc * 0.90)
             # Loud throws higher and faster. Height and speed were drawn from
@@ -1143,6 +1178,27 @@ def fireworks(ctx: Ctx):
             top = dr * (0.42 - 0.30 * min(1.0, ctx.energy * 2.2))
             st["rtarget"][i] = rng.uniform(max(dr * 0.06, top * 0.7), max(top, dr * 0.10))
             st["rkind"][i] = pick_kind()
+        for j, i in enumerate(free[n_climb:n_climb + mines]):
+            # Lit and burst in the same breath: `rtarget` at or above where it
+            # is lit, so the burst test below fires on this very frame — the
+            # `ralive` mask is recomputed after the spawn for exactly that
+            # reason, or the beat's own burst would land one frame late.
+            #
+            # Spread across the width rather than scattered at random, so a
+            # salvo reads as one gesture spanning the sky. Random x put two or
+            # three of them in the same corner — and a salvo is only a wide
+            # event if it is wide.
+            span = 1 + max(1, mines)
+            st["ry"][i] = dr * rng.uniform(0.60, 0.78)
+            st["rx"][i] = dc * (0.10 + 0.80 * ((j + rng.uniform(0.2, 0.8)) / span))
+            st["rvy"][i] = 0.0
+            st["rtarget"][i] = st["ry"][i] + 1.0
+            st["rkind"][i] = _FW_MINE
+
+    # Recomputed, not the copy from stage 1: a mine is written into a slot and
+    # bursts on the frame it was written to.
+    ralive = st["ry"] >= 0.0
+    burst = ralive & (st["ry"] <= st["rtarget"])
 
     # stage 2: a bursting rocket seeds a shower of sparks from its position,
     # shaped by whichever kind it was launched as
@@ -1155,8 +1211,18 @@ def fireworks(ctx: Ctx):
             slots = free[:k]
             ang = rng.uniform(0.0, 2 * math.pi, k)
             spd = rng.uniform(dr * spd_lo, dr * spd_hi, k)
-            st["sy"][slots] = st["ry"][i]
-            st["sx"][slots] = st["rx"][i]
+            # A burst leaves one dot and spreads, so on the frame it goes off
+            # the shower is a point and it blooms outward over the second that
+            # follows — which is why churn measured *lowest* on the beat and
+            # climbed for the rest of the bar. A mine's sparks are laid out
+            # already part-way along their own flight paths instead, at the
+            # radius the shell would have reached in a few frames. Nobody can
+            # see the frames it did not spend spreading; what they see is the
+            # beat arriving. Same trick, and the same reason, as the staggered
+            # train a meteor cluster is thrown on.
+            r0 = rng.uniform(dr * 0.03, dr * 0.14, k) if kind == _FW_MINE else 0.0
+            st["sy"][slots] = st["ry"][i] - np.sin(ang) * r0
+            st["sx"][slots] = st["rx"][i] + np.cos(ang) * r0
             # Isotropic, because a shell bursts as a sphere and only gravity
             # is allowed to make it anything else.
             #

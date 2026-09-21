@@ -41,12 +41,15 @@ MIN_CHURN = 0.004
 #: its shockwaves are thrown from the blob's rim and cross it in a quarter of
 #: a second instead of hanging in flight for longer than a bar — before that
 #: its idle animation moved more of the screen than its waves did, and it
-#: measured 0.81 here. ``Bubbles`` never reads ``ctx.onsets``, so 1.0 is the
-#: honest answer for it.
+#: measured 0.81 here. ``Fireworks`` answered a beat with one more climbing
+#: shell in a sky that already held ten, which measured 1.02; a beat now fires
+#: a salvo of mines that burst where they are lit, and it measures 1.93.
+#: ``Bubbles`` never reads any rhythm field, so 1.0 is the honest answer for
+#: it.
 #:
 #: These are here so a change that damps a mode's response shows up as a
 #: number that fell, not as something someone notices months later.
-BASELINE = {"Bars": 2.45, "Pulse": 1.89, "Bubbles": 1.01}
+BASELINE = {"Bars": 2.45, "Pulse": 1.89, "Bubbles": 1.01, "Fireworks": 1.93}
 
 #: How far a baseline may fall before it counts as a regression. Generous,
 #: because the corpus is synthetic and a retune is allowed to cost a little.
