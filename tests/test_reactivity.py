@@ -37,16 +37,16 @@ MIN_CHURN = 0.004
 #: recorded rather than as endorsed.
 #:
 #: ``Bars`` answers the beat plainly: it changes nearly two and a half times
-#: as much of the screen around one as between. The other two do not, and
-#: that is the point of writing them down. ``Bubbles`` never reads
-#: ``ctx.onsets``, so 1.0 is the honest answer for it. ``Pulse`` does — its
-#: blurb promises "shockwaves thrown off the beat" — and still measures below
-#: 1.0, because its idle animation moves more of the screen than its
-#: shockwaves do. Neither number moved between 0.5.0 and 0.5.5.
+#: as much of the screen around one as between. ``Pulse`` does too, now that
+#: its shockwaves are thrown from the blob's rim and cross it in a quarter of
+#: a second instead of hanging in flight for longer than a bar — before that
+#: its idle animation moved more of the screen than its waves did, and it
+#: measured 0.81 here. ``Bubbles`` never reads ``ctx.onsets``, so 1.0 is the
+#: honest answer for it.
 #:
 #: These are here so a change that damps a mode's response shows up as a
 #: number that fell, not as something someone notices months later.
-BASELINE = {"Bars": 2.45, "Pulse": 0.81, "Bubbles": 1.01}
+BASELINE = {"Bars": 2.45, "Pulse": 1.89, "Bubbles": 1.01}
 
 #: How far a baseline may fall before it counts as a regression. Generous,
 #: because the corpus is synthetic and a retune is allowed to cost a little.

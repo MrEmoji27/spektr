@@ -149,6 +149,35 @@ def flame(ctx: Ctx):
 #: full-grid passes.
 _PULSE_WAVES = 2
 
+#: How long a thrown wave lasts, in seconds, and the whole of this mode's beat
+#: response.
+#:
+#: A ring is a moving annulus, so the change it makes is proportional to the
+#: ground it covers: one crossing is a fixed amount of change spread over
+#: however many frames that crossing takes, and a longer life is the same
+#: change spread thinner. At 0.9 s a wave outlived a bar at any ordinary
+#: tempo — a ring was always in flight, and the field its travel re-rolled
+#: landed on the beat frames and the frames between them alike. Measured
+#: through ``tests/reactivity.py`` on a four-on-the-floor: 3.5% of the cells
+#: changed per frame on a beat against 4.3% between them, *less* on the beat,
+#: because the level rising towards the next kick moved the blob more than the
+#: wave did. A quarter of that life concentrates the same crossing into a
+#: quarter of the frames, and the ratio goes 0.81 to 1.89.
+_PULSE_LIFE = 0.22
+
+#: The front decelerates: ``R ∝ age ** 0.4``, the Sedov-Taylor blast-wave law,
+#: where the mode used to draw ``R ∝ age``.
+#:
+#: Position is not the point, the *sweep* is. A front moving linearly covers
+#: the same ground every frame, so its churn is flat across the wave's life
+#: and the first frame after the beat changes no more of the screen than the
+#: tenth — which is exactly the shape that measured below 1.0. Decelerating,
+#: it covers most of its travel in the opening frames: at this life the front
+#: is past halfway by the third frame, and the sweep lands on the beat. That a
+#: real shock front does the same is why this curve rather than any other that
+#: front-loads as well.
+_PULSE_BLAST = 0.4
+
 
 @mode("Pulse", group="particles", blurb="a radial blob with shockwaves thrown off the beat")
 def pulse(ctx: Ctx):
@@ -168,6 +197,15 @@ def pulse(ctx: Ctx):
     of how long ago it was launched. That makes the ring a thing the music
     *did* rather than a thing the clock did.
 
+    Two further things had to change before that was true on screen, and both
+    are in the constants above: a wave thrown from the centre is drawn inside
+    the blob while it is still a small ring, where the fill is already solid
+    and there is nothing to see, and one crossing over 0.9 s spreads its sweep
+    so thin that the level's ordinary rise and fall moves more of the picture
+    than it does. It now leaves the rim and crosses in under a quarter of a
+    second, which is the difference between a mode that measured 0.81 on the
+    reactivity harness and one that measures 1.89.
+
     Noise is a fixed per-size field rather than a fresh hash every frame. The
     hash was over 2 ms of the mode's budget at 400x100 and bought nothing: the
     blob's edge and the shockwaves both sweep across the field, so a
@@ -181,12 +219,21 @@ def pulse(ctx: Ctx):
     lut, idx = _angular_lut(ctx, turn, n, ctx.t * (0.10 + avg * 0.30))
     r_lut = max_r * (0.1 + 0.9 * lut * lut)
     halo_lut = lut * np.float32(0.4)
+    # The blob radius and the halo's brightness are both functions of the band
+    # level alone, so they are computed on the 512-entry table and gathered,
+    # rather than gathering the level and then running the arithmetic over
+    # 320,000 dots. Same numbers, three fewer full-grid passes. See
+    # :func:`angular_lut`. The gather sits above the launch block because the
+    # wave needs the blob's rim on the frame it is thrown; it is the same
+    # gather either way.
+    r = r_lut[idx]
 
     st = ctx.scratch(
         "pulse",
         lambda: {
             "born": np.full(_PULSE_WAVES, -99.0),
             "amp": np.zeros(_PULSE_WAVES),
+            "rim": np.zeros(_PULSE_WAVES),
             "acc": 0.0,
         },
     )
@@ -217,13 +264,17 @@ def pulse(ctx: Ctx):
         st["born"][slot] = ctx.t
         strength = ctx.onset_strength if ctx.onsets else min(1.0, ctx.energy * 1.4)
         st["amp"][slot] = float(np.clip(0.35 + strength * 0.9, 0.0, 1.0))
+        # Where this wave starts from: the blob's mean rim, as it stands on the
+        # frame the wave is thrown. A ring drawn inside the blob has nowhere to
+        # show — the fill past ``prox > 0.45`` is solid and the rest is already
+        # dithered — so a wave from the centre spends its first tenth of a
+        # second on top of a picture that is not changing. Starting at the rim
+        # also means the wave leaves the thing that threw it, which is what the
+        # blurb says happens. Captured at the launch rather than read per
+        # frame: a live rim would drag the ring in and out with the level, and
+        # a wave's radius is a thing that only ever grows.
+        st["rim"][slot] = float(r.mean())
 
-    # The blob radius and the halo's brightness are both functions of the band
-    # level alone, so they are computed on the 512-entry table and gathered,
-    # rather than gathering the level and then running the arithmetic over
-    # 320,000 dots. Same numbers, three fewer full-grid passes. See
-    # :func:`angular_lut`.
-    r = r_lut[idx]
     nz = ctx.scratch(
         "pulse_grain", lambda: np.random.default_rng(419).random((dr, dc)).astype(np.float32)
     )
@@ -244,13 +295,14 @@ def pulse(ctx: Ctx):
     hv *= halo_lut[idx]
     lit |= (~inside) & (nz < hv)
 
-    # A wave crosses the radius in ~0.9 s and fades over the same span, so its
-    # position is set by seconds since launch and nothing here is per-frame.
+    # A wave leaves the rim it was thrown from, reaches the edge of the field
+    # in ``_PULSE_LIFE`` and fades over the same span, so its position is set
+    # by seconds since launch and nothing here is per-frame.
     for k in range(_PULSE_WAVES):
         age = ctx.t - st["born"][k]
-        if not (0.0 <= age < 0.9):
+        if not (0.0 <= age < _PULSE_LIFE):
             continue
-        phase = age / 0.9
+        phase = age / _PULSE_LIFE
         strength = float(st["amp"][k]) * (1.0 - phase)
         if strength <= 0.06:
             continue
@@ -264,12 +316,12 @@ def pulse(ctx: Ctx):
         # their ``lit`` bit touched (``near & ...`` was false there).
         # A ring of radius R cannot reach a row further than R + band from the
         # centre, because ``dist`` is never smaller than the vertical offset
-        # alone. Clipping the rows first means a young wave — a small ring,
-        # which is most of a wave's visible life — tests a few dozen rows
+        # alone. Clipping the rows first means a wave still near the rim — a
+        # small ring, which is its first frames — tests a few dozen rows
         # instead of all four hundred, and the membership pass stops being the
         # expensive part of the mode. Cells outside the slice could not have
         # been ``near``, so nothing is lost.
-        radius = max_r * phase
+        radius = st["rim"][k] + (max_r - st["rim"][k]) * (phase ** _PULSE_BLAST)
         reach = radius + band
         r0 = max(0, int(dr * 0.5 - reach))
         r1 = min(dr, int(dr * 0.5 + reach) + 2)
