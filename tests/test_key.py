@@ -210,3 +210,59 @@ def test_the_analyser_publishes_uncertainty_rather_than_a_guess():
                             ["F#", "G", "G#"], ["A", "A#", "B"]])
     assert frame.key is None
     assert frame.key_uncertain
+
+
+# ── the reported key has to hold still ───────────────────────────────────────
+
+def keep_playing(est, progression, bars, dt=0.05, steps=20):
+    """Play into an existing estimator; return the key after every frame."""
+    seen = []
+    for _ in range(bars):
+        for notes in progression:
+            folded = chord(notes)
+            for _ in range(steps):
+                est.feed(folded, dt)
+                seen.append(est.key)
+    return seen
+
+
+def test_a_borrowed_chord_does_not_change_the_key():
+    """One bar from somewhere else is a borrowed chord, not a modulation. A
+    mode recolouring on the key would strobe if this were not held."""
+    est = listen(PROGRESSIONS["C major"], repeats=6)
+    assert est.key == "C major"
+    seen = keep_playing(est, [["A#", "D", "F"]], 1)
+    assert set(seen) == {"C major"}, f"flipped to {set(seen) - {'C major'}}"
+
+
+def test_a_real_modulation_does_change_the_key():
+    est = listen(PROGRESSIONS["C major"], repeats=6)
+    assert est.key == "C major"
+    keep_playing(est, PROGRESSIONS["E minor"], 10)
+    assert est.key == "E minor"
+    assert est.confidence > 0.5
+
+
+def test_the_key_does_not_flicker_once_it_has_settled():
+    est = listen(PROGRESSIONS["G major"], repeats=6)
+    settled = est.key
+    seen = keep_playing(est, PROGRESSIONS["G major"], 6)
+    assert set(seen) == {settled}, f"flickered across {set(seen)}"
+
+
+def test_hysteresis_waits_for_a_full_memory_before_defending_a_key():
+    """Early on the average is still filling and its first winner is not
+    worth defending — holding one cost the right answer on a cadence in C,
+    which locked onto its relative minor before the evidence was in."""
+    from spektr.audio.key import MEMORY_S
+    est = listen(PROGRESSIONS["C major"], repeats=6)
+    assert est._heard >= MEMORY_S
+    assert est.key == "C major"
+
+
+def test_the_index_helper_round_trips_every_key():
+    from spektr.audio.key import _index_of
+    for tonic in range(12):
+        for minor in (False, True):
+            label = key.name(tonic, minor)
+            assert _index_of(label) == (12 if minor else 0) + tonic

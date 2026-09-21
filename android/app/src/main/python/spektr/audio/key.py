@@ -65,6 +65,27 @@ MIN_FIT = 0.55
 #: The fit at which confidence reaches its ceiling, measured above MIN_FIT.
 FIT_RANGE = 0.30
 
+#: How much better a challenger has to score than the key currently being
+#: reported before the answer changes, as a share of the incumbent's score.
+#:
+#: Without this the reported key flickers, and a relative major and minor are
+#: where it flickers worst: they share every note, so their scores sit a hair
+#: apart and noise alone decides which is ahead from one frame to the next. A
+#: mode that recolours on the key would strobe. Real modulations clear this
+#: easily -- a new key is not a hair better, it is a different shape.
+SWITCH_MARGIN = 0.06
+
+#: ...and how long the challenger has to stay ahead, in seconds. A passing
+#: chord borrowed from another key wins for a moment; a modulation does not
+#: give the old key back.
+SWITCH_HOLD_S = 2.5
+
+#: Hysteresis only applies once a full :data:`MEMORY_S` of tonal audio has
+#: been heard. Before that the average is still filling and its early winner
+#: is not an incumbent worth defending — holding one cost the right answer on
+#: a cadence in C, which settles correctly a few seconds in but had already
+#: locked onto its relative minor.
+
 
 #: How much of a note's energy its harmonics put on other pitch classes.
 #:
@@ -147,6 +168,12 @@ def name(tonic: int, minor: bool) -> str:
     return f"{NOTES[tonic % 12]} {'minor' if minor else 'major'}"
 
 
+def _index_of(key_name: str) -> int:
+    """Where a key sits in a flattened :func:`score` array."""
+    tonic, _, quality = key_name.partition(" ")
+    return (12 if quality == "minor" else 0) + NOTES.index(tonic)
+
+
 class KeyEstimator:
     """Accumulates chroma and reports a key when the evidence supports one.
 
@@ -156,7 +183,10 @@ class KeyEstimator:
     of the track it sits in.
     """
 
-    __slots__ = ("_avg", "_heard", "confidence", "key", "uncertain")
+    __slots__ = (
+        "_avg", "_challenger", "_challenger_for", "_heard",
+        "confidence", "key", "uncertain",
+    )
 
     def __init__(self) -> None:
         self.reset()
@@ -165,6 +195,9 @@ class KeyEstimator:
         self._avg: np.ndarray | None = None
         #: Seconds of *tonal* audio folded in so far.
         self._heard = 0.0
+        #: The key trying to take over, and how long it has been ahead.
+        self._challenger: str | None = None
+        self._challenger_for = 0.0
         #: ``"C major"`` or ``None``. See the module docstring for the three
         #: states this and :attr:`confidence` make between them.
         self.key: str | None = None
@@ -187,9 +220,9 @@ class KeyEstimator:
         else:
             self._avg += (c - self._avg) * alpha
         self._heard = min(self._heard + dt, MEMORY_S * 4)
-        self._decide()
+        self._decide(dt)
 
-    def _decide(self) -> None:
+    def _decide(self, dt: float = 0.0) -> None:
         if self._avg is None or self._heard < MIN_EVIDENCE_S:
             self.key = None
             self.confidence = 0.0
@@ -211,7 +244,31 @@ class KeyEstimator:
             return
 
         row, tonic = divmod(int(order[0]), 12)
-        self.key = name(tonic, minor=bool(row))
+        winner = name(tonic, minor=bool(row))
+
+        # Hysteresis. The winner only takes over when it is clearly better
+        # than what is already being reported and has stayed that way.
+        settled = self._heard >= MEMORY_S
+        if settled and self.key is not None and winner != self.key:
+            held = float(flat[_index_of(self.key)])
+            ahead = best > held * (1.0 + SWITCH_MARGIN)
+            if winner == self._challenger and ahead:
+                self._challenger_for += dt
+            else:
+                self._challenger = winner if ahead else None
+                self._challenger_for = 0.0
+            if not ahead or self._challenger_for < SWITCH_HOLD_S:
+                # Keep reporting the incumbent, and say how well *it* fits.
+                best = held
+                winner = self.key
+            else:
+                self._challenger = None
+                self._challenger_for = 0.0
+        else:
+            self._challenger = None
+            self._challenger_for = 0.0
+
+        self.key = winner
 
         # Two things make an answer trustworthy, and both belong in the
         # number: how well the winner fits, and how far clear of the next one
