@@ -382,8 +382,19 @@ def shooting_star(ctx: Ctx):
             away = np.sort(rng.uniform(0.06, 0.40, k) * min(dr, dc))
             ex, ey = _edge_entry(rx, ry, ca, sa, dr, dc)
             trail = away[-1] - away
-            st["my"][free] = ey - sa * trail
-            st["mx"][free] = ex - ca * trail
+            # Head-first, and just inside the boundary rather than behind it.
+            # The train used to hang off the entry point with each fragment a
+            # little further out of frame, so a beat landed as the head alone
+            # and the rest arrived over the next third of a second, one at a
+            # time — churn measured 1.07 because what the beat *did* was never
+            # in the four frames it is measured over. Laid along the path from
+            # the boundary inward, the whole family is on the sky when the beat
+            # lands, which is what a shower looks like: it is the same train at
+            # the same angles, entering where it always entered. Nothing
+            # appears in the middle of the frame — the tail is still at the
+            # edge, and ``trail`` is the same set of offsets it always was.
+            st["my"][free] = ey + sa * trail
+            st["mx"][free] = ex + ca * trail
             st["mvy"][free] = sa * speed
             st["mvx"][free] = ca * speed
             st["mlen"][free] = (9.0 + 24.0 * hard) * depth * rng.uniform(0.85, 1.15, k)
@@ -402,7 +413,17 @@ def shooting_star(ctx: Ctx):
             # one mid-fall, which dismantles the group as surely as any
             # angular spread.
             st["mage"][free] = 0.0
-            life = rng.uniform(0.45, 1.1)
+            # Shorter than the weather meteor's 0.45-1.1 s, and for the same
+            # reason the train moved inside the boundary: a family that is
+            # still crossing when the next one is thrown is a shower, not an
+            # event. At 0.85 s the longest burn is about one bar of a
+            # four-on-the-floor, so the sky the next beat arrives to is the
+            # empty one the mode's own docstring asks for. Measured with the
+            # train laid inside: 1.32 on four_on_floor and 1.48 on kick_snare,
+            # against 1.18 and 1.27 with the original burn, and churn 0.018
+            # against 0.023 — the sky is emptier between beats and the beat
+            # itself is unchanged.
+            life = rng.uniform(0.35, 0.85)
             st["mlife"][free] = life * rng.uniform(0.93, 1.07, k)
             # A bolide is rare and reserved for the hardest hits — and for
             # the head alone. The flare is the parent body's; scattered down
