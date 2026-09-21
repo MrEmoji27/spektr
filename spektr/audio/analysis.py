@@ -73,6 +73,7 @@ N_BANDS = 32          # internal resolution; modes downsample for chunky looks
 #:
 #: Cost is linear in the rate: measured at 0.447 ms per analysis, 4.2% of one
 #: core at 94 Hz and ~8.4% at 188 Hz.
+from . import bars as _bars  # noqa: E402
 from . import chroma as _chroma  # noqa: E402
 from . import drums as _drums  # noqa: E402
 from .rates import HOP, analyses_per_sec, hop_seconds  # noqa: E402
@@ -91,6 +92,12 @@ WAVE_POINTS = 512     # downsampled scope trace
 #: enough that a held chord reads as one steady colour, quick enough that a
 #: change of chord is on screen within a beat.
 CHROMA_FOLLOW = 0.08
+
+#: How long the gate has to stay shut before the musical state -- the last
+#: hit, the chord, the bar grid -- is thrown away. Longer than the gap between
+#: two drum hits at any tempo anyone plays, and short enough that a new track
+#: does not inherit the last one's metre.
+FORGET_AFTER_S = 1.5
 
 #: Most hops drained in one wake-up of the analyser thread.
 #:
@@ -178,6 +185,15 @@ class Frame:
     #: zeros when there is nothing tonal to report. See
     #: :mod:`spektr.audio.chroma`.
     chroma: np.ndarray = field(default_factory=lambda: np.zeros(12, dtype=np.float32))
+    #: 0..1 across the bar, 0.0 on the downbeat. 0.0 whenever
+    #: :attr:`bar_confidence` is 0.0, so the two are read together.
+    bar_phase: float = 0.0
+    #: Which beat of the bar the last onset landed on, 0 for the downbeat, or
+    #: ``None`` when the drums do not say. See :mod:`spektr.audio.bars`.
+    beat_in_bar: int | None = None
+    #: 0..1 in how sure the downbeat is. Zero is common and not a failure:
+    #: plenty of music has no downbeat anything can find.
+    bar_confidence: float = 0.0
     #: Estimated tempo. 0.0 means unknown, which is a state modes must handle —
     #: never divide by this without checking.
     tempo_bpm: float = 0.0
@@ -617,6 +633,11 @@ class OnsetDetector:
         self._peak_decay = 0.996 ** (analyses_per_sec() / self.hop_rate)
         self.seq = 0
         self.strength = 0.0
+        #: When the most recent onset actually landed, on the analyser's
+        #: clock. This is the middle of the peak-picking window rather than
+        #: the hop that noticed it, so anything building a grid out of onsets
+        #: is working from when the hit happened.
+        self.last_t = 0.0
         #: This hop's rectified per-band rise — the flux the peak picker is
         #: about to read, kept so a caller with the band frequencies can ask
         #: what the hit sounded like. Reading it costs nothing and cannot
@@ -925,6 +946,7 @@ class OnsetDetector:
                 )
             ):
                 self._last_t = t_mid
+                self.last_t = t_mid
                 self.seq += 1
                 # Strength comes from whichever curve found it, measured
                 # against that curve's own peak — a kick heard by the bass
@@ -1218,6 +1240,8 @@ class Analyser:
         #: What the last onset sounded like, carried between hits the way
         #: ``onset_strength`` is, and cleared when the gate closes.
         self._drums = {"kick": 0.0, "snare": 0.0, "hat": 0.0}
+        #: Where the bar starts, from the pattern the drums make.
+        self._bar_track = _bars.BarTracker()
         #: The onset counter as of the last classification, so a hit is
         #: classified once rather than on every hop that follows it.
         self._drums_seq = 0
@@ -1225,6 +1249,9 @@ class Analyser:
         self._band_hz: np.ndarray | None = None
         #: The eased pitch classes. ``None`` until the first tonal frame.
         self._chroma: np.ndarray | None = None
+        #: When the gate last shut, or ``None`` while it is open. See
+        #: :data:`FORGET_AFTER_S`.
+        self._quiet_since: float | None = None
         # Injectable so an offline harness can drive the analyser on the
         # *signal's* timeline rather than the wall's. Onset detection is
         # judged on timing to within tens of milliseconds, and a corpus that
@@ -1442,17 +1469,42 @@ class Analyser:
             # backwards, and anyone differencing it across the gap would read
             # the recovery as a burst of beats that never played.
             self._onset.reset_continuity()
-            # Nothing is playing, so nothing sounds like anything: the last
-            # hit and the last chord both stop being true here, unlike the
-            # onset counter, which has to carry across the gap.
-            self._drums = {"kick": 0.0, "snare": 0.0, "hat": 0.0}
-            self._chroma = None
+            # What the music *was* is only forgotten once the silence has
+            # lasted. The gate shuts in the gaps between sparse drum hits --
+            # half a second of near-nothing between a snare and the next kick
+            # is ordinary -- and forgetting there would clear the last hit,
+            # the chord and the whole bar grid several times a bar, which is
+            # how the bar tracker ended up with one onset of evidence and
+            # never found a downbeat at all.
+            if self._quiet_since is None:
+                self._quiet_since = now
+            elif now - self._quiet_since > FORGET_AFTER_S:
+                self._drums = {"kick": 0.0, "snare": 0.0, "hat": 0.0}
+                self._chroma = None
+                self._bar_track.reset()
+            # The musical state rides through a shut gate rather than
+            # blinking to zero in every gap between hits. Once the silence has
+            # outlasted FORGET_AFTER_S the state above has already been
+            # cleared, so these are zeros by then anyway -- which is the
+            # difference between "nothing is playing right now" and "there is
+            # no music".
             self._publish(Frame(
                 seq=self._seq + 1, rms=rms, silent=True,
                 bands=quiet, bands_l=quiet, bands_r=quiet,
                 onset_seq=self._onset.seq,
+                drums=self._drums,
+                chroma=(
+                    np.zeros(12, dtype=np.float32)
+                    if self._chroma is None else self._chroma.copy()
+                ),
+                bar_phase=self._bar_track.phase(now),
+                beat_in_bar=self._bar_track.beat,
+                bar_confidence=self._bar_track.confidence,
             ))
             return
+
+        # The gate is open, so whatever silence there was has ended.
+        self._quiet_since = None
 
         # Soft knee above the gate.
         #
@@ -1580,6 +1632,9 @@ class Analyser:
                 beat_phase=self._onset.beat_phase,
                 drums=self._drums,
                 chroma=self._chroma_now(spec_mid_l + spec_mid_r, sr),
+                bar_phase=self._bar_track.phase(now),
+                beat_in_bar=self._bar_track.beat,
+                bar_confidence=self._bar_track.confidence,
             )
         )
 
@@ -1597,6 +1652,9 @@ class Analyser:
         if rise is None or hz is None or rise.size != hz.size:
             return
         self._drums = _drums.classify(rise, hz)
+        # The tracker only ever sees hits, which is what a bar is made of.
+        period = 60.0 / self._onset.tempo_bpm if self._onset.tempo_bpm > 0 else 0.0
+        self._bar_track.feed(self._onset.last_t, period, self._drums)
 
     def _chroma_now(self, spectrum, rate: float) -> np.ndarray:
         """This frame's pitch classes, eased so they do not flicker.

@@ -120,6 +120,20 @@ class Ctx:
     chroma: np.ndarray = field(
         default_factory=lambda: np.zeros(12, dtype=np.float32)
     )
+    #: 0..1 across the bar, 0.0 on the downbeat — the place a change wants to
+    #: land if it is to read as musical rather than as a glitch.
+    #:
+    #: Always read this with :attr:`bar_confidence`. 0.0 means "on the
+    #: downbeat" only when the confidence is above zero; otherwise it means
+    #: the drums never said where the bar starts, which is common.
+    bar_phase: float = 0.0
+    #: Which beat of the bar the last onset was, 0 for the downbeat, or
+    #: ``None`` when unknown.
+    beat_in_bar: int | None = None
+    #: 0..1 in how sure the downbeat is. Zero is not a failure: a
+    #: four-on-the-floor has no downbeat in its drums, and plenty of music has
+    #: no drums at all.
+    bar_confidence: float = 0.0
 
     # ── derived geometry ──
     @property

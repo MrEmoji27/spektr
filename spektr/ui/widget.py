@@ -917,6 +917,9 @@ class AudioVisualizer(Widget):
             beat_phase=frame.beat_phase,
             drums=frame.drums,
             chroma=frame.chroma,
+            bar_phase=frame.bar_phase,
+            beat_in_bar=frame.beat_in_bar,
+            bar_confidence=frame.bar_confidence,
         )
 
         t0 = time.perf_counter()
