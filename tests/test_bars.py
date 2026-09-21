@@ -110,11 +110,32 @@ def test_the_downbeat_lands_where_the_kick_does():
         assert bt.phase(n * PERIOD * BEATS) == pytest.approx(0.0, abs=1e-6)
 
 
-def test_a_tempo_change_throws_the_old_evidence_away():
+def test_a_confirmed_tempo_change_throws_the_old_evidence_away():
+    from spektr.audio.bars import REGRID_AFTER
     bt = play(BACKBEAT)
     assert bt.confidence > 0.0
-    bt.feed(50.0, PERIOD * 1.5, KICK)     # clearly a different tempo
+    t, faster = 50.0, PERIOD * 1.5
+    for _ in range(REGRID_AFTER):
+        bt.feed(t, faster, KICK)
+        t += faster
     assert bt.beat is None, "evidence counted on the old grid still voted"
+
+
+def test_a_wobbling_tempo_estimate_does_not_cost_the_metre():
+    """The estimate really does wobble: across a 120 to 150 BPM change it
+    reported 150, then 75, then nothing, then 75 again within seconds.
+    Rebuilding on the first disagreement threw the metre away faster than it
+    could be refilled, and the downbeat was never found again."""
+    bt = play(BACKBEAT)
+    assert bt.confidence > 0.0
+    # The downbeat and the grid are what must survive. ``beat`` is which beat
+    # the *last* onset landed on, so it moves with every hit by design.
+    before = (bt._down, bt._period, bt._anchor)
+    t = 50.0
+    for wobble in (PERIOD * 1.5, PERIOD * 0.5, PERIOD, PERIOD * 2.0):
+        bt.feed(t, wobble, KICK)
+        t += wobble
+    assert (bt._down, bt._period, bt._anchor) == before, "a wobble rebuilt the grid"
 
 
 def test_hits_off_the_grid_are_not_counted():
@@ -274,3 +295,102 @@ def test_a_track_that_stops_is_eventually_forgotten():
     assert gone.bar_phase == 0.0
     assert not any(gone.drums.values()), "the last hit outlived the music"
     assert not gone.chroma.any(), "the last chord outlived the music"
+
+
+# ── harmony settles what the drums cannot ────────────────────────────────────
+
+def test_harmony_resolves_a_symmetric_pattern():
+    """Kick-snare-kick-snare maps onto itself under a half-bar rotation, so
+    no drum evidence can pick beat one. A chord change on the downbeat can."""
+    bare = play([KICK, SNARE, KICK, SNARE])
+    assert bare.beat is None, "the drums alone should still refuse"
+
+    bt = BarTracker()
+    t = 0.0
+    for bar in range(8):
+        for beat, hit in enumerate([KICK, SNARE, KICK, SNARE]):
+            # The chord changes on the downbeat, so the movement is *observed*
+            # at the hit after it.
+            moved = 0.5 if beat == 1 else 0.0
+            bt.feed(t, PERIOD, hit, moved)
+            t += PERIOD
+        del bar
+    assert bt.confidence > 0.0, "harmony did not break the tie"
+    assert bt.beat == BEATS - 1, f"last onset read as beat {bt.beat}"
+
+
+def test_harmony_is_credited_to_the_onset_the_change_began_at():
+    """A chord that changes on the downbeat has not visibly moved at the
+    instant the downbeat is struck — it has moved by the next hit. Crediting
+    the movement forwards puts the downbeat half a bar out."""
+    bt = BarTracker()
+    t = 0.0
+    for _ in range(8):
+        for beat in range(BEATS):
+            bt.feed(t, PERIOD, NOTHING, 1.0 if beat == 1 else 0.0)
+            t += PERIOD
+    # Residue 0 is the anchor, so the movement seen at residue 1 belongs to 0.
+    assert float(bt._harmony[0]) > 0.0
+    assert float(bt._harmony[1]) == 0.0
+
+
+def test_harmony_does_not_overrule_unambiguous_drums():
+    """A plain backbeat already says where the downbeat is. Harmony landing
+    somewhere else must not move it."""
+    bt = BarTracker()
+    t = 0.0
+    for _ in range(8):
+        for beat, hit in enumerate(BACKBEAT):
+            bt.feed(t, PERIOD, hit, 0.25 if beat == 2 else 0.0)
+            t += PERIOD
+    assert bt.confidence > 0.0
+    assert bt.beat == BEATS - 1
+
+
+def _chord_wave(notes, n, rate):
+    from spektr.audio.chroma import NOTES
+    t = np.arange(n) / rate
+    out = np.zeros(n)
+    for name in notes:
+        midi = 12 * 4 + NOTES.index(name)
+        hz = 440.0 * 2 ** ((midi - 69) / 12)
+        out += sum(np.sin(2 * np.pi * hz * k * t) / k for k in range(1, 6))
+    return out * 0.10
+
+
+def symmetric_with_chords(bpm=120.0, bars=8):
+    """Kick-snare-kick-snare under a chord that changes every downbeat."""
+    rate = corpus.SR
+    bar_s = BEATS * 60.0 / bpm
+    out = np.zeros(round(bar_s * bars * rate))
+    rng = np.random.default_rng(5)
+    kick = corpus._struck(55.0, 0.9, 0.4, 0.003, 0.08)
+    snare = corpus._noise_burst(0.7, 0.15, 0.04, rng)
+    quarter = bar_s / BEATS
+    chords = [["C", "E", "G"], ["A", "C", "E"], ["F", "A", "C"], ["G", "B", "D"]]
+    for b in range(bars):
+        for beat, sample in enumerate((kick, snare, kick, snare)):
+            i = round((b * bar_s + beat * quarter) * rate)
+            out[i:i + len(sample)] += sample
+        i, span = round(b * bar_s * rate), round(bar_s * rate)
+        out[i:i + span] += _chord_wave(chords[b % len(chords)], span, rate)
+    return corpus._stereo(corpus._norm(out)), rate, bar_s
+
+
+def test_a_symmetric_track_with_chords_finds_its_downbeat_in_real_audio():
+    signal, rate, bar_s = symmetric_with_chords()
+    ring = RingBuffer(1 << 16)
+    now = [0.0]
+    an = Analyser(ring, lambda: rate, clock=lambda: now[0])
+    an._ensure_plan(rate)
+    for start in range(0, signal.shape[0] - HOP + 1, HOP):
+        ring.push(signal[start:start + HOP])
+        now[0] = (start + HOP) / rate
+        an._analyse_once()
+
+    assert an._frame.bar_confidence > 0.0, "no downbeat found"
+    for bar in range(5, 8):
+        phase = an._bar_track.phase(bar * bar_s)
+        assert min(phase, 1.0 - phase) < BAR_SLACK, (
+            f"bar {bar} downbeat at phase {phase:.3f}"
+        )
