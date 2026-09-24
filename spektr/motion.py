@@ -57,6 +57,17 @@ GLIDE_BLEND_TAU = 0.06
 #: beside it instead of standing alone.
 GLIDE_SPREAD_DECAY = 0.62
 
+#: How long after a beat glide rises at snappy's speed, in seconds.
+#:
+#: Glide rounds off every transient, and a kick is over in about 80 ms, so on
+#: glide the kick and snare never quite arrived while the hats kept setting
+#: off every beat effect -- a picture moving to the background of the song.
+#: A beat (an accented onset, see :mod:`spektr.audio.accent`) now skips the
+#: pre-blend and rises on snappy's attack for this long: long enough for the
+#: hit to land, short enough that a swell that starts after it still swells.
+#: The fall, the spread and everything that is not a beat are glide as before.
+GLIDE_PUNCH_S = 0.12
+
 
 class Spring:
     """A vector of critically-ish damped springs.
@@ -83,7 +94,14 @@ class Spring:
         self._za = attack_zeta
         self._zr = release_zeta
 
-    def step(self, targets: np.ndarray, dt: float) -> np.ndarray:
+    def step(self, targets: np.ndarray, dt: float,
+             attack: float | None = None,
+             attack_zeta: float | None = None) -> np.ndarray:
+        """Advance by ``dt``. ``attack`` and ``attack_zeta`` override the
+        rise for this step only -- how glide lets a beat through at snappy's
+        speed without being retuned (see :data:`GLIDE_PUNCH_S`)."""
+        wa = self._wa if attack is None else 5.0 / max(1e-3, attack)
+        za = self._za if attack_zeta is None else attack_zeta
         target = np.asarray(targets, dtype=np.float64)
         if target.shape != self.x.shape:
             self.x = np.resize(self.x, target.shape)
@@ -95,8 +113,8 @@ class Spring:
             remaining -= h
 
             rising = target > self.x
-            w = np.where(rising, self._wa, self._wr)
-            z = np.where(rising, self._za, self._zr)
+            w = np.where(rising, wa, self._wr)
+            z = np.where(rising, za, self._zr)
 
             accel = (w * w) * (target - self.x) - (2.0 * z * w) * self.v
             self.v += accel * h

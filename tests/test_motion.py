@@ -179,3 +179,67 @@ def test_the_panel_row_applies_through_the_widget():
         5.0 / PROFILES[row.choices[-1]]["attack"]
     )
 
+
+
+# ── accents punch through glide ──────────────────────────────────────────────
+
+def _glide_widget(monkeypatch):
+    """An offline visualiser on glide, driven by a clock the test owns."""
+    import time
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import reactivity as R
+
+    now = [0.0]
+    monkeypatch.setattr(time, "monotonic", lambda: now[0])
+    viz = R._widget(now)
+    viz.analyser = R._Analyser()
+    viz.set_motion("glide")
+    return viz, now
+
+
+def _rise(monkeypatch, accented: bool, frames: int = 4) -> float:
+    """How high a hit gets in ``frames`` ticks at 60 fps, from a quiet bed."""
+    from spektr.analysis import Frame
+
+    viz, now = _glide_widget(monkeypatch)
+    quiet = np.full(32, 0.05)
+    loud = np.full(32, 0.9)
+    for _ in range(40):
+        now[0] += 1 / 60
+        viz.analyser.frame = Frame(bands=quiet, bands_l=quiet, bands_r=quiet)
+        viz._tick()
+    hit = Frame(bands=loud, bands_l=loud, bands_r=loud,
+                accent_seq=1 if accented else 0)
+    for _ in range(frames):
+        now[0] += 1 / 60
+        viz.analyser.frame = hit
+        viz._tick()
+    return float(viz._spring.x.mean())
+
+
+def test_glide_lets_the_beat_through(monkeypatch):
+    """Glide rounds off transients, which is the point of it -- and what made
+    the kick and snare look mushy while the hats still set off every beat
+    effect. An accented hit rises at snappy's speed; the same level without
+    an accent keeps glide's."""
+    beat = _rise(monkeypatch, accented=True)
+    other = _rise(monkeypatch, accented=False)
+    assert beat >= 0.6, f"an accented hit only reached {beat:.2f}"
+    assert other < beat * 0.6, (beat, other)
+
+
+def test_the_punch_lasts_one_hit_not_the_passage(monkeypatch):
+    """Once the hit has landed, glide is glide again: a sustained rise long
+    after the accent must not be rushed."""
+    from spektr.analysis import Frame
+    from spektr.motion import GLIDE_PUNCH_S
+
+    viz, now = _glide_widget(monkeypatch)
+    quiet = np.full(32, 0.05)
+    frame = Frame(bands=quiet, bands_l=quiet, bands_r=quiet, accent_seq=1)
+    for _ in range(int((GLIDE_PUNCH_S + 0.3) * 60)):
+        now[0] += 1 / 60
+        viz.analyser.frame = frame
+        viz._tick()
+    assert now[0] >= viz._punch_until

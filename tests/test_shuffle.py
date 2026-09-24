@@ -189,19 +189,19 @@ def test_a_beat_mid_morph_pushes_the_travel(tmp_path):
             assert viz._dissolve_push == 0.0
 
             viz._last_onset_seq = 0
-            viz._frame_data = Frame(onset_seq=1)  # one beat before the next frame
+            viz._frame_data = Frame(accent_seq=1)  # one beat before the next frame
             viz._build()
             assert viz._dissolve_push == dissolve.PUSH
 
-            viz._frame_data = Frame(onset_seq=1)  # a frame with no beat on it
+            viz._frame_data = Frame(accent_seq=1)  # a frame with no beat on it
             viz._build()
             assert viz._dissolve_push == dissolve.PUSH
 
-            viz._frame_data = Frame(onset_seq=3)  # two at once, counted as two
+            viz._frame_data = Frame(accent_seq=3)  # two at once, counted as two
             viz._build()
             assert viz._dissolve_push == dissolve.PUSH * 3
 
-            viz._frame_data = Frame(onset_seq=30)  # and the cap holds
+            viz._frame_data = Frame(accent_seq=30)  # and the cap holds
             viz._build()
             assert viz._dissolve_push == dissolve.PUSH_MAX
 

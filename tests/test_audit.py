@@ -936,8 +936,12 @@ def check_rhythm_plumbing() -> list[str]:
                 viz.set_mode("Rhythm Probe")
                 for label, frame in (
                     ("nothing known", Frame()),
+                    # The raw counter differs from the accented one on
+                    # purpose: modes are handed the accented beats, and a
+                    # probe where the two agree could not tell which arrived.
                     ("real values", Frame(
-                        onset_seq=7, onset_strength=0.65, flux=0.3,
+                        onset_seq=9, onset_strength=0.2,
+                        accent_seq=7, accent_strength=0.65, flux=0.3,
                         tempo_bpm=128.0, beat_phase=0.5,
                     )),
                 ):
@@ -948,12 +952,17 @@ def check_rhythm_plumbing() -> list[str]:
                         bad.append(f"rhythm probe mode never ran ({label})")
                         continue
                     got = captured[-1]
-                    for field in ("onset_seq", "onset_strength", "flux",
-                                  "tempo_bpm", "beat_phase"):
-                        if getattr(got, field) != getattr(frame, field):
+                    for field, source in (
+                        ("onset_seq", "accent_seq"),
+                        ("onset_strength", "accent_strength"),
+                        ("flux", "flux"),
+                        ("tempo_bpm", "tempo_bpm"),
+                        ("beat_phase", "beat_phase"),
+                    ):
+                        if getattr(got, field) != getattr(frame, source):
                             bad.append(
                                 f"ctx.{field} = {getattr(got, field)!r}, "
-                                f"frame.{field} = {getattr(frame, field)!r} ({label})"
+                                f"frame.{source} = {getattr(frame, source)!r} ({label})"
                             )
 
         asyncio.run(run())

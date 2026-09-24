@@ -67,7 +67,9 @@ class Ctx:
     # "nothing known" value (all zeros) during silence, under a sustained
     # drone, and before a tempo is established — that is a real runtime state,
     # not a placeholder — so modes must treat them as optional, never required.
-    #: Monotonic count of detected onsets since start. Never resets, including
+    #: Monotonic count of beats since start: the detected onsets that stood
+    #: out from the passage around them, so the kick and snare and not every
+    #: hat under them (see :mod:`spektr.audio.accent`). Never resets, including
     #: across silence. Key on this *changing* (compare with the last value
     #: seen) rather than on ``onset_strength > 0`` — a single drum hit can
     #: fire the detector repeatedly, and a reader that keys on the counter
@@ -84,7 +86,9 @@ class Ctx:
     #: mode returned to after a minute away sees every beat that played while
     #: it was not drawing, and reports them all as having just happened.
     onsets: int = 0
-    #: 0..1 strength of the most recently detected onset. It persists after
+    #: 0..1 strength of the most recent beat: how far it stood out against
+    #: the biggest recent ones, so a kick is 1.0 and a hit a little softer
+    #: than it somewhat less. It persists after
     #: that onset rather than clearing, so it answers "how hard was the last
     #: hit", not "how hard was the hit this frame" — gate it on
     #: :attr:`onsets` when you mean the latter.

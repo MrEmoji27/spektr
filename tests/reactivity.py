@@ -12,7 +12,7 @@ This drives the real widget over the real analyser on the corpus from
 things per mode:
 
 ``lost``
-    onsets the analyser published that no mode ever saw. Must be zero. The
+    beats the analyser published that no mode ever saw. Must be zero. The
     counter is differenced in exactly one place and consumed by whichever
     painter runs, so a second caller appearing on that path would eat beats
     without any other test noticing.
@@ -203,7 +203,8 @@ def measure(mode_name: str, signal, samplerate, clock, *, ticks=None) -> dict:
                 continue
             frame = frames[i - 1][1]
             viz.analyser.frame = frame
-            published = max(published, frame.onset_seq)
+            # The beats the widget hands modes; before 0.6.0 every onset was one.
+            published = max(published, getattr(frame, "accent_seq", frame.onset_seq))
             clock[0] = t
             tick[0] += 1
             viz._tick()

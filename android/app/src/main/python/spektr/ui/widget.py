@@ -35,6 +35,7 @@ from ..config import (
 from ..modes import Ctx
 from ..motion import (
     GLIDE_BLEND_TAU,
+    GLIDE_PUNCH_S,
     PROFILES,
     Peaks,
     Spring,
@@ -134,6 +135,10 @@ class AudioVisualizer(Widget):
         self._band_blend = Trace(tau=GLIDE_BLEND_TAU)
         self._stereo_l_blend = Trace(tau=GLIDE_BLEND_TAU)
         self._stereo_r_blend = Trace(tau=GLIDE_BLEND_TAU)
+        #: The beat counter as glide last saw it, and when the punch-through
+        #: it started runs out. See :data:`GLIDE_PUNCH_S`.
+        self._glide_accent_seq = 0
+        self._punch_until = -1.0
 
         self._mode_state: dict[str, dict] = {}
         self._strips: list[Strip] | None = None
@@ -780,17 +785,37 @@ class AudioVisualizer(Widget):
         # arrive softened and energy leans outward from hot bands. snappy,
         # the default, feeds the raw spectrum straight through; the branch is
         # per frame but costs one attribute compare.
+        #
+        # Except on a beat. For GLIDE_PUNCH_S after one, the raw spectrum
+        # goes past the pre-blend and the springs rise at snappy's speed, so
+        # the kick and snare land while the hats and everything between hits
+        # still glide. The blends keep following the audio throughout, so
+        # nothing jumps when the punch ends.
+        punch = {}
         if self._motion == "glide":
-            bands_t = spread(self._band_blend.step(frame.bands, dt))
-            bands_l_t = spread(self._stereo_l_blend.step(frame.bands_l, dt))
-            bands_r_t = spread(self._stereo_r_blend.step(frame.bands_r, dt))
+            if frame.accent_seq != self._glide_accent_seq:
+                self._glide_accent_seq = frame.accent_seq
+                self._punch_until = now + GLIDE_PUNCH_S
+            blended = (
+                self._band_blend.step(frame.bands, dt),
+                self._stereo_l_blend.step(frame.bands_l, dt),
+                self._stereo_r_blend.step(frame.bands_r, dt),
+            )
+            if now < self._punch_until:
+                blended = tuple(
+                    np.maximum(b, raw) for b, raw in
+                    zip(blended, (frame.bands, frame.bands_l, frame.bands_r))
+                )
+                fast = PROFILES["snappy"]
+                punch = {"attack": fast["attack"], "attack_zeta": fast["attack_zeta"]}
+            bands_t, bands_l_t, bands_r_t = (spread(b) for b in blended)
         else:
             bands_t, bands_l_t, bands_r_t = frame.bands, frame.bands_l, frame.bands_r
 
-        self._spring.step(bands_t, dt)
+        self._spring.step(bands_t, dt, **punch)
         self._peaks.step(self._spring.x, dt)
-        self._stereo_l.step(bands_l_t, dt)
-        self._stereo_r.step(bands_r_t, dt)
+        self._stereo_l.step(bands_l_t, dt, **punch)
+        self._stereo_r.step(bands_r_t, dt, **punch)
         if frame.seq != self._last_seq:
             self._trace.step(frame.wave, dt)
             self._last_seq = frame.seq
@@ -909,9 +934,9 @@ class AudioVisualizer(Widget):
             palette=self.palette,
             state=state,
             bars=self.settings.bands,
-            onset_seq=frame.onset_seq,
+            onset_seq=frame.accent_seq,
             onsets=onsets,
-            onset_strength=frame.onset_strength,
+            onset_strength=frame.accent_strength,
             flux=frame.flux,
             tempo_bpm=frame.tempo_bpm,
             beat_phase=frame.beat_phase,
@@ -995,8 +1020,12 @@ class AudioVisualizer(Widget):
         # that wants beats. Clamped at zero because a restarted analyser hands
         # back a counter that begins again from nothing, and a negative delta
         # is not a burst of beats played backwards.
-        onsets = max(0, frame.onset_seq - self._last_onset_seq)
-        self._last_onset_seq = frame.onset_seq
+        #
+        # The accented counter, not the raw one: the detector hears every hat
+        # and ghost note, and a mode handed all of them spends most of its
+        # beats on the background. See spektr.audio.accent.
+        onsets = max(0, frame.accent_seq - self._last_onset_seq)
+        self._last_onset_seq = frame.accent_seq
 
         out = self._render_mode(self.mode_name, frame, w, h, onsets)
         if self._dissolve_from is not None:

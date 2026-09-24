@@ -73,6 +73,7 @@ N_BANDS = 32          # internal resolution; modes downsample for chunky looks
 #:
 #: Cost is linear in the rate: measured at 0.447 ms per analysis, 4.2% of one
 #: core at 94 Hz and ~8.4% at 188 Hz.
+from . import accent as _accent  # noqa: E402
 from . import bars as _bars  # noqa: E402
 from . import chroma as _chroma  # noqa: E402
 from . import drums as _drums  # noqa: E402
@@ -129,6 +130,11 @@ SAME_HIT_S = 0.07
 #: two drum hits at any tempo anyone plays, and short enough that a new track
 #: does not inherit the last one's metre.
 FORGET_AFTER_S = 1.5
+
+#: The window the accent meter reads energy over, in seconds. About a hop
+#: and a half at 44.1 kHz: short enough to separate a hit from the tail of the
+#: one before it, long enough to hold a whole cycle of a kick's fundamental.
+ACCENT_WINDOW_S = 0.023
 
 #: Most hops drained in one wake-up of the analyser thread.
 #:
@@ -200,6 +206,14 @@ class Frame:
     onset_seq: int = 0
     #: 0..1 strength of the most recently detected onset.
     onset_strength: float = 0.0
+    #: Like :attr:`onset_seq`, but counting only the hits that stand out from
+    #: the passage around them -- the kick and snare rather than the hats and
+    #: ghost notes under them. This is the count modes are given as their
+    #: beats; see :mod:`spektr.audio.accent`. Never goes backwards either.
+    accent_seq: int = 0
+    #: 0..1 accent of the most recent hit that counted: how far it jumped
+    #: against the biggest recent jumps.
+    accent_strength: float = 0.0
     #: 0..1 raw onset-detection-function value for this hop, before peak
     #: picking. Continuous, so it is safe to read at any rate; useful for
     #: modes that want "how percussive is right now" rather than discrete hits.
@@ -1299,6 +1313,12 @@ class Analyser:
         #: onset was. See :data:`SAME_HIT_S`.
         self._drums_t = -1e9
         self._drums_strength = 0.0
+        #: Which hits are the beat rather than only in it, and the running
+        #: count of those. See :mod:`spektr.audio.accent`.
+        self._accent = _accent.AccentMeter()
+        self._accent_seq = 0
+        self._accent_strength = 0.0
+        self._accent_onset_seq = 0
         #: Centre frequency of each band, rebuilt with the plan.
         self._band_hz: np.ndarray | None = None
         #: The eased pitch classes. ``None`` until the first tonal frame.
@@ -1542,6 +1562,7 @@ class Analyser:
                 self._chroma_at_onset = None
                 self._bar_track.reset()
                 self._key.reset()
+                self._accent.reset()
             # The musical state rides through a shut gate rather than
             # blinking to zero in every gap between hits. Once the silence has
             # outlasted FORGET_AFTER_S the state above has already been
@@ -1552,6 +1573,8 @@ class Analyser:
                 seq=self._seq + 1, rms=rms, silent=True,
                 bands=quiet, bands_l=quiet, bands_r=quiet,
                 onset_seq=self._onset.seq,
+                accent_seq=self._accent_seq,
+                accent_strength=self._accent_strength,
                 drums=self._drums,
                 chroma=(
                     np.zeros(12, dtype=np.float32)
@@ -1629,6 +1652,7 @@ class Analyser:
         # onsets. Thirty-two band sums average that jitter away, and cost less.
         self._onset.feed(raw_l + raw_r, now)
         self._classify_drums()
+        self._judge_accent(mono, sr, now)
 
         # ── cava's autosens ──
         # Judged before the manual trim, so pressing ] actually makes the bars
@@ -1690,6 +1714,8 @@ class Analyser:
                 confidence=knee,
                 onset_seq=self._onset.seq,
                 onset_strength=self._onset.strength,
+                accent_seq=self._accent_seq,
+                accent_strength=self._accent_strength,
                 flux=self._onset.flux,
                 tempo_bpm=self._onset.tempo_bpm,
                 beat_phase=self._onset.beat_phase,
@@ -1730,6 +1756,24 @@ class Analyser:
         self._bar_track.feed(
             self._onset.last_t, period, self._drums, self._harmony_move()
         )
+
+    def _judge_accent(self, mono: np.ndarray, rate: float, now: float) -> None:
+        """Feed this hop's energy, and count the onset just found if it is one.
+
+        Energy over the last :data:`ACCENT_WINDOW_S`, not the whole analysis
+        window: that is 85 ms or more, long enough that a hit and the one
+        before it blur into one reading.
+        """
+        n = max(1, int(rate * ACCENT_WINDOW_S))
+        tail = mono[-n:]
+        self._accent.feed(now, float(np.sqrt(np.mean(tail * tail))))
+        if self._onset.seq == self._accent_onset_seq:
+            return
+        self._accent_onset_seq = self._onset.seq
+        accent = self._accent.judge(self._onset.last_t)
+        if accent >= _accent.ACCENT_MIN:
+            self._accent_seq += 1
+            self._accent_strength = accent
 
     def _harmony_move(self) -> float:
         """How far the chord moved since the previous onset, 0..1-ish.
