@@ -216,9 +216,10 @@ def test_pressing_h_shows_the_panel_without_eating_the_chrome():
             ):
                 painted.append("".join(seg.text for seg in strip))
             screen_text = " ".join(painted)
-            assert "Mode" in screen_text, "the panel is mounted but paints nothing"
+            assert "next mode" in screen_text, "the panel is mounted but paints nothing"
             # The two rows whose labels are brackets — the markup bug.
-            assert "Sens" in screen_text, "the sensitivity rows are missing"
+            assert "less sensitive" in screen_text, "the sensitivity rows are missing"
+            assert "more sensitive" in screen_text, "the sensitivity rows are missing"
 
             await pilot.press("escape")
             await pilot.pause()
@@ -262,3 +263,27 @@ def test_the_footer_still_reaches_quit_at_eighty_columns():
     row = asyncio.run(footer(80))
     for want in ("Help", "Quit"):
         assert want in row, f"{want} fell off the 80-column footer: {row!r}"
+
+
+def test_every_key_says_what_it_does(monkeypatch):
+    """The footer's two-word labels ("Sens -", "Modes") are not an
+    explanation; every key in the help gets a plain sentence of its own."""
+    from spektr.ui.app import _KEY_HELP
+
+    missing = [b.action for b in Spektr.BINDINGS
+               if b.description and b.action not in _KEY_HELP]
+    assert not missing, f"keys the help only labels: {missing}"
+
+
+def test_the_help_is_written_without_em_dashes(monkeypatch):
+    _, panel = _panel(monkeypatch)
+    for title, rows in panel._sections:
+        assert "—" not in title
+        for left, right in rows:
+            assert "—" not in left and "—" not in right, (left, right)
+
+
+def test_the_help_reports_the_live_morph_and_motion(monkeypatch):
+    _, panel = _panel(monkeypatch, morph="classic", motion="glide", eco="on")
+    now = dict(dict(panel._sections)["now"])
+    assert (now["morph"], now["motion"], now["eco"]) == ("classic", "glide", "on")

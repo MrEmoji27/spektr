@@ -48,6 +48,34 @@ NOWPLAYING_POLL_SECONDS = 5.0
 CHROME_IDLE_S = 4.0
 
 
+#: What each key does, in the words the help panel uses. The footer shows a
+#: binding's own label and has room for two words; the help has room to say
+#: what the key actually does. Keyed by action, and only a gloss: a binding
+#: missing here still appears, under its footer label, so the help cannot
+#: drift from the keys that exist (``tests/test_help.py``).
+_KEY_HELP = {
+    "cycle_mode": "next mode",
+    "cycle_mode(-1)": "previous mode",
+    "pick_mode": "pick a mode from the list",
+    "loadout": "choose which modes are offered",
+    "pick_theme": "pick a theme from the list",
+    "settings": "settings: motion, morph, eco, shuffle and more",
+    "cycle_theme": "next theme",
+    "toggle_chrome": "hide or show the header and footer",
+    "next_source": "next audio source",
+    "default_source": "back to the default output",
+    "reload": "reload themes and plugins from disk",
+    "toggle_shuffle": "shuffle on or off",
+    "gain(-1)": "less sensitive",
+    "gain(1)": "more sensitive",
+    "gate(-1)": "lower the noise gate",
+    "gate(1)": "raise the noise gate",
+    "help": "this help",
+    "show_perf": "show frame time and frame rate",
+    "quit": "quit",
+}
+
+
 class Spektr(App):
     # The screen colour is taken over by the active spektr theme once the
     # visualiser mounts — see AudioVisualizer._paint_background.
@@ -912,7 +940,7 @@ class Spektr(App):
         self.sub_title = self._now_playing or self._capture_status
 
     def action_help(self) -> None:
-        """Every key, and where the files are — generated, never written out.
+        """Every key, and where the files are: generated, never written out.
 
         The keys come from ``BINDINGS`` and the counts from the registry, so
         this cannot describe a version of the app that no longer exists. That
@@ -936,46 +964,53 @@ class Spektr(App):
         the rows without mounting an app, which is what this is for.
         """
         viz = self.viz
+        s = self.settings
         listed = len(mode_registry.listed())
         opt_in = len([m for m in mode_registry.MODES if m.hidden])
-        cells = mode_registry.CELL_SUFFIX.get(self.settings.cells, "?")
+        cells = mode_registry.CELL_SUFFIX.get(s.cells, "?")
+        if s.fps == config.FPS_UNLIMITED:
+            rate = f"unlimited, running at {viz._fps}"
+        else:
+            rate = f"{s.fps} fps" if viz._fps == s.fps else f"{s.fps} fps, running at {viz._fps}"
+        if getattr(viz, "_idle_from", None) is not None:
+            rate += " (idling in the silence)"
 
         sections = [
             ("keys", [
-                (key_label(b.key), b.description)
+                (key_label(b.key), _KEY_HELP.get(b.action, b.description))
                 for b in self.BINDINGS
                 if b.description
             ]),
             # Everything below the generated key list exists because a key
             # and its one-line description do not tell you what the thing
             # *is*. "Loadout" is not an explanation of a loadout.
-            ("in a picker — v, t", [
-                ("↑ ↓", "move — it previews as you go"),
+            ("in a picker: v, t", [
+                ("↑ ↓", "move, and it previews as you go"),
                 ("type", "filter the list"),
                 ("enter", "keep it"),
-                ("esc", "cancel — what you had comes back"),
+                ("esc", "cancel, and what you had comes back"),
             ]),
             # The loadout panel does not follow the rules above: it picks a
             # set rather than one thing, so the list holds the cursor instead
             # of a filter box and typing does not filter.
-            ("in the loadout — l", [
+            ("in the loadout: l", [
                 ("↑ ↓", "move"),
                 ("space", "on a mode: pick it in or out"),
                 ("", "on a ★: load that set"),
                 ("s", "name what is picked, and keep it"),
                 ("d", "delete the ★ under the cursor"),
                 ("a  n", "pick all, or none"),
-                ("/", "filter — enter comes back to the list"),
+                ("/", "filter; enter returns to the list"),
                 ("enter", "apply and close"),
-                ("esc", "cancel — nothing changes"),
+                ("esc", "cancel, nothing changes"),
             ]),
-            ("in the settings panel — c", [
+            ("in the settings panel: c", [
                 ("↑ ↓", "move between rows"),
-                ("← →", "change it — applies live"),
+                ("← →", "change it, and it applies at once"),
                 ("esc", "close"),
             ]),
             # Short lines on purpose. A long one wraps with no hanging
-            # indent and stops reading as a list — and someone opening the
+            # indent and stops reading as a list, and someone opening the
             # help is already lost, so this is the worst place to be wordy.
             ("what these mean", [
                 ("loadout", "which modes v, m and shuffle offer you."),
@@ -985,6 +1020,15 @@ class Spektr(App):
                 ("shuffle", "swaps mode and/or theme on a timer"),
                 ("", "or when the song changes."),
                 ("", "s starts it; c chooses what and when."),
+                ("motion", "snappy bars jump to the music; glide ones"),
+                ("", "swell and settle, like cava. the main hits"),
+                ("", "punch through glide either way."),
+                ("morph", "how one mode becomes the next. clean"),
+                ("", "sweeps the new one in its own way;"),
+                ("", "classic bends the two into each other."),
+                ("eco", "30 fps and fewer bars, for a slow machine."),
+                ("idle", "in silence, with nothing moving, spektr"),
+                ("", "drops to 15 fps until the music is back."),
                 ("subcells", "(o) draws 2x4 dots per character, (q) 2x2."),
                 ("", "the extra pairs are opt-in in c, and want"),
                 ("", "a font with Unicode 16 octants."),
@@ -1000,13 +1044,19 @@ class Spektr(App):
                 ("modes", f"{listed} offered, {opt_in} more with subcell modes on"),
                 # What the cycle keys and shuffle will actually move through,
                 # which is the question "why is `m` only giving me four modes"
-                # — and the loadout is the answer nobody would think to look
+                # and the loadout is the answer nobody would think to look
                 # for unless the help says it is there.
                 ("loadout", (f"{len(viz.mode_names)} of them"
-                             if self.settings.loadout else "off — all of them")),
+                             if s.loadout else "off, so all of them")),
                 ("saved", (", ".join(self._loadouts) if self._loadouts
-                           else "none yet — pick some modes in l and press s")),
-                ("subcells", f"{self.settings.cells} — shown as {cells}"),
+                           else "none yet: pick some modes in l and press s")),
+                ("motion", s.motion),
+                ("morph", s.morph),
+                ("eco", s.eco),
+                ("frame rate", rate),
+                ("shuffle", (f"on, {s.shuffle_scope}, by {s.shuffle_timing}"
+                             if s.shuffle else "off")),
+                ("subcells", f"{s.cells}, shown as {cells}"),
             ]),
             ("files", [
                 ("config", str(self._config_dir or palette_mod.config_dir())),
@@ -1014,7 +1064,8 @@ class Spektr(App):
                 ("", "and so are themes/, plugins/ and ascii/."),
             ]),
             ("more", [
-                ("", f"spektr {__version__} — spektr --help for the command line"),
+                ("", f"spektr {__version__}. spektr --help for the command line;"),
+                ("", "every setting here has a flag there too."),
                 ("", "spektr --glyph-test checks this terminal for octants"),
             ]),
         ]
