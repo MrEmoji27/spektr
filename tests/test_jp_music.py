@@ -7,7 +7,7 @@ import pytest
 import spektr.modes as M
 from spektr.analysis import N_BANDS
 from spektr.modes import Ctx
-from spektr.modes.jp import _LED, _OFF, _PEAK, _TRAIL
+from spektr.modes.jp import _LED, _PEAK, _TRAIL
 from spektr.palette import BUILTIN, Palette
 from spektr.render import SPACE
 
@@ -48,47 +48,65 @@ def test_silence_lights_nothing(name):
 
 # ── JP Sequencer ─────────────────────────────────────────────────────────────
 
+KICK = {"kick": 0.9, "snare": 0.0, "hat": 0.0}
+SNARE = {"kick": 0.0, "snare": 0.9, "hat": 0.0}
+BAR = dict(tempo_bpm=120.0, bar_confidence=0.9)
+
+
+def _grid(state) -> tuple[np.ndarray, np.ndarray]:
+    st = next(v for k, v in state.items() if k[0] == "jp_seq")
+    return st["cur"], st["prev"]
+
+
+def test_a_hit_is_written_on_its_drum_s_row_at_its_step():
+    st: dict = {}
+    draw("JP Sequencer", st, onsets=1, onset_strength=0.9, drums=KICK, bar_phase=0.0, **BAR)
+    draw("JP Sequencer", st, t=0.5, onsets=1, onset_strength=0.9, drums=SNARE,
+         bar_phase=0.25, **BAR)
+    cur, _ = _grid(st)
+    kick, snare = 2, 1                       # rows: hat, snare, kick
+    assert cur[kick, 0] > 0 and cur[snare, 4] > 0
+    assert cur.astype(bool).sum() == 2
+
+
+def test_nothing_is_written_without_a_drum():
+    st: dict = {}
+    draw("JP Sequencer", st, onsets=1, onset_strength=0.9, drums=NO_DRUMS, bar_phase=0.1, **BAR)
+    cur, _ = _grid(st)
+    assert not cur.any()
+
+
+def test_the_bar_just_played_becomes_the_last_bar():
+    st: dict = {}
+    draw("JP Sequencer", st, onsets=1, onset_strength=0.9, drums=KICK, bar_phase=0.0, **BAR)
+    draw("JP Sequencer", st, t=1.9, bar_phase=0.95, **BAR)
+    draw("JP Sequencer", st, t=2.05, bar_phase=0.02, **BAR)       # over the one
+    cur, prev = _grid(st)
+    assert not cur.any() and prev[2, 0] > 0
+    codes, _ = draw("JP Sequencer", st, t=2.1, bar_phase=0.05, **BAR)
+    assert (codes == _TRAIL).any(), "last bar's hit is not drawn"
+
+
 def _lamps(codes):
-    row = codes[0]
-    return [int(c) for c in row if c != SPACE]
+    return [int(c) for c in codes[0] if c != SPACE]
 
 
-def test_the_live_page_follows_the_bar():
-    st: dict = {}
-    codes, _ = draw("JP Sequencer", st, beat_in_bar=2, bar_confidence=0.9,
-                    tempo_bpm=120.0)
-    assert _lamps(codes) == [_PEAK, _OFF, _LED, _OFF]
-
-
-def test_no_downbeat_is_claimed_for_a_bar_that_is_not_known():
-    st: dict = {}
-    codes, _ = draw("JP Sequencer", st, beat_in_bar=2, bar_confidence=0.1,
-                    tempo_bpm=0.0, onsets=1)
+def test_the_playhead_follows_the_bar_and_marks_one_when_it_is_known():
+    codes, _ = draw("JP Sequencer", {}, bar_phase=0.55, **BAR)
     lamps = _lamps(codes)
-    assert _PEAK not in lamps and lamps.count(_LED) == 1
+    assert lamps.index(_LED) == 8 and lamps[0] == _PEAK
 
 
-def test_without_a_bar_the_pages_still_step_on_the_beat():
-    st: dict = {}
-    seen = []
-    phase = 0.0
-    for i in range(int(2.2 / DT)):
-        phase = (phase + DT * 2.0) % 1.0          # 120 BPM
-        codes, _ = draw("JP Sequencer", st, t=i * DT, tempo_bpm=120.0,
-                        beat_phase=phase)
-        seen.append(_lamps(codes).index(_LED))
-    assert len(set(seen)) == 4
+def test_no_one_is_claimed_for_a_bar_that_is_not_known():
+    codes, _ = draw("JP Sequencer", {}, tempo_bpm=120.0, bar_confidence=0.1,
+                    beat_phase=0.3)
+    assert _PEAK not in _lamps(codes)
 
 
-def test_held_pages_are_drawn_a_weight_lighter():
-    st: dict = {}
-    draw("JP Sequencer", st, level=0.8, beat_in_bar=0, bar_confidence=0.9, tempo_bpm=120.0)
-    codes, _ = draw("JP Sequencer", st, level=0.1, beat_in_bar=1,
-                    bar_confidence=0.9, tempo_bpm=120.0)
-    page_w = (W - 3) // 4
-    held, live = codes[2:, :page_w], codes[2:, page_w + 1: 2 * page_w + 1]
-    assert (held == _TRAIL).any() and not (held == _LED).any()
-    assert (live == _LED).any()
+def test_without_a_beat_the_playhead_runs_dim():
+    codes, _ = draw("JP Sequencer", {}, tempo_bpm=0.0)
+    lamps = _lamps(codes)
+    assert _LED not in lamps and _TRAIL in lamps
 
 
 # ── through the real widget, on the drum corpus ──────────────────────────────
@@ -96,7 +114,7 @@ def test_held_pages_are_drawn_a_weight_lighter():
 #: Beat response on ``four_on_floor``, measured when these were added, as in
 #: ``tests/test_reactivity.py``. Not pinned there: an LED panel is sparse on
 #: purpose and sits under that file's churn floor, as ``JP Bars`` does.
-RESPONSE = {"JP Sequencer": 4.46}
+RESPONSE = {"JP Sequencer": 2.46}
 
 
 @pytest.mark.parametrize("name", NEW)

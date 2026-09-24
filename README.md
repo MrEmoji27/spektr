@@ -127,14 +127,15 @@ filter. They are listed here in the order the picker cycles them.
 | **Retro** | sunset grid, with the spectrum as the horizon | **Ember** | a coal bed burning by band, sparks off the hot spots |
 | **Auroras** | a light ribbon whose lower rim rides the spectrum | **Snow** | snowfall in three planes, gusting and lying in drifts |
 | **JP Bars** | a segmented LED meter whose crest peels off and rises, like notes leaving a key | **JP Drift** | the meter shedding bulbs, they break off the top and fall, piling at the foot |
-| **JP Pulse** | the meter bent into a ring, a spoke of bulbs per band, chased on the beat | **JP Sequencer** | the meter paged by the bar, four pages, one live and three holding their beat |
+| **JP Pulse** | the meter bent into a ring, a spoke of bulbs per band, chased on the beat | **JP Sequencer** | a drum machine's step grid, written by the song: kick, snare and hat where each hit landed |
 
 The four **JP** modes are inspired by Japanese car audio hardware, the LED
-level meters on in-dash head units and equalisers. All four draw the same
-meter, with the unlit bulbs showing as faint dots, and each adds one idea from
-another mode: **Keys**' note roll, **Rain**'s falling drops, **Radial**'s
-circle and **Spectro**'s memory. **JP Sequencer** also listens for where the
-bar is, and when it is not sure, it claims no downbeat.
+level meters on in-dash head units and equalisers. The first three draw
+the same meter, with the unlit bulbs showing as faint dots, and each adds one
+idea from another mode: **Keys**' note roll, **Rain**'s falling drops, **Radial**'s
+circle. **JP Sequencer** is the odd one out: a drum machine's step grid that
+the song writes into, kick, snare and hat at the step each hit landed on. When
+it is not sure where the bar starts, it claims no downbeat.
 
 > [!NOTE]
 > The JP modes are still young. They may be changed, improved or reworked.

@@ -71,5 +71,5 @@
   JP Bars    a segmented LED meter whose bars peel off and rise as they fall away
   JP Drift   the meter shedding bulbs: they break off the top and fall, piling at the foot
   JP Pulse   the meter bent into a ring — a spoke of bulbs per band, chased on the beat
-  JP Sequencer the meter paged by the bar — four pages, one live, three holding their beat
+  JP Sequencer a drum machine's step grid, written by the song: kick, snare and hat where each hit landed
   None       nothing at all

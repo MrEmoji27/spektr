@@ -39,6 +39,8 @@ PAL = Palette(BUILTIN["gruvbox"])
 #: constant bar chart. Testing those for movement was an error in an earlier
 #: version of this file, and it flagged seven correct modes as broken.
 SELF_ANIMATING = {
+    # the step grid's playhead, which runs on its own time with no tempo
+    "JP Sequencer",
     "Scatter", "Flame", "Pulse", "Retro", "Tunnel", "Warp",
     "Matrix", "Spectro", "Plasma", "Gonio",
     # scroll (ECG and its octant variant), standing-wave phase (Strings), ring
