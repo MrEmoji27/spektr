@@ -42,6 +42,16 @@ FRAMES = 16
 SAMPLED = (0, 7, 15)
 DT = 1.0 / 60.0
 
+#: The ``beat`` signal: a hit every this many frames (120 BPM at 60 fps),
+#: the first on this frame. Early, so the sampled frames see the moment
+#: before it (0) and the picture answering it five and thirteen frames on (7,
+#: 15). It used to land at half a second, past the end of a sixteen-frame run,
+#: so no fingerprint anywhere recorded a mode answering a beat. Counted in
+#: frames rather than read off ``t``, because a float time lands a hair either
+#: side of the exact frame and the hit is missed.
+BEAT_EVERY = 30
+BEAT_FRAME = 2
+
 
 @dataclass(frozen=True)
 class Case:
@@ -71,7 +81,9 @@ CASES: tuple[Case, ...] = tuple(
 )
 
 
-def _bands(signal: str, t: float) -> np.ndarray:
+def _bands(signal: str, t: float, since: float = 0.0) -> np.ndarray:
+    """The spectrum at ``t``. ``since`` is the time since the last hit, for
+    the ``beat`` signal's kick."""
     n = N_BANDS
     if signal == "silent":
         return np.zeros(n)
@@ -85,7 +97,7 @@ def _bands(signal: str, t: float) -> np.ndarray:
     if signal == "beat":
         b = np.full(n, 0.35)
         kick = n // 8
-        b[:kick] = 0.25 + 0.7 * max(0.0, 1.0 - (t % 0.5) * 8.0)
+        b[:kick] = 0.25 + 0.7 * max(0.0, 1.0 - since * 8.0)
         lo, hi = n // 4, (n * 13) // 16
         b[lo:hi] = 0.55 + 0.2 * np.sin(np.arange(hi - lo) * 1.7 + t * 3)
         return b
@@ -94,15 +106,17 @@ def _bands(signal: str, t: float) -> np.ndarray:
 
 def _ctx(case: Case, i: int, palette: Palette, state: dict, onset_seq: int) -> tuple[Ctx, int]:
     t = (i + 1) * DT
-    b = _bands(case.signal, t)
+    beats_in = (i - BEAT_FRAME) // BEAT_EVERY          # -1 before the first
+    since = ((i - BEAT_FRAME) % BEAT_EVERY) * DT
+    b = _bands(case.signal, t, since)
     level = float(b.mean())
     wave = np.sin(np.linspace(0.0, 40.0, WAVE_POINTS) + t * 10.0) * level
     rhythm = {}
     if case.signal == "beat":
         # a hit every half second (120 bpm), on the frame the kick restarts
-        onsets = 1 if (t % 0.5) < DT else 0
+        onsets = 1 if (i - BEAT_FRAME) % BEAT_EVERY == 0 and i >= BEAT_FRAME else 0
         onset_seq += onsets
-        beat = int(t / 0.5) % 4
+        beat = beats_in % 4
         chroma = np.asarray(b[:24], dtype=np.float32).reshape(12, 2).mean(axis=1)
         rhythm = dict(
             onset_seq=onset_seq,
@@ -110,11 +124,11 @@ def _ctx(case: Case, i: int, palette: Palette, state: dict, onset_seq: int) -> t
             onset_strength=0.8,
             flux=float(b[0]),
             tempo_bpm=120.0,
-            beat_phase=(t % 0.5) / 0.5,
+            beat_phase=since / (BEAT_EVERY * DT),
             # the 0.6.0 analysis: a backbeat in a known bar, in a known key
             drums=({"kick": 0.9, "snare": 0.0, "hat": 0.2} if beat % 2 == 0
                    else {"kick": 0.0, "snare": 0.85, "hat": 0.3}),
-            bar_phase=((t % 2.0) / 2.0),
+            bar_phase=((beat + since / (BEAT_EVERY * DT)) / 4.0) % 1.0,
             beat_in_bar=beat,
             bar_confidence=0.8,
             chroma=chroma / max(float(chroma.max()), 1e-6),
