@@ -53,6 +53,13 @@ from .warm import ModeWarmer
 #: ticks. cliamp caps Lua plugins at 10 ms for the same reason.
 SLOW_MODE_MS = 11.0
 
+#: The rate the widget idles at, and how long the music has to have been silent
+#: with nothing on screen changing before it does. See ``_pace_idle``. Fifteen
+#: rather than lower, so the first hit after a silence reaches the screen within
+#: a sixty-seventh of a second of the next tick.
+IDLE_FPS = 15
+IDLE_AFTER_S = 1.0
+
 #: How long an animated theme's colour loop takes to turn once, in seconds.
 #: Expressed as a duration rather than a rate tied to RAMP_STEPS, so raising
 #: the ramp's resolution for a smoother gradient doesn't also speed up the
@@ -139,6 +146,12 @@ class AudioVisualizer(Widget):
         self._stereo_r_blend = Trace(tau=GLIDE_BLEND_TAU)
         #: The beat counter as glide last saw it, and when the punch-through
         #: it started runs out. See :data:`GLIDE_PUNCH_S`.
+        #: Idle pacing: whether the last direct frame wrote nothing, since when
+        #: the widget has been silent and still, and the rate it idled from
+        #: (None while not idling). See ``_pace_idle``.
+        self._painted_nothing = False
+        self._still_since: float | None = None
+        self._idle_from: int | None = None
         self._glide_accent_seq = 0
         self._punch_until = -1.0
 
@@ -818,6 +831,11 @@ class AudioVisualizer(Widget):
         # Bands first, then the clock: retiming is the part that needs a
         # running app, so doing it last means the band count still follows
         # when the panel is built without one.
+        if self._idle_from is not None:
+            # Eco decides from the rate the widget really runs at, not the
+            # idle one it is sitting at for the moment.
+            self._fps, self._idle_from = self._idle_from, None
+            self._still_since = None
         if self.eco_active():
             if self.settings.bands > ECO_BANDS:
                 self._eco_bands_were = self.settings.bands
@@ -846,6 +864,10 @@ class AudioVisualizer(Widget):
         if requested:
             self._target_fps = resolved
             self.settings.fps = int(fps)
+            # A rate someone asked for wins over the one idling would have
+            # gone back to.
+            self._idle_from = None
+            self._still_since = None
         if self._timer is not None and resolved == self._fps:
             return
         fps = self._fps = resolved
@@ -917,10 +939,12 @@ class AudioVisualizer(Widget):
             size = self.size
             self._warm_window(size.width, size.height)
 
+        self._pace_idle(frame, now)
+
         # Pacing is safe to adapt now that the physics is expressed in seconds —
         # changing fps no longer changes how the animation feels, only how
         # finely it is sampled. That was not true before.
-        if self._frame % 45 == 0 and self._build_ms is not None:
+        if self._idle_from is None and self._frame % 45 == 0 and self._build_ms is not None:
             budget = 1000.0 / self._fps * 0.5
             if self._build_ms > budget and self._fps > 30:
                 # 6 rather than 10: with a coarse step the pacer can only ever
@@ -942,6 +966,37 @@ class AudioVisualizer(Widget):
             return
 
         self._paint()
+
+    def _pace_idle(self, frame, now: float) -> None:
+        """Slow down while nothing is playing and nothing is moving.
+
+        People leave spektr open. In silence most modes settle into a still
+        picture, and the widget went on drawing it sixty times a second -- a
+        mode, a picture, a diff -- to write nothing at all. Once the gate has
+        been shut *and* the painter has written nothing for :data:`IDLE_AFTER_S`,
+        the timer drops to :data:`IDLE_FPS`. The first sound, or anything
+        changing on screen (a mode that animates in silence, a switch, a theme)
+        puts the rate back exactly where it was.
+
+        Only while painting directly, because only then is "wrote nothing"
+        known; under Textual, with a panel up, the rate is left alone.
+        """
+        still = bool(getattr(frame, "silent", False)) and self._painted_nothing \
+            and self._painting_directly()
+        if self._idle_from is not None:
+            if not still:
+                fps, self._idle_from = self._idle_from, None
+                self._still_since = None
+                self._retime(fps)
+            return
+        if not still:
+            self._still_since = None
+            return
+        if self._still_since is None:
+            self._still_since = now
+        elif now - self._still_since >= IDLE_AFTER_S and self._fps > IDLE_FPS:
+            self._idle_from = self._fps
+            self._retime(IDLE_FPS)
 
     # ── painting ─────────────────────────────────────────────────────────────
 
@@ -1256,6 +1311,7 @@ class AudioVisualizer(Widget):
             self._invalidate()
             self.refresh()
         if not direct:
+            self._painted_nothing = False
             self._invalidate()
             self.refresh()
             return
@@ -1263,6 +1319,7 @@ class AudioVisualizer(Widget):
         codes, cidx, bidx, clear = self._picture()
         frame = self._screen.frame(codes, cidx, bidx, self.palette, clear)
         self._note_build(started)
+        self._painted_nothing = not frame
         if not frame:
             return
         app = self.app
