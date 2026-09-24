@@ -317,21 +317,29 @@ def _locket_geo(dr: int, dc: int) -> dict:
 
 
 
+def _band_table(ctx: Ctx, nt: int, bands: int = 8) -> np.ndarray:
+    """The spectrum as a table over the heart's angle, ``nt`` entries long.
+
+    Read through ``_locket_geo``'s ``aidx``: entry 0 is the heart's point and
+    the table climbs each side symmetrically, so a band is mirrored left and
+    right. Cosine-blended between neighbouring bands, the same easing the
+    shared ``_angular_bands`` helper uses, so there are no visible band steps.
+    """
+    lv = resample_bands(ctx.bands, bands).astype(np.float32)
+    top = bands - 1
+    tpos = np.linspace(0.0, float(top), nt, dtype=np.float32)
+    t0 = tpos.astype(np.int32)
+    t1 = np.minimum(t0 + 1, top)
+    tf = tpos - t0
+    tf = (np.float32(1.0) - np.cos(tf * np.float32(math.pi))) * np.float32(0.5)
+    return lv[t0] * (np.float32(1.0) - tf) + lv[t1] * tf
+
+
 def _locket_rim(ctx: Ctx, _g: dict, core: float, beat: float) -> np.ndarray:
     """The resting heart's outline, swelling where its band is loud. See
     :func:`locket` for why the spectrum is read around the rim."""
     sfield = _g["scale"]
-    nt = _g["nt"]
-    lv = resample_bands(ctx.bands, 8).astype(np.float32)
-    # Cosine-blended between neighbouring bands, the same easing the shared
-    # _angular_bands helper uses, so the rim has no visible band steps. Built
-    # over 256 entries, not over the grid.
-    tpos = np.linspace(0.0, 7.0, nt, dtype=np.float32)
-    t0 = tpos.astype(np.int32)
-    t1 = np.minimum(t0 + 1, 7)
-    tf = tpos - t0
-    tf = (np.float32(1.0) - np.cos(tf * np.float32(math.pi))) * np.float32(0.5)
-    band_t = lv[t0] * (np.float32(1.0) - tf) + lv[t1] * tf
+    band_t = _band_table(ctx, _g["nt"])
 
     # Radius and thickness both follow it, so a loud band pushes its part of
     # the outline outward as well as lighting it.
@@ -647,13 +655,32 @@ _SHOT_LIFE_S = 1.1
 #: edge, so rings in flight together stay separate rings.
 _SHOT_WIDTH = 0.024
 
+#: How far a loud band pushes its part of a ring outward, as a share of the
+#: ring's radius at full level, and how many bands go round it. Mirrored left
+#: and right like the heart's rim, so sixteen bands make sixteen bulges a side.
+_BAR_REACH = 0.6
+_RING_BANDS = 16
+
+#: Angle bins in the rings' table: two to a band. Enough for a swell to read
+#: as a bulge, and small enough -- 32 by 1024 -- that the one gather every dot
+#: makes into it stays in cache.
+_ANGLE_BINS = 32
+
+#: Where a ring's flight ends, on the heart-scale: just past the edge of the
+#: frame. Measured, and the same at every size because the scale is
+#: normalised: the frame's border runs from 0.95 to 2.02 with a median of
+#: 1.22. The flight used to end at 2.02, the far corner, so a ring reached the
+#: edge a quarter of the way through its life, left in a flash, and spent the
+#: rest as arcs in the corners -- which is what read as too fast, and as a gap.
+_RING_END = 1.3
+
 #: A hit this close to a beat, as a share of the beat, is that beat's hit: it
 #: sets how the beat's ring is drawn rather than throwing one of its own.
 _ON_BEAT = 0.2
 
 
 @mode("Locket Beat", group="fields", after="Locket",
-      blurb="the locket heart, sending a ring out on every beat, weighted by the hit that made it")
+      blurb="the locket heart, sending a ring out on every beat that swells with the music like a ring of bars")
 def locket_beat(ctx: Ctx):
     """``Locket`` sending rings out in time with the music.
 
@@ -741,6 +768,28 @@ def locket_beat(ctx: Ctx):
 
     glow = _locket_rim(ctx, _g, core, st["beat"])
     sc_at = _g["sc_at"]
+    # How bright the rings are right now, from how loud the music is right
+    # now: like a bar, a ring answers the level every frame, not only the hit
+    # it was born on.
+    live = min(1.0, 0.5 + 1.3 * float(ctx.energy))
+
+    # The rings are a bar graph wrapped round the heart: each bulges outward
+    # where its band is loud and lies in where it is quiet, and moves with the
+    # level every frame the way ``Bars`` does. Resolved on a table of angle by
+    # radius -- the rings are drawn into angle bins, each bin reading its
+    # radius through its band's swell, and every dot reads its cell with one
+    # gather. Bending the whole dot grid by the spectrum instead cost 6 ms a
+    # frame at 400x100.
+    nsc = _g["nsc"]
+    lay = ctx.scratch("locket_beat_geo", lambda: {
+        "flat": ((_g["aidx"].astype(np.int32) * _ANGLE_BINS // _g["nt"]) * nsc
+                 + _g["sidx"].astype(np.int32)),
+    })
+    swell = (np.float32(1.0) + np.float32(_BAR_REACH)
+             * _band_table(ctx, _ANGLE_BINS, _RING_BANDS))[:, None]
+    # at each angle, the radius a dot at each table radius stands for once the
+    # swell is taken out: a loud band's ring lies further out
+    at = sc_at[None, :] / swell
     lut = None
     for i in range(_SHOT_RINGS):
         age = ctx.t - st["born"][i]
@@ -751,13 +800,13 @@ def locket_beat(ctx: Ctx):
         # From the outline it was born on to the edge of the frame, on a gentle
         # ease: it leaves the heart briskly and slows a little as it goes.
         start = float(st["r0"][i])
-        sc = start + (_g["rmax"] - start) * (1.0 - (1.0 - u) ** 2.0)
+        sc = start + (_RING_END - start) * (1.0 - (1.0 - u) ** 2.0)
         width = _SHOT_WIDTH * float(st["wide"][i]) * (1.0 + 0.5 * u)
-        a = float(st["amp"][i]) * (1.0 - u) * min(1.0, age / 0.04)
-        d = np.abs(sc_at - np.float32(sc)) / np.float32(width)
+        a = float(st["amp"][i]) * (1.0 - u) * min(1.0, age / 0.04) * live
+        d = np.abs(at - np.float32(sc)) / np.float32(width)
         ring = np.where(d < 1.0, np.float32(a) * (np.float32(1.0) - d * d * d),
                         np.float32(0.0))
         lut = ring if lut is None else np.maximum(lut, ring)
     if lut is not None:
-        np.maximum(glow, lut[_g["sidx"]].astype(np.float32), out=glow)
+        np.maximum(glow, lut.ravel()[lay["flat"]], out=glow)
     return _locket_out(ctx, glow)

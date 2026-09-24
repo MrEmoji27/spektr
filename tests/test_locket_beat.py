@@ -26,7 +26,7 @@ def frame(state, t, onsets=0, level=0.3, **kw):
     return M.get("Locket Beat").fn(ctx)
 
 
-def ring_dots(codes, state) -> int:
+def ring_dots(codes, state, beyond: float = 0.45) -> int:
     """Lit dots well outside the resting heart: rings, and only rings."""
     geo = next(v for k, v in state.items() if k[0] == "locket_geo")
     dots = np.zeros((H * 4, W * 2), dtype=bool)
@@ -36,7 +36,7 @@ def ring_dots(codes, state) -> int:
               (1, 1, 0x10), (2, 1, 0x20), (3, 0, 0x40), (3, 1, 0x80))
     for r, c, bit in layout:
         dots[r::4, c::2] = (bits & bit) != 0
-    return int((dots & (geo["scale"] > 0.45)).sum())
+    return int((dots & (geo["scale"] > beyond)).sum())
 
 
 def test_a_beat_throws_a_ring():
@@ -174,3 +174,35 @@ def test_the_rings_land_on_the_beats_of_real_audio(monkeypatch):
     assert len(births) >= truth.size - 3, f"{len(births)} rings for {truth.size} beats"
     locked = np.abs(np.array(lags[len(lags) // 3:]))
     assert locked.max() < 0.035, f"rings up to {locked.max() * 1000:.0f} ms off the beat"
+
+
+def test_a_ring_swells_where_its_band_is_loud():
+    """The rings are a bar graph wrapped round the heart: a loud band pushes
+    its part of every ring outward, like a bar standing taller."""
+    from spektr.modes.field_hearts import _band_table
+
+    def reach(bands) -> float:
+        st: dict = {}
+        for i in range(int(0.75 / DT)):
+            b = np.array(bands)
+            ctx_kw = dict(tempo_bpm=120.0, beat_phase=(i * DT * 2.0) % 1.0)
+            codes, _ = M.get("Locket Beat").fn(Ctx(
+                w=W, h=H, bands=b, peaks=b, bands_l=b, bands_r=b,
+                wave=np.zeros(512), stereo=np.zeros((512, 2)), frame=i,
+                t=i * DT, dt=DT, energy=float(b.mean()), silent=False,
+                palette=PAL, state=st, **ctx_kw))
+        # a plain ring is at about 0.7 of the heart-scale a quarter of the
+        # way through its flight; a swelled one reaches past 0.9
+        return ring_dots(codes, st, beyond=0.9)
+
+    quiet = [0.1] * N_BANDS
+    loud = [0.9] * N_BANDS
+    # a louder spectrum pushes the same rings further out: more of them lies
+    # outside the heart, at larger radii
+    assert reach(loud) > reach(quiet) + 20
+    table = _band_table(Ctx(w=W, h=H, bands=np.linspace(0.0, 1.0, N_BANDS),
+                            peaks=np.zeros(N_BANDS), bands_l=np.zeros(N_BANDS),
+                            bands_r=np.zeros(N_BANDS), wave=np.zeros(512),
+                            stereo=np.zeros((512, 2)), frame=0, t=0.0, dt=DT,
+                            energy=0.5, silent=False, palette=PAL), 32, 16)
+    assert table[-1] > table[0], "the swell does not follow the bands round the ring"
