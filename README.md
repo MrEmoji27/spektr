@@ -119,7 +119,7 @@ filter. They are listed here in the order the picker cycles them.
 | **Sonar** | one sweep, not the whole spectrum, returns fade like a scope | **Locket** | an outlined heart, pulsing rings of hearts outward on the beat |
 | **Orbit** | bodies on real elliptical orbits; loud bands swing out | **Shooting Star** | a night sky, with meteors thrown from a drifting radiant on the beat |
 | **Constellations** | beats draw lines between fixed stars; the figures fade like film | **Star Trails** | a long exposure: the sky turns and leaves its arcs behind |
-| **Supernova** | a mostly dark sky, waiting for the one hit worth a catastrophe | **Locket Beat** | the locket heart, shooting a ring with every hit, shaped by the drum that made it |
+| **Supernova** | a mostly dark sky, waiting for the one hit worth a catastrophe | **Locket Beat** | the locket heart, sending a ring out on every beat, weighted by the hit that made it |
 | **Swell** | an open sea, bass drives the swell, hits land ripples | | |
 | **Fireworks** | beat-triggered launches, bursts, and fall | **Maelstrom** | a real fluid sim, stirred by the music |
 | **Dune** | sand piles up by band, avalanching past a threshold | **Vinyl** | a record whose grooves light up as a radial spectrum |
