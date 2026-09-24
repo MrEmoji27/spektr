@@ -242,6 +242,131 @@ def valentine_fine(ctx: Ctx):
 _LOCKET_RINGS = 12
 
 
+def _locket_geo(dr: int, dc: int) -> dict:
+    """Locket's grid, built once per size. See :func:`locket`."""
+    cx, cy = (dc - 1) / 2.0, (dr - 1) / 2.0
+    x = (np.arange(dc, dtype=np.float64) - cx) / max(cx, 1.0)
+    y = (cy - np.arange(dr, dtype=np.float64)) / max(cy, 1.0)
+    gx, gy = x[None, :], y[:, None]
+    ang = np.arctan2(gy, gx)
+    rad = np.sqrt(gx * gx + gy * gy)
+
+    na = 1024
+    th = np.linspace(-math.pi, math.pi, na, endpoint=False)
+    rs = np.linspace(0.02, 1.60, 320)[:, None]
+    u = (rs * np.cos(th)[None, :]) / 0.92
+    v = (rs * np.sin(th)[None, :]) / 0.92 * 1.18 + 0.06
+    q = u * u + v * v - 1.0
+    ins = (q * q * q - u * u * v * v * v) <= 0.0
+    idx = ins.shape[0] - 1 - np.argmax(ins[::-1], axis=0)
+    r_h = np.where(ins.any(axis=0), rs[:, 0][idx], 0.02)
+    ai = ((ang + math.pi) / (2 * math.pi) * na).astype(np.int32) % na
+    # Turn: 0..1 once around, measured from straight down so band 0 sits
+    # at the heart's point and the spectrum climbs each side symmetrically
+    # rather than splitting across an arbitrary seam.
+    turn = ((ang + math.pi * 0.5) / (2 * math.pi)) % 1.0
+    # The band lookup for the rim is a pure function of position, so the
+    # index pair and the blend weight are constants for this grid. Only
+    # the two gathers below survive into the frame path; computing the
+    # fold, the indices and a cosine over the whole dot grid every frame
+    # cost 11.7 ms at 400x100 against 3.2 ms for the rest of the mode.
+    # One index per dot into a small angular table, rather than a pair of
+    # band indices and a blend weight. The rim's radius and thickness are
+    # functions of angle alone, so they can be built as a 256-entry table
+    # each frame -- 256 elements of arithmetic -- and read with a single
+    # gather. Two full-grid gathers plus a multiply-add per dot cost
+    # 10.4 ms at 400x100; one gather is most of that back.
+    nt = 256
+    # Distance from the *point*, so band 0 lands on the heart's tip as the
+    # note above says. Measured from the cleft instead — which is what
+    # ``abs(turn * 2 - 1)`` gives — the bass sits on the notch at the top,
+    # and the bass is both the loudest band and the one that swings most.
+    # The notch is the only feature that makes the silhouette read as a
+    # heart rather than as a blob, so it is the last part of the outline
+    # that should be pushed around.
+    fold = 1.0 - np.abs(turn * 2.0 - 1.0)
+    aidx = np.clip((fold * (nt - 1)).astype(np.int32), 0, nt - 1)
+    scale = (rad / np.maximum(r_h[ai], 1e-3)).astype(np.float32)
+    # The widest heart the grid can still show any part of. A pulse past
+    # it cannot light a single dot, so it is finished — see the retirement
+    # below. Measured rather than guessed: the coordinates are normalised,
+    # so this is 2.024 at every terminal size.
+    rmax = float(scale.max())
+
+    # Every pulse is a function of ``scale`` alone — a band around one
+    # value of it — so the whole set of them can be answered by a table
+    # over ``scale`` and one gather, exactly as the rim is answered by a
+    # table over angle. Without this, a soft-edged ring costs four passes
+    # over the dot grid *per pulse* and twelve can be in flight: 13 ms of
+    # build at 400x100 against 2 ms for a table 1024 long.
+    #
+    # 1024 buckets puts 7 to 35 of them across a ring, whose width runs
+    # 0.014 to 0.069 of the same scale — fine enough that the falloff
+    # arrives graded rather than stepped.
+    # int16, not int32: the index only has to reach 1023, and the gather
+    # below is a random read over 320k dots, where halving the index
+    # traffic is worth more than the cast costs once per size.
+    nsc = 1024
+    sidx = np.clip((scale * np.float32((nsc - 1) / max(rmax, 1e-6))
+                    ).astype(np.int32), 0, nsc - 1).astype(np.int16)
+    sc_at = np.linspace(0.0, rmax, nsc, dtype=np.float32)
+
+    return {"scale": scale, "aidx": aidx, "nt": nt, "rmax": rmax,
+            "sidx": sidx, "sc_at": sc_at, "nsc": nsc}
+
+
+
+def _locket_rim(ctx: Ctx, _g: dict, core: float, beat: float) -> np.ndarray:
+    """The resting heart's outline, swelling where its band is loud. See
+    :func:`locket` for why the spectrum is read around the rim."""
+    sfield = _g["scale"]
+    nt = _g["nt"]
+    lv = resample_bands(ctx.bands, 8).astype(np.float32)
+    # Cosine-blended between neighbouring bands, the same easing the shared
+    # _angular_bands helper uses, so the rim has no visible band steps. Built
+    # over 256 entries, not over the grid.
+    tpos = np.linspace(0.0, 7.0, nt, dtype=np.float32)
+    t0 = tpos.astype(np.int32)
+    t1 = np.minimum(t0 + 1, 7)
+    tf = tpos - t0
+    tf = (np.float32(1.0) - np.cos(tf * np.float32(math.pi))) * np.float32(0.5)
+    band_t = lv[t0] * (np.float32(1.0) - tf) + lv[t1] * tf
+
+    # Radius and thickness both follow it, so a loud band pushes its part of
+    # the outline outward as well as lighting it.
+    rim_r_t = np.float32(core) * (np.float32(0.94) + np.float32(0.16) * band_t)
+    rim_w_t = np.float32(0.020 + 0.018 * beat) + np.float32(0.016) * band_t
+    val_t = (np.float32(0.45) + np.float32(0.30) * band_t
+             + np.float32(0.25) * beat).astype(np.float32)
+    ai = _g["aidx"]
+    rim = np.abs(sfield - rim_r_t[ai]) < rim_w_t[ai]
+    # No astype here. ``val_t`` is float32 and a float32 times a bool is
+    # float32, so the cast was a second full-size copy of the dot grid that
+    # changed nothing — 320k floats a frame at 400x100.
+    glow = val_t[ai] * rim
+    return glow
+
+
+def _locket_out(ctx: Ctx, glow: np.ndarray):
+    """Dots and colours for a heart field. See :func:`locket`."""
+    lit = glow > np.float32(0.10)
+    codes = pack_braille(lit)
+
+    # Graded values are what the soft edge is for, but the two-colour strip
+    # builder pays per colour boundary and a continuous falloff hands it one
+    # per cell: strips went from 0.8 ms to 4.2 ms at 400x100 when the rings
+    # stopped being flat. Rounding to twelve levels — done on the *cell* grid,
+    # which is an eighth the size of the dot grid — gives most of that back and
+    # is not visible: twelve steps across a ring three to eight cells wide is
+    # finer than the ramp itself resolves.
+    cm = np.clip(cell_max(glow), 0.0, 1.0)
+    np.multiply(cm, np.float32(10.0), out=cm)
+    np.round(cm, 0, out=cm)
+    np.multiply(cm, np.float32(1.0 / 10.0), out=cm)
+    idx = ctx.ramp(cm)
+    return codes, idx
+
+
 @mode("Locket", group="fields", blurb="an outlined heart, pulsing rings of hearts outward on the beat")
 def locket(ctx: Ctx):
     """Nothing but hearts.
@@ -323,79 +448,7 @@ def locket(ctx: Ctx):
     if dr < 12 or dc < 16:
         return empty(ctx.w, ctx.h)
 
-    def geo():
-        cx, cy = (dc - 1) / 2.0, (dr - 1) / 2.0
-        x = (np.arange(dc, dtype=np.float64) - cx) / max(cx, 1.0)
-        y = (cy - np.arange(dr, dtype=np.float64)) / max(cy, 1.0)
-        gx, gy = x[None, :], y[:, None]
-        ang = np.arctan2(gy, gx)
-        rad = np.sqrt(gx * gx + gy * gy)
-
-        na = 1024
-        th = np.linspace(-math.pi, math.pi, na, endpoint=False)
-        rs = np.linspace(0.02, 1.60, 320)[:, None]
-        u = (rs * np.cos(th)[None, :]) / 0.92
-        v = (rs * np.sin(th)[None, :]) / 0.92 * 1.18 + 0.06
-        q = u * u + v * v - 1.0
-        ins = (q * q * q - u * u * v * v * v) <= 0.0
-        idx = ins.shape[0] - 1 - np.argmax(ins[::-1], axis=0)
-        r_h = np.where(ins.any(axis=0), rs[:, 0][idx], 0.02)
-        ai = ((ang + math.pi) / (2 * math.pi) * na).astype(np.int32) % na
-        # Turn: 0..1 once around, measured from straight down so band 0 sits
-        # at the heart's point and the spectrum climbs each side symmetrically
-        # rather than splitting across an arbitrary seam.
-        turn = ((ang + math.pi * 0.5) / (2 * math.pi)) % 1.0
-        # The band lookup for the rim is a pure function of position, so the
-        # index pair and the blend weight are constants for this grid. Only
-        # the two gathers below survive into the frame path; computing the
-        # fold, the indices and a cosine over the whole dot grid every frame
-        # cost 11.7 ms at 400x100 against 3.2 ms for the rest of the mode.
-        # One index per dot into a small angular table, rather than a pair of
-        # band indices and a blend weight. The rim's radius and thickness are
-        # functions of angle alone, so they can be built as a 256-entry table
-        # each frame -- 256 elements of arithmetic -- and read with a single
-        # gather. Two full-grid gathers plus a multiply-add per dot cost
-        # 10.4 ms at 400x100; one gather is most of that back.
-        nt = 256
-        # Distance from the *point*, so band 0 lands on the heart's tip as the
-        # note above says. Measured from the cleft instead — which is what
-        # ``abs(turn * 2 - 1)`` gives — the bass sits on the notch at the top,
-        # and the bass is both the loudest band and the one that swings most.
-        # The notch is the only feature that makes the silhouette read as a
-        # heart rather than as a blob, so it is the last part of the outline
-        # that should be pushed around.
-        fold = 1.0 - np.abs(turn * 2.0 - 1.0)
-        aidx = np.clip((fold * (nt - 1)).astype(np.int32), 0, nt - 1)
-        scale = (rad / np.maximum(r_h[ai], 1e-3)).astype(np.float32)
-        # The widest heart the grid can still show any part of. A pulse past
-        # it cannot light a single dot, so it is finished — see the retirement
-        # below. Measured rather than guessed: the coordinates are normalised,
-        # so this is 2.024 at every terminal size.
-        rmax = float(scale.max())
-
-        # Every pulse is a function of ``scale`` alone — a band around one
-        # value of it — so the whole set of them can be answered by a table
-        # over ``scale`` and one gather, exactly as the rim is answered by a
-        # table over angle. Without this, a soft-edged ring costs four passes
-        # over the dot grid *per pulse* and twelve can be in flight: 13 ms of
-        # build at 400x100 against 2 ms for a table 1024 long.
-        #
-        # 1024 buckets puts 7 to 35 of them across a ring, whose width runs
-        # 0.014 to 0.069 of the same scale — fine enough that the falloff
-        # arrives graded rather than stepped.
-        # int16, not int32: the index only has to reach 1023, and the gather
-        # below is a random read over 320k dots, where halving the index
-        # traffic is worth more than the cast costs once per size.
-        nsc = 1024
-        sidx = np.clip((scale * np.float32((nsc - 1) / max(rmax, 1e-6))
-                        ).astype(np.int32), 0, nsc - 1).astype(np.int16)
-        sc_at = np.linspace(0.0, rmax, nsc, dtype=np.float32)
-
-        return {"scale": scale, "aidx": aidx, "nt": nt, "rmax": rmax,
-                "sidx": sidx, "sc_at": sc_at, "nsc": nsc}
-
-    _g = ctx.scratch("locket_geo", geo)
-    sfield = _g["scale"]
+    _g = ctx.scratch("locket_geo", lambda: _locket_geo(dr, dc))
 
     st = ctx.scratch("locket", lambda: {
         "z": np.zeros(_LOCKET_RINGS, dtype=np.float32),
@@ -438,30 +491,7 @@ def locket(ctx: Ctx):
     # the rim swells and brightens where its band is loud. Mirrored rather
     # than wrapped because the heart is symmetric and a seam running up one
     # side would be the only asymmetric thing on screen.
-    nt = _g["nt"]
-    lv = resample_bands(ctx.bands, 8).astype(np.float32)
-    # Cosine-blended between neighbouring bands, the same easing the shared
-    # _angular_bands helper uses, so the rim has no visible band steps. Built
-    # over 256 entries, not over the grid.
-    tpos = np.linspace(0.0, 7.0, nt, dtype=np.float32)
-    t0 = tpos.astype(np.int32)
-    t1 = np.minimum(t0 + 1, 7)
-    tf = tpos - t0
-    tf = (np.float32(1.0) - np.cos(tf * np.float32(math.pi))) * np.float32(0.5)
-    band_t = lv[t0] * (np.float32(1.0) - tf) + lv[t1] * tf
-
-    # Radius and thickness both follow it, so a loud band pushes its part of
-    # the outline outward as well as lighting it.
-    rim_r_t = np.float32(core) * (np.float32(0.94) + np.float32(0.16) * band_t)
-    rim_w_t = np.float32(0.020 + 0.018 * st["beat"]) + np.float32(0.016) * band_t
-    val_t = (np.float32(0.45) + np.float32(0.30) * band_t
-             + np.float32(0.25) * st["beat"]).astype(np.float32)
-    ai = _g["aidx"]
-    rim = np.abs(sfield - rim_r_t[ai]) < rim_w_t[ai]
-    # No astype here. ``val_t`` is float32 and a float32 times a bool is
-    # float32, so the cast was a second full-size copy of the dot grid that
-    # changed nothing — 320k floats a frame at 400x100.
-    glow = val_t[ai] * rim
+    glow = _locket_rim(ctx, _g, core, st["beat"])
 
     # No interior fill, and that is a decision rather than an omission. A
     # flat wash was tried and turned the heart into a silhouette; a sparse
@@ -583,22 +613,7 @@ def locket(ctx: Ctx):
         # allocation it avoids.
         np.maximum(glow, lut[_g["sidx"]], out=glow)
 
-    lit = glow > np.float32(0.10)
-    codes = pack_braille(lit)
-
-    # Graded values are what the soft edge is for, but the two-colour strip
-    # builder pays per colour boundary and a continuous falloff hands it one
-    # per cell: strips went from 0.8 ms to 4.2 ms at 400x100 when the rings
-    # stopped being flat. Rounding to twelve levels — done on the *cell* grid,
-    # which is an eighth the size of the dot grid — gives most of that back and
-    # is not visible: twelve steps across a ring three to eight cells wide is
-    # finer than the ramp itself resolves.
-    cm = np.clip(cell_max(glow), 0.0, 1.0)
-    np.multiply(cm, np.float32(10.0), out=cm)
-    np.round(cm, 0, out=cm)
-    np.multiply(cm, np.float32(1.0 / 10.0), out=cm)
-    idx = ctx.ramp(cm)
-    return codes, idx
+    return _locket_out(ctx, glow)
 
 
 
@@ -607,3 +622,76 @@ def locket(ctx: Ctx):
 
 
 
+
+
+#: How long a Locket Beat ring takes to reach the edge when there is no tempo
+#: to take it from, in seconds: a beat at 120 BPM.
+_BEAT_RING_S = 0.5
+
+#: The range a ring's journey is held to, whatever the tempo says: fast
+#: enough to clear before the next beat at 200 BPM, slow enough to be seen at 60.
+_BEAT_RING_RANGE = (0.30, 0.85)
+
+
+@mode("Locket Beat", group="fields", after="Locket",
+      blurb="the locket heart, throwing exactly one ring on every beat")
+def locket_beat(ctx: Ctx):
+    """``Locket`` with one ring per beat and nothing else.
+
+    ``Locket`` keeps its sky full: rings live about two seconds, a free-running
+    release fills in when nothing hits, and one ring is always kept alive, so
+    at 120 BPM four are in flight and they read as a cascade. This is the other
+    reading of the same heart. A beat throws one ring; the ring crosses from
+    the outline to the edge of the frame in one beat, taken from the tempo, so
+    it is leaving as the next one arrives; and between beats nothing is
+    thrown. Silence is a resting heart.
+
+    One ring per beat also when a frame holds two onsets: two rings born on
+    the same frame are one thick ring, which is not two beats.
+
+    When the bar is known, the downbeat's ring is brighter and wider, so the
+    heart counts the bar: one strong pulse, three lighter ones.
+    """
+    dr, dc = ctx.dot_rows, ctx.dot_cols
+    if dr < 12 or dc < 16:
+        return empty(ctx.w, ctx.h)
+    _g = ctx.scratch("locket_geo", lambda: _locket_geo(dr, dc))
+    st = ctx.scratch("locket_beat", lambda: {"born": -99.0, "amp": 0.0,
+                                             "life": _BEAT_RING_S, "wide": 1.0,
+                                             "beat": 0.0})
+
+    dt = max(ctx.dt, 0.0)
+    st["beat"] *= math.exp(-dt / 0.14)
+    if ctx.onsets:
+        strength = min(1.0, float(ctx.onset_strength))
+        one = ctx.beat_in_bar == 0 and ctx.bar_confidence >= 0.4
+        st["beat"] = min(1.5, st["beat"] + 0.8 + 0.5 * strength)
+        st["born"] = ctx.t
+        st["amp"] = (0.55 + 0.45 * strength) * (1.0 if one else 0.8)
+        st["wide"] = 1.6 if one else 1.0
+        period = 60.0 / ctx.tempo_bpm if ctx.tempo_bpm > 0 else _BEAT_RING_S
+        lo, hi = _BEAT_RING_RANGE
+        # Three quarters of the beat, so the frame is clear for a moment
+        # before the next one lands and each ring reads as its own.
+        st["life"] = min(hi, max(lo, period * 0.75))
+
+    bass = ctx.range(0.0, 0.22)
+    core = float(0.22 + 0.04 * bass + 0.05 * st["beat"])
+    glow = _locket_rim(ctx, _g, core, st["beat"])
+
+    age = ctx.t - st["born"]
+    if 0.0 <= age < st["life"]:
+        u = age / st["life"]
+        # Out from just inside the outline to the edge of the frame, easing
+        # out hard: the beat launches the ring, which covers half its journey
+        # in the first fifth of the beat and slows as it goes. An even pace
+        # spread the motion over the whole beat and the hit did not show.
+        start = core * 0.80
+        sc = start + (_g["rmax"] - start) * (1.0 - (1.0 - u) ** 3)
+        width = (0.03 + 0.05 * u) * st["wide"]
+        a = st["amp"] * (1.0 - u) * min(1.0, u / 0.08)
+        sc_at = _g["sc_at"]
+        d = np.abs(sc_at - np.float32(sc)) / np.float32(width)
+        lut = np.where(d < 1.0, np.float32(a) * (1.0 - d * d), np.float32(0.0))
+        np.maximum(glow, lut[_g["sidx"]].astype(np.float32), out=glow)
+    return _locket_out(ctx, glow)
