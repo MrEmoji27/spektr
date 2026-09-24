@@ -98,17 +98,25 @@ _FALL_MAX = 512
 #: falling rather than as a line being drawn.
 _FALL_GRAVITY = 26.0
 
-#: Bulbs a second the pile loses on top of its decay, so it reaches zero
+#: Bulbs a second a Drift cap melts on top of its decay, so it reaches zero
 #: rather than approaching it.
-_PILE_DRAIN = 0.8
+_CAP_MELT = 1.5
 
-#: The deepest the pile may get, as a share of the ladder.
-_PILE_MAX = 0.34
+#: The deepest a cap may get, as a share of the ladder: a cap, not a second bar.
+_CAP_MAX = 0.12
 
-#: How long the pile at the foot takes to fade, in seconds, as a time
-#: constant. Long enough that a busy passage builds a visible floor, short
-#: enough that a quiet one clears it.
-_PILE_LIFE_S = 2.5
+#: How long a cap takes to melt, in seconds, as a time constant. Long enough
+#: to be seen riding the bar down, short enough to be gone by the next bar.
+_CAP_LIFE_S = 0.7
+
+#: JP Bars' peak LED: how long it holds at the top before it lets go, and how
+#: hard it then falls, in levels per second per second. A real meter's peak
+#: lamp holds and drops; the shared peak trace slides down at a steady rate.
+_PEAK_HOLD_S = 0.45
+_PEAK_GRAVITY = 3.0
+
+#: How long JP Pulse's beat ring stays lit, in seconds.
+_RING_FLASH_S = 0.12
 
 _DRIFT_FEED = 2.6
 
@@ -267,9 +275,27 @@ def crest_bulb(levels: np.ndarray, rows: int) -> np.ndarray:
     return (np.asarray(levels)[:, None] > thresh[None, :]).sum(axis=1).astype(np.int32) - 1
 
 
+def zone(up):
+    """Where on the ramp a bulb sits, from how far up its ladder it is (0..1).
+
+    Three zones, the way a car stereo's meter is printed: a long low stretch,
+    a middle, and a short hot top -- not a smooth gradient, which is what
+    ``Bars`` draws and what made the panel read as ``Bars`` with gaps. Each
+    zone keeps a narrow slope of its own, so the theme's ramp still shows and
+    a column's height is still readable inside a zone.
+    """
+    up = np.asarray(up, dtype=np.float32)
+    return np.select(
+        [up >= np.float32(0.8), up >= np.float32(0.55)],
+        [np.float32(0.9) + (up - np.float32(0.8)) * np.float32(0.5),
+         np.float32(0.6) + (up - np.float32(0.55)) * np.float32(0.4)],
+        np.float32(_LIT_FLOOR) + up * np.float32(0.3),
+    ).astype(np.float32)
+
+
 def ladder_colours(ctx: Ctx, rows: int) -> np.ndarray:
-    """Ramp index of each screen row of a ladder: hot at the top."""
-    return ctx.ramp(np.linspace(1.0, _LIT_FLOOR, rows))
+    """Ramp index of each screen row of a ladder: hot at the top, in zones."""
+    return ctx.ramp(zone(np.linspace(1.0, 0.0, rows)))
 
 
 def bar_panel(ctx: Ctx, rows: int, levels: np.ndarray, active: np.ndarray,
@@ -298,7 +324,7 @@ def bar_panel(ctx: Ctx, rows: int, levels: np.ndarray, active: np.ndarray,
     if heat is None:
         hot = np.repeat(ladder_colours(ctx, rows)[:, None], w, axis=1)
     else:
-        up = np.linspace(1.0, _LIT_FLOOR, rows)
+        up = zone(np.linspace(1.0, 0.0, rows))
         hot = ctx.ramp(up[:, None] * heat[None, :])
 
     # The bulbs above the level are drawn as dots rather than left blank,
@@ -345,7 +371,7 @@ def peak_bulbs(ctx: Ctx, codes, cidx, peaks: np.ndarray, levels: np.ndarray,
 
 
 @mode("JP Bars", group="jp",
-      blurb="a segmented LED meter whose bars peel off and rise as they fall away")
+      blurb="a segmented LED meter whose bars peel off and rise, with peak lamps that hold and drop")
 def jp_bars(ctx: Ctx):
     """The meter, blended with the note roll out of ``Keys``.
 
@@ -372,7 +398,6 @@ def jp_bars(ctx: Ctx):
     col_band, active = band_columns(w, n)
     lv = ctx.display_bands(n)
     levels = np.where(active, lv[col_band], 0.0)
-    peaks = np.where(active, ctx.display_peaks(n)[col_band], 0.0)
 
     nb = bulb_count(rows)
     st = ctx.scratch("jp_roll", lambda: {
@@ -380,12 +405,34 @@ def jp_bars(ctx: Ctx):
         "was": np.full(n, -1, dtype=np.int32),
         "lv": np.zeros(n, dtype=np.float32),
         "acc": 0.0,
+        "pk": np.zeros(n, dtype=np.float32),
+        "pv": np.zeros(n, dtype=np.float32),
+        "hold": np.zeros(n, dtype=np.float32),
     })
-    if st["roll"].shape != (nb, n):
+    if st["roll"].shape != (nb, n) or st["pk"].shape != (n,):
         st["roll"] = np.zeros((nb, n), dtype=np.float32)
         st["was"] = np.full(n, -1, dtype=np.int32)
         st["lv"] = np.zeros(n, dtype=np.float32)
+        st["pk"] = np.zeros(n, dtype=np.float32)
+        st["pv"] = np.zeros(n, dtype=np.float32)
+        st["hold"] = np.zeros(n, dtype=np.float32)
     roll = st["roll"]
+
+    # The peak LED: it jumps to a new high and holds there, then lets go and
+    # falls under gravity until it meets its bar again, the way the peak lamp
+    # on a real meter does -- rather than the steady slide the shared peak
+    # trace makes, which reads as a second, slower bar.
+    step = np.float32(max(ctx.dt, 0.0))
+    pk, pv, hold = st["pk"], st["pv"], st["hold"]
+    lvf = lv.astype(np.float32)
+    up = lvf >= pk
+    pk[up], pv[up], hold[up] = lvf[up], 0.0, np.float32(_PEAK_HOLD_S)
+    hold[~up] -= step
+    free = ~up & (hold <= 0.0)
+    pv[free] += np.float32(_PEAK_GRAVITY) * step
+    pk[free] -= pv[free] * step
+    np.maximum(pk, lvf, out=pk)
+    peaks = np.where(active, pk[col_band], 0.0)
 
     # Paced in seconds, not frames, like every other scroll in the app: the
     # trail must cross the ladder in the same time at 30 fps and at 144.
@@ -434,37 +481,30 @@ def jp_bars(ctx: Ctx):
 
 
 @mode("JP Drift", group="jp",
-      blurb="the meter shedding bulbs: they break off the top and fall, piling at the foot")
+      blurb="the meter shedding bulbs: they break off and fall, landing on the bars in a cap that melts")
 def jp_drift(ctx: Ctx):
     """The meter, blended with the rain out of ``Rain``.
 
-    ``JP Bars`` sheds a bar upward when the level drops. This sheds downward,
-    and keeps what it sheds: when a column falls, the bulbs it loses break off
-    and drop down the ladder under gravity, landing in a pile at the foot that
-    slowly fades. The panel is a reading at the top and a record of what has
-    already happened underneath it.
+    ``JP Bars`` sheds a bar upward when the level drops. This sheds downward:
+    when a column falls, the bulbs it loses break off and drop down the ladder
+    under gravity, and a kick knocks one off the peak marker as well, so on a
+    beat the panel rains from where the level just was.
 
-    **What breaks off.** A column's crest is compared with the crest it had
-    last frame. Every bulb between the two becomes a falling bulb, at the row
-    it was lit in, with no velocity: it starts where the bar left it. A beat
-    breaks off a little more than the drop alone would, which is what makes
-    the panel rain on the kicks rather than drizzle continuously.
+    **Where they land.** On the bar. A falling bulb comes to rest on top of its
+    column and stays there as a short cap that melts away, riding up and down
+    with the bar while it lasts. It used to land in a pile at the foot of the
+    ladder -- underneath the bar, which is where the ink already was, so the
+    one thing this mode does that no other does was hidden behind the reading.
+    On the bar it is the first thing you see: a column that has just dropped
+    wears what it lost.
 
-    **How it falls.** One acceleration for every bulb, in rows per second per
+    **How it falls.** One acceleration for every bulb, in bulbs per second per
     second, integrated through ``ctx.dt`` like everything else here, so the
-    fall looks the same at 15 fps and at 240. Nothing bounces: a bulb that
-    reaches the pile joins it.
+    fall looks the same at 15 fps and at 240. Nothing bounces.
 
-    **The pile.** Each column keeps a depth in bulbs. A landing adds one, and
-    the whole pile drains slowly and continuously, faster when it is deep, so
-    a loud passage builds a floor that recedes through a quiet one instead of
-    freezing there. The pile is drawn under the live bar and never above it,
-    so it can never be mistaken for the reading.
-
-    Why not the sandpile this used to be: it tipped past an angle of repose
-    and poured sideways into its neighbours on a beat, which is a fine idea
-    that took a paragraph to explain and, on real music, looked like a panel
-    disagreeing with itself. Bulbs falling out of a bar need no explanation.
+    **The cap.** Each column keeps a depth in bulbs. A landing adds one; the
+    whole cap melts continuously and a little faster when it is deep, and it
+    is held to a few bulbs so it reads as a cap and not as a second bar.
     """
     rows, w = ctx.h, ctx.w
     n = ctx.n_display
@@ -482,65 +522,65 @@ def jp_drift(ctx: Ctx):
         "y": np.full(_FALL_MAX, -1.0, dtype=np.float32),
         "v": np.zeros(_FALL_MAX, dtype=np.float32),
         "band": np.zeros(_FALL_MAX, dtype=np.int32),
-        "pile": np.zeros(n, dtype=np.float32),
+        "cap": np.zeros(n, dtype=np.float32),
         "was": np.full(n, -1, dtype=np.int32),
     })
-    if st["pile"].shape != (n,):
-        st["pile"] = np.zeros(n, dtype=np.float32)
+    if st["cap"].shape != (n,):
+        st["cap"] = np.zeros(n, dtype=np.float32)
         st["was"] = np.full(n, -1, dtype=np.int32)
         st["y"][:] = -1.0
 
     dt = max(ctx.dt, 0.0)
-    y, v, band, pile = st["y"], st["v"], st["band"], st["pile"]
+    y, v, band, cap = st["y"], st["v"], st["band"], st["cap"]
+    crest = np.clip(crest_bulb(lv, rows), -1, nb - 1)
 
     # ── what breaks off this frame ───────────────────────────────────────────
-    crest = np.clip(crest_bulb(lv, rows), -1, nb - 1)
+    # A falling column loses the bulbs between where it was and where it is,
+    # each starting from where it was lit.
     was = st["was"].copy()
     lost = np.maximum(was - crest, 0)
-    if ctx.onsets:
-        lost = lost + (crest >= 0)
     st["was"] = crest
-
+    starts = [was[b] - np.arange(k, dtype=np.float32) for b, k in enumerate(lost) if k]
+    cols = [np.full(k, b, dtype=np.int32) for b, k in enumerate(lost) if k]
+    if ctx.onsets:
+        # A beat knocks a bulb off the peak marker, wherever it is holding
+        # clear of its bar, so the hit rains from where the level just was.
+        peak = np.clip(crest_bulb(ctx.display_peaks(n), rows), -1, nb - 1)
+        knocked = np.flatnonzero(peak > crest + 1)
+        if knocked.size:
+            starts.append(peak[knocked].astype(np.float32))
+            cols.append(knocked.astype(np.int32))
     free = np.flatnonzero(y < 0.0)
-    if free.size and lost.any():
-        # Spawn from the top of the drop downward, so a column that lost four
-        # bulbs sheds the four it actually lost rather than four copies of one.
-        cols = np.repeat(np.arange(n, dtype=np.int32), lost)
-        offs = np.concatenate([np.arange(k, dtype=np.float32) for k in lost if k]) \
-            if lost.any() else np.zeros(0, dtype=np.float32)
-        take = min(free.size, cols.size)
+    if free.size and starts:
+        start = np.concatenate(starts)
+        col = np.concatenate(cols)
+        take = min(free.size, start.size)
         slot = free[:take]
-        # Bulb 0 is the bottom one, so a bulb falls by its index going down.
-        # It starts where the bar *was*, not where it now is, or it would be
-        # spawned already at the level it fell to and land in the same frame.
-        y[slot] = (was[cols[:take]] - offs[:take]).astype(np.float32)
+        y[slot] = start[:take]
         v[slot] = 0.0
-        band[slot] = cols[:take]
+        band[slot] = col[:take]
 
-    # ── fall ─────────────────────────────────────────────────────────────────
+    # ── fall, and land on the bar ────────────────────────────────────────────
     live = y >= 0.0
     if live.any():
         v[live] -= _FALL_GRAVITY * dt
         y[live] += v[live] * dt
-        floor = pile[band]
-        landed = live & (y <= floor)
+        top = (crest + 1).astype(np.float32) + cap
+        landed = live & (y <= top[band])
         if landed.any():
-            np.add.at(pile, band[landed], 1.0)
+            np.add.at(cap, band[landed], 1.0)
             y[landed] = -1.0
             v[landed] = 0.0
 
-    # ── the pile drains ──────────────────────────────────────────────────────
-    # Exponential decay alone never reaches zero, so a panel left in silence
-    # keeps one lit bulb per column for ever. A small absolute drain on top of
-    # it takes the last bulb away and lets the panel go properly dark.
-    pile *= np.float32(np.exp(-dt / _PILE_LIFE_S))
-    pile -= np.float32(dt * _PILE_DRAIN)
-    np.maximum(pile, 0.0, out=pile)
-    # The pile is a floor, not a second reading: capped at a third of the
-    # ladder so the live bar always has room above it. Without the cap a
-    # single loud-to-quiet drop filled every column to the top and the panel
-    # stopped saying anything at all.
-    np.minimum(pile, max(1.0, nb * _PILE_MAX), out=pile)
+    # ── the cap melts ────────────────────────────────────────────────────────
+    # Exponential decay alone never reaches zero, so a small absolute melt on
+    # top of it takes the last bulb away and lets the panel go dark in silence.
+    cap *= np.float32(np.exp(-dt / _CAP_LIFE_S))
+    cap -= np.float32(dt * _CAP_MELT)
+    np.maximum(cap, 0.0, out=cap)
+    np.minimum(cap, max(1.0, nb * _CAP_MAX), out=cap)
+    # A column with nothing lit has no bar to wear a cap.
+    cap[crest < 0] = 0.0
 
     # ── draw ─────────────────────────────────────────────────────────────────
     codes, cidx = bar_panel(ctx, rows, levels, active)
@@ -548,30 +588,34 @@ def jp_drift(ctx: Ctx):
     sub_c, sub_x = codes[rws], cidx[rws]
     ladder = ladder_colours(ctx, rows)[rws]
 
-    # the pile, from the foot upward, under the bar and only on unlit bulbs
-    depth = np.rint(pile).astype(np.int32)[col_band]
+    # the caps, riding on top of each bar, only on unlit bulbs, and a weight
+    # lighter than the bar: drawn as lit bulbs they read as the bar being
+    # taller, which is the one thing a cap is not
+    depth = np.rint(cap).astype(np.int32)[col_band]
+    base = (crest + 1)[col_band]
     kk = np.arange(nb, dtype=np.int32)[:, None]
-    piled = (kk < depth[None, :]) & active[None, :] & (sub_c == _OFF)
-    sub_c[piled] = _LED
-    sub_x[piled] = np.broadcast_to(ladder[:, None], piled.shape)[piled]
+    capped = (kk >= base[None, :]) & (kk < (base + depth)[None, :]) \
+        & active[None, :] & (sub_c == _OFF)
+    sub_c[capped] = _PEAK
+    sub_x[capped] = np.broadcast_to(ladder[:, None], capped.shape)[capped]
 
     # the bulbs still in the air
     flying = np.flatnonzero(y >= 0.0)
     if flying.size:
         rb = np.clip(np.rint(y[flying]).astype(np.int32), 0, nb - 1)
         for b, bulb in zip(band[flying], rb):
-            cols = np.flatnonzero(col_band == b)
-            if cols.size:
-                hit = sub_c[bulb, cols] == _OFF
-                sub_c[bulb, cols[hit]] = _LED
-                sub_x[bulb, cols[hit]] = ladder[bulb]
+            cols_b = np.flatnonzero(col_band == b)
+            if cols_b.size:
+                hit = sub_c[bulb, cols_b] == _OFF
+                sub_c[bulb, cols_b[hit]] = _LED
+                sub_x[bulb, cols_b[hit]] = ladder[bulb]
 
     codes[rws], cidx[rws] = sub_c, sub_x
     return codes, cidx
 
 
 @mode("JP Pulse", group="jp",
-      blurb="the meter bent into a ring — a spoke of bulbs per band, chased on the beat")
+      blurb="the meter bent into a ring, a spoke of bulbs per band, flashing and chased on the beat")
 def jp_pulse(ctx: Ctx):
     """The same ladder, once round the circle: one spoke of bulbs per band.
 
@@ -611,7 +655,10 @@ def jp_pulse(ctx: Ctx):
         "spin": 0.0,
         "born": np.full(_KW_WAVES, -99.0),
         "amp": np.zeros(_KW_WAVES),
+        "flash": -99.0,
     })
+    if ctx.onsets:
+        st["flash"] = ctx.t
     st["spin"] = (st["spin"] + (0.04 + ctx.energy * 0.09) * ctx.dt) % 1.0
 
     if ctx.onsets and (ctx.t - st["born"].max()) > 0.12:
@@ -661,8 +708,7 @@ def jp_pulse(ctx: Ctx):
             "dotted": thin & sparse,
             # hot at the outer end of the spoke, which is the ring's version
             # of the ladder being hot at the top
-            "warm": (np.float32(_LIT_FLOOR) + np.clip(s * np.float32(1.0 / segs), 0.0, 1.0)
-                     * np.float32(1.0 - _LIT_FLOOR)).astype(np.float32),
+            "warm": zone(np.clip(s * np.float32(1.0 / segs), 0.0, 1.0)),
             "idx0": (turn * np.float32(steps)).astype(np.int32) & (steps - 1),
         }
 
@@ -694,6 +740,11 @@ def jp_pulse(ctx: Ctx):
 
     bulb = geo["bulb"]
     lit = geo["ok"] & (bulb < reach)
+    # A beat lights the outermost bulb of every spoke at once, all the way
+    # round the dial, for a moment: the ring flashes on the hit while the
+    # chaser runs round after it.
+    if 0.0 <= ctx.t - st["flash"] < _RING_FLASH_S:
+        lit |= geo["ok"] & (bulb == _RING_SEGS - 1) & spoke[idx]
     peak = geo["thin"] & (bulb == pk_a[idx])
     # Unlit bulbs are a dotted centreline down each spoke, at every size. A
     # full-width dotted arc per bulb was a dot field the size of the dial, and

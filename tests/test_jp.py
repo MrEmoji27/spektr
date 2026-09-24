@@ -229,19 +229,70 @@ def test_drift_bulbs_fall_downward():
     assert centres[0] < centres[-1], f"ink rose instead of falling: {centres}"
 
 
-def test_drift_piles_at_the_foot_and_never_buries_the_bar():
-    """The pile is a floor, not a second reading."""
+def test_drift_caps_ride_on_the_bar_and_melt():
+    """What a column loses lands on top of it as a cap, a weight lighter than
+    the bar -- not in a pile at the foot, underneath the bar, where it was
+    hidden behind the reading -- and the cap melts away."""
     state: dict = {}
-    for _ in range(6):
-        _play("JP Drift", 120, 40, state, 0.0, 0.25, _steady(0.95))
-        _play("JP Drift", 120, 40, state, 0.0, 0.25, _steady(0.05))
-    # long enough that everything shed has landed: what is left is the pile
-    codes = _play("JP Drift", 120, 40, state, 0.0, 1.5, _steady(0.05))[0]
+    _play("JP Drift", 120, 40, state, 0.0, 1.0, _steady(0.95))
+    codes = _play("JP Drift", 120, 40, state, 1.0, 0.4, _steady(0.35))[0]
     rows = codes.shape[0]
-    lit = np.argwhere(codes == K._LED)
-    assert lit.size, "the panel went dark while the pile should still be there"
-    # everything sits in the lower part of the ladder
-    assert lit[:, 0].min() > rows * 0.3, "the pile grew over the whole ladder"
+    caps = np.argwhere(codes == K._PEAK)
+    assert caps.size, "nothing landed on the bars"
+    # every cap bulb sits on something: the bulb below it (two rows down, the
+    # rows between bulbs are dark) is its bar or more of its cap
+    below = [codes[r + 2, c] for r, c in caps if r + 2 < rows]
+    assert below and all(b in (K._LED, K._PEAK) for b in below), "a cap is floating"
+    assert caps[:, 0].max() < rows - 1, "a cap is lying at the foot"
+    codes = _play("JP Drift", 120, 40, state, 1.4, 3.0, _steady(0.35))[0]
+    assert not (codes == K._PEAK).any(), "the caps never melted"
+
+
+def test_jp_bars_peak_led_holds_then_falls_faster_and_faster():
+    """A real meter's peak lamp holds at the top, then drops under gravity."""
+    state: dict = {}
+    _play("JP Bars", 120, 40, state, 0.0, 0.5, _steady(0.95))
+    rows_of_peak = []
+    for f in range(40):
+        codes = _play("JP Bars", 120, 40, state, 0.5 + f * DT, DT, _steady(0.05))[0]
+        peaks = np.argwhere(codes == K._PEAK)
+        rows_of_peak.append(int(peaks[:, 0].min()) if peaks.size else None)
+    held = [r for r in rows_of_peak[: int(0.3 / DT)] if r is not None]
+    assert held and len(set(held)) == 1, f"the peak did not hold: {held}"
+    moving = [r for r in rows_of_peak[int(0.5 / DT):] if r is not None]
+    steps = np.diff(moving)
+    assert len(moving) > 3 and steps.sum() > 0, "the peak never fell"
+    assert steps[-3:].mean() >= steps[:3].mean(), "the fall did not speed up"
+
+
+def test_pulse_rings_on_the_beat():
+    """A beat lights the outermost bulb of every spoke, briefly."""
+    fn = M.get("JP Pulse").fn
+    bands = np.full(N_BANDS, 0.2)
+    state: dict = {}
+
+    def outer_ring_lit(t, onsets) -> int:
+        codes = fn(_ctx(120, 40, state, t, bands, onsets=onsets))[0]
+        geo = next(v for k, v in state.items() if k[0] == "jp_dial")
+        dots = np.zeros(geo["bulb"].shape, dtype=bool)
+        bits = (codes - 0x2800).clip(0, 255)
+        for r, c, bit in ((0, 0, 1), (1, 0, 2), (2, 0, 4), (0, 1, 8),
+                          (1, 1, 16), (2, 1, 32), (3, 0, 64), (3, 1, 128)):
+            dots[r::4, c::2] = (bits & bit) != 0
+        return int((dots & geo["ok"] & (geo["bulb"] == K._RING_SEGS - 1)).sum())
+
+    outer_ring_lit(0.0, 0)
+    flash = outer_ring_lit(DT, 1)
+    after = outer_ring_lit(0.3, 0)
+    assert flash > after * 2 + 20, (flash, after)
+
+
+def test_the_ladder_is_coloured_in_zones_like_hardware():
+    """Three zones -- low, mid, top -- rather than one smooth gradient: the
+    jumps between them are far bigger than the slope inside one."""
+    steps = np.diff(K.zone(np.linspace(0.0, 1.0, 200)))
+    assert (steps > 0.05).sum() == 2
+    assert steps[steps < 0.05].max() < 0.01
 
 
 def test_drift_answers_quiet_input_without_accumulating():
