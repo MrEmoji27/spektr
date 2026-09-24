@@ -624,74 +624,88 @@ def locket(ctx: Ctx):
 
 
 
-#: How long a Locket Beat ring takes to reach the edge when there is no tempo
-#: to take it from, in seconds: a beat at 120 BPM.
-_BEAT_RING_S = 0.5
+#: Rings in flight at once. A hit with no free slot takes the oldest ring's.
+_SHOT_RINGS = 8
 
-#: The range a ring's journey is held to, whatever the tempo says: fast
-#: enough to clear before the next beat at 200 BPM, slow enough to be seen at 60.
-_BEAT_RING_RANGE = (0.30, 0.85)
+#: How each drum's ring flies: width against a plain hit, speed against a
+#: plain hit, and brightness. A kick is a thick ring that takes its time, a
+#: hat a thin one that is gone in a moment. Anything the drums cannot name
+#: (``ctx.drums`` all low) flies as a plain hit.
+_SHOT = {"kick": (1.7, 0.8, 1.0), "snare": (1.1, 1.05, 0.9), "hat": (0.6, 1.5, 0.65)}
+
+#: A plain hit's ring: seconds to the edge of the frame, and its width as a
+#: share of the heart-scale. Thin, with a crisp edge, so rings in flight
+#: together stay separate rings.
+_SHOT_LIFE_S = 0.5
+_SHOT_WIDTH = 0.022
 
 
 @mode("Locket Beat", group="fields", after="Locket",
-      blurb="the locket heart, throwing exactly one ring on every beat")
+      blurb="the locket heart, shooting a ring with every hit, shaped by the drum that made it")
 def locket_beat(ctx: Ctx):
-    """``Locket`` with one ring per beat and nothing else.
+    """``Locket`` shooting rings at the music, and only at the music.
 
-    ``Locket`` keeps its sky full: rings live about two seconds, a free-running
-    release fills in when nothing hits, and one ring is always kept alive, so
-    at 120 BPM four are in flight and they read as a cascade. This is the other
-    reading of the same heart. A beat throws one ring; the ring crosses from
-    the outline to the edge of the frame in one beat, taken from the tempo, so
-    it is leaving as the next one arrives; and between beats nothing is
-    thrown. Silence is a resting heart.
+    ``Locket`` keeps its sky full: a free-running release fills in when
+    nothing hits and one ring is always kept alive, so its rings read as a
+    cascade whatever is playing. Here every ring is a hit. A kick shoots a
+    thick ring that takes its time, a snare a lighter quicker one, a hat a
+    thin flick that is gone almost at once; a harder hit is brighter and
+    faster. Several can be in flight, so a fill is a burst of rings and a
+    sparse verse is one now and then. Nothing hits, nothing flies.
 
-    One ring per beat also when a frame holds two onsets: two rings born on
-    the same frame are one thick ring, which is not two beats.
-
-    When the bar is known, the downbeat's ring is brighter and wider, so the
-    heart counts the bar: one strong pulse, three lighter ones.
+    Each ring keeps the radius it was born at. Taking its start from the
+    heart as it is now -- which swells on every beat -- jerked every ring in
+    flight outward on the next hit, which is the mess ``Locket``'s own notes
+    warn about.
     """
     dr, dc = ctx.dot_rows, ctx.dot_cols
     if dr < 12 or dc < 16:
         return empty(ctx.w, ctx.h)
     _g = ctx.scratch("locket_geo", lambda: _locket_geo(dr, dc))
-    st = ctx.scratch("locket_beat", lambda: {"born": -99.0, "amp": 0.0,
-                                             "life": _BEAT_RING_S, "wide": 1.0,
-                                             "beat": 0.0})
+    st = ctx.scratch("locket_beat", lambda: {
+        "born": np.full(_SHOT_RINGS, -99.0), "r0": np.zeros(_SHOT_RINGS),
+        "amp": np.zeros(_SHOT_RINGS), "wide": np.ones(_SHOT_RINGS),
+        "life": np.full(_SHOT_RINGS, _SHOT_LIFE_S), "beat": 0.0,
+    })
 
     dt = max(ctx.dt, 0.0)
     st["beat"] *= math.exp(-dt / 0.14)
+    bass = ctx.range(0.0, 0.22)
     if ctx.onsets:
         strength = min(1.0, float(ctx.onset_strength))
-        one = ctx.beat_in_bar == 0 and ctx.bar_confidence >= 0.4
         st["beat"] = min(1.5, st["beat"] + 0.8 + 0.5 * strength)
-        st["born"] = ctx.t
-        st["amp"] = (0.55 + 0.45 * strength) * (1.0 if one else 0.8)
-        st["wide"] = 1.6 if one else 1.0
-        period = 60.0 / ctx.tempo_bpm if ctx.tempo_bpm > 0 else _BEAT_RING_S
-        lo, hi = _BEAT_RING_RANGE
-        # Three quarters of the beat, so the frame is clear for a moment
-        # before the next one lands and each ring reads as its own.
-        st["life"] = min(hi, max(lo, period * 0.75))
-
-    bass = ctx.range(0.0, 0.22)
     core = float(0.22 + 0.04 * bass + 0.05 * st["beat"])
-    glow = _locket_rim(ctx, _g, core, st["beat"])
 
-    age = ctx.t - st["born"]
-    if 0.0 <= age < st["life"]:
-        u = age / st["life"]
-        # Out from just inside the outline to the edge of the frame, easing
-        # out hard: the beat launches the ring, which covers half its journey
-        # in the first fifth of the beat and slows as it goes. An even pace
-        # spread the motion over the whole beat and the hit did not show.
-        start = core * 0.80
+    if ctx.onsets:
+        drums = ctx.drums or {}
+        name = max(("kick", "snare", "hat"), key=lambda k: float(drums.get(k, 0.0)))
+        wide, speed, bright = _SHOT[name] if float(drums.get(name, 0.0)) >= 0.35             else (1.0, 1.0, 0.85)
+        slot = int(np.argmin(st["born"]))
+        st["born"][slot] = ctx.t
+        st["r0"][slot] = core * 0.80
+        st["amp"][slot] = bright * (0.55 + 0.45 * strength)
+        st["wide"][slot] = wide
+        st["life"][slot] = _SHOT_LIFE_S / (speed * (0.85 + 0.3 * strength))
+
+    glow = _locket_rim(ctx, _g, core, st["beat"])
+    sc_at = _g["sc_at"]
+    lut = None
+    for i in range(_SHOT_RINGS):
+        age = ctx.t - st["born"][i]
+        life = float(st["life"][i])
+        if not (0.0 <= age < life):
+            continue
+        u = age / life
+        # Out from where it was born to the edge of the frame, easing out:
+        # launched by the hit, slowing as it goes.
+        start = float(st["r0"][i])
         sc = start + (_g["rmax"] - start) * (1.0 - (1.0 - u) ** 3)
-        width = (0.03 + 0.05 * u) * st["wide"]
-        a = st["amp"] * (1.0 - u) * min(1.0, u / 0.08)
-        sc_at = _g["sc_at"]
+        width = _SHOT_WIDTH * float(st["wide"][i]) * (1.0 + 0.6 * u)
+        a = float(st["amp"][i]) * (1.0 - u) * min(1.0, u / 0.06)
         d = np.abs(sc_at - np.float32(sc)) / np.float32(width)
-        lut = np.where(d < 1.0, np.float32(a) * (1.0 - d * d), np.float32(0.0))
+        ring = np.where(d < 1.0, np.float32(a) * (np.float32(1.0) - d * d * d),
+                        np.float32(0.0))
+        lut = ring if lut is None else np.maximum(lut, ring)
+    if lut is not None:
         np.maximum(glow, lut[_g["sidx"]].astype(np.float32), out=glow)
     return _locket_out(ctx, glow)

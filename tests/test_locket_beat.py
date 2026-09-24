@@ -1,4 +1,4 @@
-"""Locket Beat: one ring for every beat, and none for anything else."""
+"""Locket Beat: a ring shot for every hit, shaped by it, and none for anything else."""
 from __future__ import annotations
 
 import numpy as np
@@ -12,6 +12,9 @@ from spektr.render import BRAILLE_BASE
 PAL = Palette(BUILTIN["gruvbox"])
 DT = 1 / 60
 W, H = 100, 30
+
+#: Beat response on four_on_floor, measured when the rings became shots.
+RESPONSE = 2.42
 
 
 def frame(state, t, onsets=0, level=0.3, **kw):
@@ -52,13 +55,15 @@ def test_nothing_is_thrown_between_beats():
         assert ring_dots(codes, st) == 0, f"a ring with no beat, frame {i}"
 
 
-def test_the_ring_is_gone_within_the_beat():
+def test_a_ring_clears_in_its_flight_time():
+    from spektr.modes.field_hearts import _SHOT_LIFE_S
+
     st: dict = {}
-    frame(st, 0.0, onsets=1, tempo_bpm=120.0)
+    frame(st, 0.0, onsets=1)
     t = 0.0
-    for _ in range(int(0.52 / DT)):
+    for _ in range(int(_SHOT_LIFE_S * 1.25 / DT)):
         t += DT
-        codes, _ = frame(st, t, tempo_bpm=120.0)
+        codes, _ = frame(st, t)
     assert ring_dots(codes, st) == 0
 
 
@@ -71,14 +76,29 @@ def test_two_onsets_in_one_frame_are_one_ring():
     assert np.array_equal(a, b)
 
 
-def test_the_downbeat_ring_is_the_big_one():
-    counts = []
-    for beat in (0, 2):
-        st: dict = {}
-        frame(st, 0.0, onsets=1, tempo_bpm=120.0, beat_in_bar=beat, bar_confidence=0.9)
-        codes, _ = frame(st, 0.15, tempo_bpm=120.0, beat_in_bar=beat, bar_confidence=0.9)
-        counts.append(ring_dots(codes, st))
-    assert counts[0] > counts[1] * 1.2, counts
+def _ring_after(drums, secs=0.12):
+    st: dict = {}
+    frame(st, 0.0, onsets=1, drums=drums)
+    codes, _ = frame(st, secs, drums=drums)
+    return ring_dots(codes, st)
+
+
+def test_a_kick_s_ring_is_heavier_than_a_hat_s():
+    kick = _ring_after({"kick": 1.0, "snare": 0.0, "hat": 0.0})
+    hat = _ring_after({"kick": 0.0, "snare": 0.0, "hat": 1.0}, secs=0.06)
+    assert kick > hat * 1.3, (kick, hat)
+
+
+def test_several_hits_are_several_rings_in_flight():
+    one: dict = {}
+    many: dict = {}
+    for i in range(30):
+        t = i * DT
+        frame(one, t, onsets=int(i == 0))
+        a, _ = frame(one, t)
+        frame(many, t, onsets=int(i in (0, 10, 20)))
+        b, _ = frame(many, t)
+    assert ring_dots(b, many) > ring_dots(a, one) * 1.5
 
 
 def test_every_beat_shows(monkeypatch):
@@ -95,5 +115,5 @@ def test_every_beat_shows(monkeypatch):
     samples, rate, _ = SCENARIOS["four_on_floor"]()
     got = R.measure("Locket Beat", samples, rate, now)
     assert got["lost"] == 0
-    # Measured at 3.3 when it was added; Locket, with its cascade, is 1.05.
-    assert got["beat_ratio"] > 3.3 * 0.8, got
+    # Locket, with its cascade, measures 1.05 here.
+    assert got["beat_ratio"] > RESPONSE * 0.8, got

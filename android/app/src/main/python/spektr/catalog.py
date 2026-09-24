@@ -69,7 +69,7 @@ CATALOG: tuple[tuple[str, str, str, bool, str], ...] = (
     ('Valentine', 'fields', 'a heart that beats with the track, trailing smaller ones upward', False, 'field_hearts'),
     ('Valentine (o)', 'fields', 'the same heart drawn solid instead of stippled — needs a terminal that draws Unicode 16 octants', True, 'field_hearts'),
     ('Locket', 'fields', 'an outlined heart, pulsing rings of hearts outward on the beat', False, 'field_hearts'),
-    ('Locket Beat', 'fields', 'the locket heart, throwing exactly one ring on every beat', False, 'field_hearts'),
+    ('Locket Beat', 'fields', 'the locket heart, shooting a ring with every hit, shaped by the drum that made it', False, 'field_hearts'),
     ('Maelstrom', 'fields', 'a real fluid sim, stirred by the music', False, 'maelstrom'),
     ('Maelstrom (o)', 'fields', 'the same fluid as a solid field at two colours a cell — needs a terminal that draws Unicode 16 octants', True, 'maelstrom'),
     ('Vinyl', 'lofi', 'a record whose grooves light up as a radial spectrum', False, 'lofi'),
