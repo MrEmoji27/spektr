@@ -36,6 +36,7 @@ handful of whole-array operations.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 
 import numpy as np
 
@@ -170,9 +171,13 @@ ENTRANCES = {
 ENTRANCE_NAMES = ("rise", "fall", "draw", "burst", "ripple", "dive")
 
 #: How much of the handover the front takes to cross the frame. The rest of
-#: the window is each cell's own dither, which is what keeps the front soft:
-#: at 0.6 about two thirds of the frame is mid-change at the height of it.
-ENTRANCE_FRONT = 0.6
+#: the window is each cell's own dither, which is how soft the front's edge
+#: is. It was 0.6, and at the height of a morph two thirds of the frame was
+#: a speckle of old and new cells, which is what read as messy: a gesture
+#: needs an edge you can follow. At 0.85 the mixed band is about a sixth of
+#: the frame -- soft enough not to be a slideshow wipe, narrow enough to be
+#: one front moving.
+ENTRANCE_FRONT = 0.85
 
 #: How much of the morph a beat moves the front on by, per unit of ``push``.
 #: The travel already takes the beats; this lets the front take them too, so a
@@ -218,6 +223,12 @@ class Style:
     #: How the incoming picture arrives, one of :data:`ENTRANCE_NAMES`.
     #: None: the plain left-to-right sweep.
     entrance: str | None = None
+    #: Whether the two pictures are bent onto each other's shape as they
+    #: change. The widget turns it off: with the entrance's front doing the
+    #: moving, two pictures also sliding and stretching underneath it was
+    #: most of the cost of a morph and most of the mess. Off, the old picture
+    #: holds still ahead of the front and the new one is itself behind it.
+    travel: bool = True
 
 
 def ease(p):
@@ -328,18 +339,30 @@ def _order(rows: int, cols: int, entrance: str, aspect: float,
     column rises (or falls, or is drawn) ahead of a quiet one, so the front is
     shaped by the frame's own spectrum rather than being a ruled line.
     """
-    y, x = np.indices((rows, cols), dtype=np.float32)
     if entrance == "draw":
         return np.broadcast_to(_sweep(cols, levels, music)[None, :],
                                (rows, cols)).astype(np.float32)
+    base = _order_base(rows, cols, entrance, aspect)
     if entrance in ("rise", "fall"):
-        fy = y / max(1, rows - 1)
-        base = 1.0 - fy if entrance == "rise" else fy
         # How far the music moves each column's front, from the sweep's own
         # reordering of it: a loud column is ahead, a quiet one behind.
         plain = np.arange(cols, dtype=np.float32) / max(1, cols - 1)
         lead = _sweep(cols, levels, music) - plain
-        return np.clip(base * 0.8 + 0.1 + 0.2 * lead[None, :], 0.0, 1.0)
+        return np.clip(base + 0.2 * lead[None, :], 0.0, 1.0)
+    return base
+
+
+@lru_cache(maxsize=16)
+def _order_base(rows: int, cols: int, entrance: str, aspect: float) -> np.ndarray:
+    """The part of an entrance that depends on the frame's size alone.
+
+    Built once per size: at 400x100 in braille dots it was a sixth of every
+    morph frame, rebuilt sixty times a second to the same answer.
+    """
+    y, x = np.indices((rows, cols), dtype=np.float32)
+    if entrance in ("rise", "fall"):
+        fy = y / max(1, rows - 1)
+        return (1.0 - fy if entrance == "rise" else fy) * np.float32(0.8) + np.float32(0.1)
     dy = (y - (rows - 1) / 2.0) * aspect
     dx = x - (cols - 1) / 2.0
     d = np.hypot(dy, dx)
@@ -722,6 +745,38 @@ def _grow(old: tuple, new: tuple, kind_old: tuple[int, bool],
     return tuple(np.where(arrived, n, g) for g, n in zip(grown, new))
 
 
+def _reveal(old: tuple, new: tuple, kind_old: tuple[int, bool],
+            kind_new: tuple[int, bool], progress: float, push: float,
+            style: Style) -> tuple:
+    """The new picture behind the front, the old one still ahead of it.
+
+    No bending of either picture: the front is the whole of the motion. Two
+    braille frames mix dot by dot, so the front's edge is a dither of single
+    dots; anything else mixes cell by cell, in the incoming frame's kind --
+    a braille cell and a block cell are both just a glyph and a colour, and
+    ahead of the front a cell keeps whatever it was drawing.
+    """
+    if kind_old == kind_new == (2, True):
+        dots_old = _braille_dots(old[0])
+        dots_new = _braille_dots(new[0])
+        rank = _rank(*dots_new.shape)
+        arrived = rank < _arrival(progress, style, rank.shape, 1.0, push)
+        codes = pack_braille(np.where(arrived, dots_new, dots_old))
+        return codes, np.where(_dot_count(arrived) >= 4, new[1], old[1])
+    rows, cols = new[0].shape
+    rank = _rank(rows, cols)
+    cells = rank < _arrival(progress, style, rank.shape, 2.0, push)
+    if len(new) == len(old):
+        return tuple(np.where(cells, n, o) for o, n in zip(old, new))
+    codes = np.where(cells, new[0], old[0])
+    fg = np.where(cells, new[1], old[1])
+    if len(new) == 2:
+        return codes, fg
+    # The old frame had no background of its own: ahead of the front its
+    # glyphs are drawn over the background the new picture is arriving with.
+    return codes, fg, new[2]
+
+
 def _refit(frame: tuple, shape: tuple[int, int]) -> tuple:
     """An old frame resampled onto a new cell shape, after a resize.
 
@@ -838,6 +893,8 @@ def blend(old: tuple, new: tuple, progress: float,
         old = _refit(old, codes_new.shape)
 
     kind_old, kind_new = _kind(old), _kind(new)
+    if not style.travel:
+        return _reveal(old, new, kind_old, kind_new, progress, push, style)
     if kind_old != kind_new:
         return _grow(old, new, kind_old, kind_new, progress, gather, push, style)
     if kind_new == (2, True):

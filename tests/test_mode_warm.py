@@ -140,3 +140,15 @@ def test_rendering_a_mode_mid_warm_waits_rather_than_racing():
         M.MODES[idx] = m
         M._BY_NAME["Bars"] = m
         viz._warmer.stop()
+
+
+def test_the_morph_mask_is_built_before_the_first_morph():
+    """It takes a sixth of a second, and it used to be built on the first
+    frame of the first morph of a session."""
+    ran = []
+    warmer = ModeWarmer(settle=0.0)
+    done = threading.Event()
+    warmer.prime(lambda: (ran.append(threading.current_thread()), done.set()))
+    assert done.wait(5.0)
+    warmer.stop()
+    assert ran and ran[0] is not threading.main_thread()

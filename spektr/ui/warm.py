@@ -69,6 +69,10 @@ class ModeWarmer:
         self.gap = gap
         self._cv = threading.Condition()
         self._queue: list[tuple] = []
+        #: One-off jobs that are not a mode, run before any mode is: the
+        #: morph's blue-noise mask, which takes a sixth of a second to build
+        #: and used to be built on the first frame of the first morph.
+        self._tasks: list = []
         self._running: str | None = None
         self._thread: threading.Thread | None = None
         self._stopped = False
@@ -83,12 +87,24 @@ class ModeWarmer:
             if any(job[0] == name for job in self._queue):
                 return
             self._queue.append((name, state, w, h, palette))
-            if self._thread is None or not self._thread.is_alive():
-                self._thread = threading.Thread(
-                    target=self._run, name="spektr-warm", daemon=True
-                )
-                self._thread.start()
+            self._start()
             self._cv.notify_all()
+
+    def prime(self, task) -> None:
+        """Run ``task()`` on the thread, ahead of any mode waiting."""
+        with self._cv:
+            if self._stopped:
+                return
+            self._tasks.append(task)
+            self._start()
+            self._cv.notify_all()
+
+    def _start(self) -> None:
+        if self._thread is None or not self._thread.is_alive():
+            self._thread = threading.Thread(
+                target=self._run, name="spektr-warm", daemon=True
+            )
+            self._thread.start()
 
     def claim(self, name: str) -> None:
         """Make ``name`` safe to draw: drop its queued warm-up, or wait out
@@ -126,13 +142,21 @@ class ModeWarmer:
             self._cv.wait_for(lambda: self._stopped, timeout=self.settle)
         while True:
             with self._cv:
-                if not self._queue and not self._stopped:
+                if not self._queue and not self._tasks and not self._stopped:
                     self._cv.wait(IDLE_S)
-                if self._stopped or not self._queue:
+                if self._stopped or not (self._queue or self._tasks):
                     self._thread = None
                     return
-                name, state, w, h, palette = self._queue.pop(0)
-                self._running = name
+                task = self._tasks.pop(0) if self._tasks else None
+                if task is None:
+                    name, state, w, h, palette = self._queue.pop(0)
+                    self._running = name
+            if task is not None:
+                try:
+                    task()
+                except Exception:
+                    pass
+                continue
             try:
                 self._warm(name, state, w, h, palette)
             except Exception:

@@ -147,8 +147,10 @@ class AudioVisualizer(Widget):
         #: ahead of the menu order; see :meth:`_mode_window`.
         self._recent: list[str] = []
         self._upcoming: str | None = None
-        #: Draws the window's first frames off the render path.
+        #: Draws the window's first frames off the render path, and builds the
+        #: morph's mask before the first morph needs it.
         self._warmer = ModeWarmer()
+        self._warmer.prime(lambda: dissolve.bluenoise.mask(dissolve.MASK))
         self._strips: list[Strip] | None = None
         #: The picture's own cells, for the frames that are written straight to
         #: the terminal rather than composed by Textual. See :meth:`_paint`.
@@ -447,11 +449,15 @@ class AudioVisualizer(Widget):
         # particles burst out, a field ripples. See dissolve.ENTRANCES.
         incoming = mode_registry.get(self.mode_name)
         entrance = dissolve.ENTRANCES.get(incoming.group) if incoming else None
+        # One front and nothing else moving: the pictures are not bent onto
+        # each other (``travel``), which was most of a morph's cost and most
+        # of what made it read as a mess.
         return dissolve.Style(
             sweep=dissolve.SWEEP * scale,
             wavefront=dissolve.WAVEFRONT * scale,
             levels=self._spring.x,
-            entrance=entrance,
+            entrance=entrance or "draw",
+            travel=False,
         )
 
     def _start_morph(self, source: str, *, quick: bool) -> None:

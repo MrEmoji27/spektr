@@ -150,3 +150,78 @@ def test_the_morph_is_still_moving_near_its_end():
     ]
     assert not np.array_equal(frames[0], frames[1])
     assert not np.array_equal(frames[1], frames[2])
+
+
+# ── the morph the app draws: one clean front, nothing bent ───────────────────
+
+CLEAN = dict(travel=False)
+
+
+def _clean_arrived(entrance: str, progress: float) -> np.ndarray:
+    old, new = _block_pair()
+    out = dissolve.blend(old, new, progress, style=dissolve.Style(entrance=entrance, **CLEAN))
+    return out[0] == NEW_GLYPH
+
+
+@pytest.mark.parametrize("entrance", dissolve.ENTRANCE_NAMES)
+def test_the_front_is_a_narrow_band_not_a_speckle(entrance):
+    """What read as messy was two thirds of the frame mid-change at once. The
+    band of mixed cells is now a fraction of the frame at any moment."""
+    for p in (0.4, 0.55, 0.7):
+        mask = _clean_arrived(entrance, p)
+        y, x = np.indices(mask.shape)
+        order = dissolve._order(ROWS, COLS, entrance, 2.0)
+        # cells whose order is far behind or far ahead of the front are settled
+        mixed = np.zeros_like(mask)
+        for lo in np.linspace(0, 1, 21)[:-1]:
+            band = (order >= lo) & (order < lo + 0.05)
+            if band.any() and 0.05 < mask[band].mean() < 0.95:
+                mixed |= band
+        assert mixed.mean() < 0.3, (entrance, p, mixed.mean())
+
+
+def test_the_clean_front_still_goes_the_family_s_way():
+    top, bottom = _thirds(_clean_arrived("rise", MID), axis=0)
+    assert bottom > top + 0.3
+    centre, edge = _rings(_clean_arrived("burst", MID))
+    assert centre > edge + 0.3
+
+
+def test_ahead_of_the_front_the_old_picture_is_untouched():
+    old, new = _block_pair()
+    out = dissolve.blend(old, new, MID, style=dissolve.Style(entrance="rise", **CLEAN))
+    ahead = out[0] != NEW_GLYPH
+    assert (out[0][ahead] == OLD_GLYPH).all()
+    assert (out[1][ahead] == 5).all()
+
+
+def test_a_frame_with_a_background_keeps_it_under_old_glyphs():
+    """Braille (no background of its own) into a half-block field: ahead of
+    the front the old dots sit on the field's background, not on ramp 0."""
+    old = _braille_new(3)
+    codes = np.full((ROWS, COLS), ord("▀"), np.int32)
+    new = (codes, np.full((ROWS, COLS), 30, np.int32), np.full((ROWS, COLS), 12, np.int32))
+    out = dissolve.blend(old, new, MID, style=dissolve.Style(entrance="burst", **CLEAN))
+    assert len(out) == 3
+    assert (out[2] == 12).all()
+
+
+def test_the_clean_morph_costs_a_fraction_of_the_bent_one():
+    import time
+
+    rows, cols = 100, 400
+    rng = np.random.default_rng(4)
+    a = ((BRAILLE_BASE + rng.integers(0, 256, (rows, cols))).astype(np.int32),
+         np.full((rows, cols), 10, np.int32))
+    b = ((BRAILLE_BASE + rng.integers(0, 256, (rows, cols))).astype(np.int32),
+         np.full((rows, cols), 40, np.int32))
+
+    def cost(**kw):
+        style = dissolve.Style(entrance="burst", **kw)
+        dissolve.blend(a, b, 0.5, style=style)
+        t0 = time.perf_counter()
+        for p in np.linspace(0.1, 0.9, 9):
+            dissolve.blend(a, b, float(p), style=style)
+        return time.perf_counter() - t0
+
+    assert cost(travel=False) < cost(travel=True) * 0.5
