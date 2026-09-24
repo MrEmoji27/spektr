@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import atexit
+import difflib
 import sys
 
 from . import __version__, config
-from . import modes as mode_registry
 
 
 def __getattr__(name):
+    # Python itself asks modules for dunder names -- ``from .cli import main``
+    # checks for ``__path__`` -- and forwarding those imported the whole UI
+    # toolkit for ``spektr --version``.
+    if name.startswith("__"):
+        raise AttributeError(name)
     from .ui import app as shell
 
     try:
@@ -17,47 +22,140 @@ def __getattr__(name):
     except AttributeError:
         raise AttributeError(f"module 'spektr.app' has no attribute {name!r}") from None
 
-_USAGE = """spektr — terminal spectrum analyser for system audio
+
+_USAGE = """spektr: a terminal spectrum analyser for system audio
 
 usage: spektr [options]
        spektr plugins <command>
 
-  --diagnose         probe every source and report what it delivers
-                     (says which device the OS calls the default, and which
-                      endpoint spektr resolved it to — start here if flat)
-  --monitor          run the app's own capture path headlessly and show
-                     frames/level/gate/bars once a second — use when
-                     --diagnose looks fine but the display does not move
-  --devices          list every audio device and exit
-  --device <n>       force a capture device by index
-  --mode <name>      start in a given visualiser
-  --theme <name>     start with a given theme
-  --fps <n>          frame rate cap, 15-240 (default 60)
-  --fps unlimited    run at the detected display refresh rate (experimental)
-  --mic              allow the microphone as an automatic source
-  --no-plugins       skip loading plugins this run
-  --list-modes       print visualiser names and exit
-  --list-themes      print theme names and exit
-  --glyph-test       can this terminal draw the (o) subcell modes? and exit
-  --cells quadrant   draw the subcell modes as (q) — block elements only
-                     instead of Unicode 16 octants — half the resolution,
-                     works in every font. Saved, so set it once.
+start up
+  --mode <name>        start in a given mode (see --list-modes)
+  --theme <name>       start with a given theme (see --list-themes)
+  --motion <m>         snappy or glide: reactive or smooth bars
+  --morph <m>          clean or classic: how one mode changes into the next
+  --bands <n>          how many bars: 8 to 64, or 0 to fit the terminal
+  --fps <n>            frame rate cap, 15 to 240, or unlimited for the
+                       display's own refresh rate (experimental)
+  --eco <on|off>       30 fps, fewer bars, shuffle skips the heavy modes
+  --shuffle <what>     modes, themes, both, or off
+  --cells quadrant     draw the (o) modes with block elements only: half the
+                       detail, works in every font (see --glyph-test)
   --background terminal
-                     leave the visualizer's empty cells to the terminal, so
-                     its opacity or acrylic shows through; --background theme
-                     paints the theme's colour again (the default). Saved.
-  --version          print version and exit
-  -h, --help         this text
+                       leave empty cells to the terminal, so its opacity or
+                       acrylic shows through; --background theme undoes it
+
+  Everything above is saved, so set it once.
+
+audio
+  --devices            list every audio device and exit
+  --device <n>         use this device, by its number in --devices
+  --mic                allow the microphone as an automatic source
+  --diagnose           probe every source and report what it delivers: which
+                       device the system calls the default, and which one
+                       spektr chose. Start here if the picture is flat
+  --monitor            run the capture headlessly and print level, gate and
+                       bars once a second, for when --diagnose looks fine but
+                       nothing moves
+
+look it up
+  --list-modes         every mode, including the opt-in ones
+  --list-themes        every theme
+  --glyph-test         can this terminal draw the (o) modes?
+  --no-plugins         skip loading plugins this run
+  --version            print the version
+  -h, --help           this text
 
 plugin commands:
 
-  spektr plugins list            what's installed, and whether it's trusted
+  spektr plugins list            what is installed, and whether it is trusted
   spektr plugins trust <name>    review and approve a plugin's contents
   spektr plugins untrust <name>  revoke approval
   spektr plugins remove <name>   delete it from disk
-  spektr plugins doctor          why isn't mine loading?
+  spektr plugins doctor          why is mine not loading?
   spektr plugins path            print the plugins folder
 """
+
+#: Every option, and whether it takes a value. Anything else on the command
+#: line is a mistake worth saying out loud: a mistyped flag used to be ignored,
+#: and spektr started as if nothing had been asked.
+_OPTIONS = {
+    "--mode": True, "--theme": True, "--motion": True, "--morph": True,
+    "--bands": True, "--fps": True, "--eco": True, "--shuffle": True,
+    "--cells": True, "--background": True, "--device": True,
+    "--devices": False, "--mic": False, "--diagnose": False, "--monitor": False,
+    "--list-modes": False, "--list-themes": False, "--glyph-test": False,
+    "--no-plugins": False, "--version": False, "-h": False, "--help": False,
+    # for the release builds: loads every mode's code (see below)
+    "--check-modes": False,
+}
+
+
+def _fail(message: str) -> None:
+    print(f"spektr: {message}", file=sys.stderr)
+    raise SystemExit(2)
+
+
+def _suggest(word: str, choices) -> str:
+    """``   (did you mean X?)`` for the closest of ``choices``, or ``""``."""
+    lowered = {str(c).lower(): str(c) for c in choices}
+    near = difflib.get_close_matches(word.lower(), list(lowered), n=1, cutoff=0.6)
+    return f"   (did you mean {lowered[near[0]]}?)" if near else ""
+
+
+def _check(argv: list[str]) -> None:
+    """Refuse anything on the command line that spektr does not understand."""
+    i = 0
+    while i < len(argv):
+        token = argv[i]
+        if token in _OPTIONS:
+            if _OPTIONS[token]:
+                if i + 1 >= len(argv) or argv[i + 1] in _OPTIONS:
+                    _fail(f"{token} needs a value   (see: spektr --help)")
+                i += 1
+        elif token.startswith("-"):
+            _fail(f"unknown option {token}"
+                  + (_suggest(token, _OPTIONS) or "   (see: spektr --help)"))
+        else:
+            _fail(f"unexpected {token!r}   (see: spektr --help)")
+        i += 1
+
+
+def _choice(argv, flag: str, choices) -> str | None:
+    """The value given for ``flag``, checked against ``choices``, any case."""
+    raw = _arg(argv, flag)
+    if raw is None:
+        return None
+    for choice in choices:
+        if raw.lower() == str(choice).lower():
+            return str(choice)
+    names = [str(c) for c in choices]
+    listed = ", ".join(names[:-1]) + f" or {names[-1]}" if len(names) > 1 else names[0]
+    _fail(f"{flag} takes {listed}, not {raw!r}{_suggest(raw, choices)}")
+
+
+def _mode_named(name: str, registry) -> str:
+    """The registered name for ``name``, whatever its case, or a clear no."""
+    if registry.get(name) is not None:
+        return name
+    names = registry.names()
+    for known in names:
+        if known.lower() == name.lower():
+            return known
+    _fail(f"no mode called {name!r}"
+          + (_suggest(name, names) or "   (see: spektr --list-modes)"))
+
+
+def _theme_named(name: str) -> str:
+    """The theme called ``name``, whatever its case, or a clear no."""
+    from .palette import AUTO, all_themes
+
+    names = [AUTO, *all_themes()]
+    for known in names:
+        if known.lower() == name.lower():
+            return known
+    _fail(f"no theme called {name!r}"
+          + (_suggest(name, names) or "   (see: spektr --list-themes)"))
+
 
 _TRUST_WARNING = """
   This is Python. It runs with your privileges — it can read your files
@@ -229,6 +327,18 @@ def main() -> None:
             except Exception:
                 pass
 
+    if argv and argv[0] == "plugins":
+        raise SystemExit(_plugins_cli(argv[1:]))
+    _check(argv)
+
+    # The two that need nothing, answered before anything heavy is imported.
+    if "-h" in argv or "--help" in argv:
+        print(_USAGE)
+        return
+    if "--version" in argv:
+        print(f"spektr {__version__}")
+        return
+
     # Before anything touches the audio libraries: their destructors can raise
     # during interpreter shutdown, and the traceback lands on screen after the
     # UI is gone, which reads as a crash on exit.
@@ -236,15 +346,6 @@ def main() -> None:
 
     install_shutdown_filter()
 
-    if argv and argv[0] == "plugins":
-        raise SystemExit(_plugins_cli(argv[1:]))
-
-    if "-h" in argv or "--help" in argv:
-        print(_USAGE)
-        return
-    if "--version" in argv:
-        print(f"spektr {__version__}")
-        return
     if "--diagnose" in argv:
         from .capture import diagnose
 
@@ -260,6 +361,8 @@ def main() -> None:
 
         print(describe_devices())
         return
+
+    from . import modes as mode_registry
 
     if "--no-plugins" not in argv:
         from .plugins import load_all
@@ -286,10 +389,11 @@ def main() -> None:
         # Hidden modes are listed here and nowhere else in the UI. They are
         # still selectable by name, so a listing that omitted them would make
         # them unfindable rather than merely unoffered.
+        width = max(len(m.name) for m in mode_registry.MODES)
         for m in mode_registry.MODES:
             tag = f"  [{m.plugin}]" if m.is_plugin else ""
-            mark = "  (opt-in — settings, or --mode)" if m.hidden else ""
-            print(f"  {m.name:<10} {m.blurb}{tag}{mark}")
+            mark = "  (opt-in: settings, or --mode)" if m.hidden else ""
+            print(f"  {m.name:<{width}}  {m.blurb}{tag}{mark}")
         return
     if "--glyph-test" in argv:
         _glyph_test()
@@ -305,25 +409,34 @@ def main() -> None:
     settings = config.load()
     mode = _arg(argv, "--mode")
     if mode:
-        if mode_registry.get(mode) is None:
-            print(f"unknown mode: {mode}   (see: spektr --list-modes)")
-            return
-        settings.mode = mode
+        settings.mode = _mode_named(mode, mode_registry)
     theme = _arg(argv, "--theme")
     if theme:
-        settings.theme = theme
-    cells = _arg(argv, "--cells")
+        settings.theme = _theme_named(theme)
+    cells = _choice(argv, "--cells", ("octant", "quadrant"))
     if cells:
-        if cells not in ("octant", "quadrant"):
-            print(f"unknown cell geometry: {cells}   (octant or quadrant)")
-            return
         settings.cells = cells
-    background = _arg(argv, "--background")
+    background = _choice(argv, "--background", ("theme", "terminal"))
     if background:
-        if background not in ("theme", "terminal"):
-            print(f"unknown background: {background}   (theme or terminal)")
-            return
         settings.transparent_background = background == "terminal"
+    for flag, name, choices in (
+        ("--motion", "motion", config.MOTION_CHOICES),
+        ("--morph", "morph", config.MORPH_CHOICES),
+        ("--eco", "eco", config.ECO_CHOICES),
+    ):
+        value = _choice(argv, flag, choices)
+        if value:
+            setattr(settings, name, value)
+    shuffle = _choice(argv, "--shuffle", (*config.SHUFFLE_SCOPES, "off"))
+    if shuffle:
+        settings.shuffle = shuffle != "off"
+        if shuffle != "off":
+            settings.shuffle_scope = shuffle
+    bands = _arg(argv, "--bands")
+    if bands is not None:
+        if not bands.isdigit() or not (int(bands) == 0 or 8 <= int(bands) <= 64):
+            _fail(f"--bands takes 8 to 64, or 0 to fit the terminal, not {bands!r}")
+        settings.bands = int(bands)
     # Set before any mode draws: the subcell packers read it, so a mode never
     # has to know which geometry it is being rendered into.
     from .render import set_cell_mode
@@ -339,8 +452,7 @@ def main() -> None:
             try:
                 settings.fps = int(fps_raw)
             except ValueError:
-                print("--fps needs a number, or 'unlimited'")
-                raise SystemExit(2) from None
+                _fail(f"--fps takes a number from 15 to 240, or unlimited, not {fps_raw!r}")
     settings.clamp()
 
     from .ui.app import Spektr

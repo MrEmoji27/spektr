@@ -1,41 +1,51 @@
-spektr — terminal spectrum analyser for system audio
+spektr: a terminal spectrum analyser for system audio
 
 usage: spektr [options]
        spektr plugins <command>
 
-  --diagnose         probe every source and report what it delivers
-                     (says which device the OS calls the default, and which
-                      endpoint spektr resolved it to — start here if flat)
-  --monitor          run the app's own capture path headlessly and show
-                     frames/level/gate/bars once a second — use when
-                     --diagnose looks fine but the display does not move
-  --devices          list every audio device and exit
-  --device <n>       force a capture device by index
-  --mode <name>      start in a given visualiser
-  --theme <name>     start with a given theme
-  --fps <n>          frame rate cap, 15-240 (default 60)
-  --fps unlimited    run at the detected display refresh rate (experimental)
-  --mic              allow the microphone as an automatic source
-  --no-plugins       skip loading plugins this run
-  --list-modes       print visualiser names and exit
-  --list-themes      print theme names and exit
-  --glyph-test       can this terminal draw the (o) subcell modes? and exit
-  --cells quadrant   draw the subcell modes as (q) — block elements only
-                     instead of Unicode 16 octants — half the resolution,
-                     works in every font. Saved, so set it once.
+start up
+  --mode <name>        start in a given mode (see --list-modes)
+  --theme <name>       start with a given theme (see --list-themes)
+  --motion <m>         snappy or glide: reactive or smooth bars
+  --morph <m>          clean or classic: how one mode changes into the next
+  --bands <n>          how many bars: 8 to 64, or 0 to fit the terminal
+  --fps <n>            frame rate cap, 15 to 240, or unlimited for the
+                       display's own refresh rate (experimental)
+  --eco <on|off>       30 fps, fewer bars, shuffle skips the heavy modes
+  --shuffle <what>     modes, themes, both, or off
+  --cells quadrant     draw the (o) modes with block elements only: half the
+                       detail, works in every font (see --glyph-test)
   --background terminal
-                     leave the visualizer's empty cells to the terminal, so
-                     its opacity or acrylic shows through; --background theme
-                     paints the theme's colour again (the default). Saved.
-  --version          print version and exit
-  -h, --help         this text
+                       leave empty cells to the terminal, so its opacity or
+                       acrylic shows through; --background theme undoes it
+
+  Everything above is saved, so set it once.
+
+audio
+  --devices            list every audio device and exit
+  --device <n>         use this device, by its number in --devices
+  --mic                allow the microphone as an automatic source
+  --diagnose           probe every source and report what it delivers: which
+                       device the system calls the default, and which one
+                       spektr chose. Start here if the picture is flat
+  --monitor            run the capture headlessly and print level, gate and
+                       bars once a second, for when --diagnose looks fine but
+                       nothing moves
+
+look it up
+  --list-modes         every mode, including the opt-in ones
+  --list-themes        every theme
+  --glyph-test         can this terminal draw the (o) modes?
+  --no-plugins         skip loading plugins this run
+  --version            print the version
+  -h, --help           this text
 
 plugin commands:
 
-  spektr plugins list            what's installed, and whether it's trusted
+  spektr plugins list            what is installed, and whether it is trusted
   spektr plugins trust <name>    review and approve a plugin's contents
   spektr plugins untrust <name>  revoke approval
   spektr plugins remove <name>   delete it from disk
-  spektr plugins doctor          why isn't mine loading?
+  spektr plugins doctor          why is mine not loading?
   spektr plugins path            print the plugins folder
 

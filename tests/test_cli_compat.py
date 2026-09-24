@@ -92,8 +92,14 @@ def test_mode_flag(launch):
 
 
 def test_unknown_mode_does_not_start(launch, capsys):
-    assert launch("--mode", "No Such Mode") is None
-    assert "unknown mode" in capsys.readouterr().out
+    """Refused as an error -- exit 2, said on stderr -- where it used to print
+    a line and exit as a success, which a script could not tell from a run."""
+    import pytest
+
+    with pytest.raises(SystemExit) as exc:
+        launch("--mode", "No Such Mode")
+    assert exc.value.code == 2
+    assert "no mode called" in capsys.readouterr().err
 
 
 def test_theme_flag(launch):

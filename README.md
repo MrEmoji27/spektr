@@ -311,6 +311,11 @@ spektr --mode Retro     start in a given visualiser
 spektr --theme gruvbox  start with a given theme
 spektr --fps 30         cap the frame rate (15-240)
 spektr --fps unlimited  run at the detected display rate (experimental)
+spektr --motion glide   snappy or glide: reactive or smooth bars
+spektr --morph classic  clean or classic: how one mode changes into the next
+spektr --bands 24       how many bars, 8 to 64, or 0 to fit the terminal
+spektr --eco on         30 fps, fewer bars, shuffle skips the heavy modes
+spektr --shuffle modes  modes, themes, both, or off
 spektr --mic            allow the microphone as an automatic source
 spektr --list-modes     print visualiser names (including the opt-in ones)
 spektr --list-themes    print theme names
@@ -329,6 +334,10 @@ spektr plugins trust    review and approve a plugin
 spektr plugins doctor   why isn't mine loading?
 spektr plugins path     print the plugins folder
 ```
+
+The settings flags are saved, so set them once. Names are matched whatever
+their case, and a mistyped flag or name is refused with a suggestion rather
+than ignored. If `spektr` is not on your path, `python -m spektr` does the same.
 
 ## How it captures audio
 
