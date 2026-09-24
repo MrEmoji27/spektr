@@ -102,6 +102,8 @@ def _ctx(case: Case, i: int, palette: Palette, state: dict, onset_seq: int) -> t
         # a hit every half second (120 bpm), on the frame the kick restarts
         onsets = 1 if (t % 0.5) < DT else 0
         onset_seq += onsets
+        beat = int(t / 0.5) % 4
+        chroma = np.asarray(b[:24], dtype=np.float32).reshape(12, 2).mean(axis=1)
         rhythm = dict(
             onset_seq=onset_seq,
             onsets=onsets,
@@ -109,6 +111,15 @@ def _ctx(case: Case, i: int, palette: Palette, state: dict, onset_seq: int) -> t
             flux=float(b[0]),
             tempo_bpm=120.0,
             beat_phase=(t % 0.5) / 0.5,
+            # the 0.6.0 analysis: a backbeat in a known bar, in a known key
+            drums=({"kick": 0.9, "snare": 0.0, "hat": 0.2} if beat % 2 == 0
+                   else {"kick": 0.0, "snare": 0.85, "hat": 0.3}),
+            bar_phase=((t % 2.0) / 2.0),
+            beat_in_bar=beat,
+            bar_confidence=0.8,
+            chroma=chroma / max(float(chroma.max()), 1e-6),
+            key="A minor",
+            key_confidence=0.8,
         )
     ctx = Ctx(
         w=case.w, h=case.h, bands=b, peaks=b, bands_l=b, bands_r=b,

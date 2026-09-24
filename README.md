@@ -9,7 +9,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-00c853)](https://github.com/MrEmoji27/spektr/blob/main/LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20·%20Linux%20·%20macOS-546e7a)](#how-it-captures-audio)
-[![Modes](https://img.shields.io/badge/render%20modes-60-ff6d00)](#modes)
+[![Modes](https://img.shields.io/badge/render%20modes-63-ff6d00)](#modes)
 [![Themes](https://img.shields.io/badge/themes-55-7c4dff)](#themes)
 [![Built with Textual](https://img.shields.io/badge/built%20with-Textual-5e35b1)](https://textual.textualize.io/)
 
@@ -22,7 +22,7 @@ Play music anywhere, from Spotify to a browser tab to a game, and spektr draws i
 terminal. You do not point it at a file or sign in to anything. It listens to whatever your
 speakers are playing.
 
-**Sixty render modes. Fifty-five themes. 60 fps, or your display's.**
+**Sixty-three render modes. Fifty-five themes. 60 fps, or your display's.**
 
 There is an Android build too: the same engine on a tablet, as an ambient display for your
 desk. See [spektr on Android](#spektr-on-android).
@@ -126,17 +126,21 @@ filter. They are listed here in the order the picker cycles them.
 | **Murmuration** | a flock wheeling and scattering with the beat | **Rain** | rain on the glass, falling harder when it's loud |
 | **Retro** | sunset grid, with the spectrum as the horizon | **Ember** | a coal bed burning by band, sparks off the hot spots |
 | **Auroras** | a light ribbon whose lower rim rides the spectrum | **Snow** | snowfall in three planes, gusting and lying in drifts |
-| **JP Bars** | a segmented LED meter whose crest peels off and rises, like notes leaving a key | **JP Drift** | the meter as a sandpile, bulbs stack up, drain away, and pour into their neighbours on the beat |
-| **JP Pulse** | the meter bent into a ring, a spoke of bulbs per band, chased on the beat | | |
+| **JP Bars** | a segmented LED meter whose crest peels off and rises, like notes leaving a key | **JP Drift** | the meter shedding bulbs, they break off the top and fall, piling at the foot |
+| **JP Pulse** | the meter bent into a ring, a spoke of bulbs per band, chased on the beat | **JP Kit** | the meter with the drums in it, kick, snare and hat each throw their own ring |
+| **JP Sequencer** | the meter paged by the bar, four pages, one live and three holding their beat | **JP Key** | twelve ladders, one per note, the key lights its seven and the tonic gets a lamp |
 
-The three **JP** modes are inspired by Japanese car audio hardware, the LED
-level meters on in-dash head units and equalisers. All three draw the same
+The six **JP** modes are inspired by Japanese car audio hardware, the LED
+level meters on in-dash head units and equalisers. All six draw the same
 meter, with the unlit bulbs showing as faint dots, and each adds one idea from
-another mode: **Keys**' note roll, **Dune**'s sandpile and **Radial**'s circle.
+another mode: **Keys**' note roll, **Rain**'s falling drops, **Radial**'s
+circle, **Pulse**'s shockwaves, **Spectro**'s memory and **Keys** again for
+the notes. The last three listen for more than the level: which drum hit,
+which beat of the bar it is, and what key the song is in. When they are not
+sure, they show less rather than guess.
 
 > [!NOTE]
-> The JP modes are new and not final. They may be changed, improved, reworked
-> or removed, and more modes will join this family in the next major release.
+> The JP modes are still young. They may be changed, improved or reworked.
 
 **Shooting Star** opens a *cosmos* group, and it is built on a different
 bargain from everything above it: the picture is mostly empty and mostly
@@ -154,8 +158,8 @@ shared reactivity budget. Each one maps real band data into its geometry,
 so what the music changes is what the object is doing, not just how bright
 the picture is.
 
-A sixty-first entry, **None**, is registered as the off switch, it draws nothing.
-That is why the test output counts 61 against the sixty listed here, and 73
+A sixty-fourth entry, **None**, is registered as the off switch, it draws nothing.
+That is why the test output counts 64 against the sixty-three listed here, and 76
 in total, because the twelve subcell variants below are registered whether or not
 the setting that offers them is on.
 

@@ -125,11 +125,16 @@ def ctx_for(w, h, frame, state, t, bands=None, silent=False, stereo=None, dt=1 /
     wave = np.sin(np.linspace(0, 40, 512) + t * 10) * 0.7
     if stereo is None:
         stereo = np.stack((wave, np.roll(wave, 7)), axis=1)
+    # The harmony follows the bands, so a mode drawn from it moves when they
+    # do and holds still when they are frozen, the same as everything else.
+    chroma = np.asarray(bands[:24], dtype=np.float32).reshape(12, 2).mean(axis=1)
+    chroma = chroma / max(float(chroma.max()), 1e-6)
     return Ctx(
         w=w, h=h, bands=bands, peaks=np.clip(bands * 1.05, 0, 1),
         bands_l=bands * 0.9, bands_r=bands, wave=wave, stereo=stereo,
         frame=frame, t=t, dt=dt, energy=float(bands.mean()),
         silent=silent, palette=PAL, state=state,
+        chroma=chroma, key="A minor", key_confidence=0.8,
     )
 
 

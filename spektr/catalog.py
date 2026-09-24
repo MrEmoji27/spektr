@@ -83,6 +83,9 @@ CATALOG: tuple[tuple[str, str, str, bool, str], ...] = (
     ('JP Bars', 'jp', 'a segmented LED meter whose bars peel off and rise as they fall away', False, 'jp'),
     ('JP Drift', 'jp', 'the meter shedding bulbs: they break off the top and fall, piling at the foot', False, 'jp'),
     ('JP Pulse', 'jp', 'the meter bent into a ring — a spoke of bulbs per band, chased on the beat', False, 'jp'),
+    ('JP Kit', 'jp', 'the meter with the drums in it — kick, snare and hat each throw their own ring', False, 'jp_music'),
+    ('JP Sequencer', 'jp', 'the meter paged by the bar — four pages, one live, three holding their beat', False, 'jp_music'),
+    ('JP Key', 'jp', 'twelve ladders, one per note in fifths — the key powers its seven, the tonic gets a lamp', False, 'jp_music'),
     ('None', 'off', 'nothing at all', False, 'modes'),
 )
 

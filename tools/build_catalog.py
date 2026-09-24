@@ -56,6 +56,14 @@ def module_for(name: str) -> str | None:
 
 
 def rows() -> list[tuple[str, str, str, bool, str]]:
+    # Every module in the package, not just the ones the catalogue already
+    # names: those are all ``load_all`` can reach, so a new mode module would
+    # otherwise never make it into the catalogue that is the only way in.
+    import importlib
+    import pkgutil
+
+    for info in pkgutil.iter_modules(M.__path__):
+        importlib.import_module(f"{M.__name__}.{info.name}")
     M.load_all()
     return [
         (m.name, m.group, m.blurb, m.hidden, m.fn.__module__.split(".")[-1])
