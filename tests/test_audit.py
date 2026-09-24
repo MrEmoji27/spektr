@@ -39,8 +39,9 @@ PAL = Palette(BUILTIN["gruvbox"])
 #: constant bar chart. Testing those for movement was an error in an earlier
 #: version of this file, and it flagged seven correct modes as broken.
 SELF_ANIMATING = {
-    # the step grid's playhead, which runs on its own time with no tempo
-    "JP Sequencer",
+    # the step grid's playhead, which runs on its own time with no tempo, and
+    # Locket Beat's stream of rings, which flows while the music is playing
+    "JP Sequencer", "Locket Beat",
     "Scatter", "Flame", "Pulse", "Retro", "Tunnel", "Warp",
     "Matrix", "Spectro", "Plasma", "Gonio",
     # scroll (ECG and its octant variant), standing-wave phase (Strings), ring

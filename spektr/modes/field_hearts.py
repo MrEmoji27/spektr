@@ -634,16 +634,15 @@ def locket(ctx: Ctx):
 
 
 #: Rings in flight at once. A new ring with no free slot takes the oldest's.
-_SHOT_RINGS = 8
+#: Enough for a loud stream: four to a beat, flying for two beats.
+_SHOT_RINGS = 12
 
 #: How each drum's ring is drawn: width against a plain beat, and brightness.
 #: A kick is a thick heavy ring, a hat a thin one. A beat whose hit the drums
 #: cannot name is drawn as a plain one.
 _SHOT = {"kick": (1.8, 1.0), "snare": (1.2, 0.9), "hat": (0.6, 0.7)}
 
-#: How many beats a ring takes to cross from the heart to the edge of the
-#: frame. Two, so two are always in flight, evenly spaced, and one is leaving
-#: the heart as the one before it is half way out: a stream, with no gap in it.
+#: How many beats a ring takes to cross from the heart to the edge of the frame.
 _SHOT_BEATS = 2.0
 
 #: The flight time in seconds is held to this, whatever the tempo, and is the
@@ -654,17 +653,6 @@ _SHOT_LIFE_S = 1.1
 #: A plain ring's width, as a share of the heart-scale. Thin, with a crisp
 #: edge, so rings in flight together stay separate rings.
 _SHOT_WIDTH = 0.024
-
-#: How far a loud band pushes its part of a ring outward, as a share of the
-#: ring's radius at full level, and how many bands go round it. Mirrored left
-#: and right like the heart's rim, so sixteen bands make sixteen bulges a side.
-_BAR_REACH = 0.6
-_RING_BANDS = 16
-
-#: Angle bins in the rings' table: two to a band. Enough for a swell to read
-#: as a bulge, and small enough -- 32 by 1024 -- that the one gather every dot
-#: makes into it stays in cache.
-_ANGLE_BINS = 32
 
 #: Where a ring's flight ends, on the heart-scale: just past the edge of the
 #: frame. Measured, and the same at every size because the scale is
@@ -678,31 +666,41 @@ _RING_END = 1.3
 #: sets how the beat's ring is drawn rather than throwing one of its own.
 _ON_BEAT = 0.2
 
+#: The stream between the beats: how many rings a beat is divided into, by how
+#: loud the music is. Two at an ordinary level, four when it is loud, and none
+#: below the quiet floor -- so the stream thickens and thins with the track.
+_STREAM_QUIET = 0.06
+_STREAM_LOUD = 0.35
+
+#: With no tempo, the stream runs on its own clock: a ring this often, in
+#: seconds, at an ordinary level, and twice as often when it is loud.
+_STREAM_FREE_S = 0.28
+
 
 @mode("Locket Beat", group="fields", after="Locket",
-      blurb="the locket heart, sending a ring out on every beat that swells with the music like a ring of bars")
+      blurb="the locket heart, sending out a steady stream of rings, bright on every beat")
 def locket_beat(ctx: Ctx):
-    """``Locket`` sending rings out in time with the music.
+    """``Locket`` sending out a steady stream of rings, in time with the music.
 
     ``Locket`` keeps its sky full whatever is playing: a free-running release
     fills in when nothing hits, and its rings read as a cascade. Here the rings
-    are the beat. When the analyser has a tempo, a ring leaves the heart on
-    every beat of it and the heart pumps as it goes; the hit that lands on that
-    beat decides how it looks -- a kick sends a thick heavy ring, a hat a thin
-    one, a hard hit a bright one. A strong hit well off the beat still sends a
-    lighter ring of its own. With no tempo, every hit sends one.
+    are a stream kept in time. When the analyser has a tempo, a bright ring
+    leaves the heart on every beat and the heart pumps as it goes; the hit that
+    lands on that beat decides how it looks -- a kick sends a thick heavy ring,
+    a hat a thin one, a hard hit a bright one. Between the beats, lighter
+    rings leave on the beat's subdivisions: two to a beat at an ordinary
+    level, four when the music is loud, none when it is quiet. So the stream
+    never stops while the music plays, thickens and brightens as it gets
+    louder, and every ring in it is on the grid. A strong hit well off the
+    beat still sends a ring of its own. With no tempo, the stream runs on a
+    clock of its own and every hit sends a ring.
 
     **On the beat, not after it.** A ring used to wait for the detector to
     confirm the hit -- about 30 ms late on the test tracks -- and was then born
     inside the heart and faded in, so it appeared later still. The tempo's
     beat clock runs ahead of the detector and lands within 10 ms of the true
-    beat, so the ring is timed from that, and born on the heart's outline,
-    where it is visible from its first frame.
-
-    **A stream, not a volley.** Each ring takes two beats to cross the frame on
-    a gentle ease, so two are always in flight and evenly spaced. Rings that
-    raced off in under half a second left an empty frame between beats, and
-    that gap is what read as out of time.
+    beat, so the rings are timed from that, and born on the heart's outline,
+    where each is visible from its first frame.
 
     Each ring keeps the radius it was born at. Taking its start from the heart
     as it is now -- which swells on every beat -- jerked every ring in flight
@@ -717,38 +715,72 @@ def locket_beat(ctx: Ctx):
         "born": np.full(_SHOT_RINGS, -99.0), "r0": np.zeros(_SHOT_RINGS),
         "amp": np.zeros(_SHOT_RINGS), "wide": np.ones(_SHOT_RINGS),
         "life": np.full(_SHOT_RINGS, _SHOT_LIFE_S), "beat": 0.0,
-        "phase": 0.0, "last": -1,
+        "phase": 0.0, "sub": 0, "last": -1, "free": 0.0, "level": 0.0,
+        "heard": -99.0,
     })
 
     dt = max(ctx.dt, 0.0)
     st["beat"] *= math.exp(-dt / 0.14)
     bass = ctx.range(0.0, 0.22)
     core = float(0.22 + 0.04 * bass + 0.05 * st["beat"])
+    # How loud the music is, held: it rises at once and falls away over half
+    # a second or so. The level right now dips before every hit on sparse
+    # drums -- which is exactly when the beat clock ticks -- and a stream
+    # judged on it switched off and on between the hits and dropped the beat
+    # rings. Held, it answers "is the music loud" rather than "is this frame".
+    now_level = 0.0 if ctx.silent else float(ctx.energy)
+    if not ctx.silent and now_level > 0.0:
+        st["heard"] = ctx.t
+    st["level"] = max(now_level, st["level"] * math.exp(-dt / 0.6))
+    level = st["level"]
+    playing = ctx.t - st["heard"] < 1.0
     tempo = float(ctx.tempo_bpm)
     period = 60.0 / tempo if tempo > 0.0 else 0.0
     lo, hi = _SHOT_LIFE_RANGE
     life = min(hi, max(lo, period * _SHOT_BEATS)) if period else _SHOT_LIFE_S
 
-    def send(amp: float, wide: float) -> int:
+    def send(amp: float, wide: float, pump: float) -> int:
         slot = int(np.argmin(st["born"]))
         st["born"][slot] = ctx.t
         st["r0"][slot] = core
         st["amp"][slot] = amp
         st["wide"][slot] = wide
         st["life"][slot] = life
-        st["beat"] = min(1.5, st["beat"] + 0.6 + 0.5 * amp)
+        st["beat"] = min(1.5, st["beat"] + pump)
         return slot
+
+    def stream_ring() -> None:
+        # lighter and thinner than a beat's, and as bright as the music is loud
+        send(0.3 + 0.6 * min(1.0, level * 2.0), 0.7, 0.0)
 
     def weight(hit: list[str], strength: float) -> tuple[float, float]:
         wide, bright = _SHOT[hit[0]] if hit else (1.0, 0.85)
         return bright * (0.55 + 0.45 * strength), wide
 
+    per_beat = 0 if level < _STREAM_QUIET else (4 if level >= _STREAM_LOUD else 2)
+
     # ── on the beat clock, when there is one ─────────────────────────────────
     phase = float(ctx.beat_phase)
-    if period and phase < st["phase"] - 0.5:
-        # A beat: a plain ring now, weighted by its hit when the hit arrives.
-        st["last"] = send(0.55, 1.0)
-    st["phase"] = phase if period else 0.0
+    if period:
+        if phase < st["phase"] - 0.5:
+            # A beat: a bright ring now, weighted by its hit when it arrives.
+            if playing or ctx.onsets:
+                st["last"] = send(0.75, 1.0, 1.0)
+            st["sub"] = 0
+        elif per_beat:
+            # The stream between beats, on the beat's own subdivisions.
+            sub = int(phase * per_beat)
+            if sub > st["sub"]:
+                stream_ring()
+            st["sub"] = sub
+        st["phase"] = phase
+    elif per_beat:
+        # No tempo: the stream keeps its own time, quicker when it is loud.
+        st["free"] += dt
+        every = _STREAM_FREE_S * (0.5 if per_beat == 4 else 1.0)
+        if st["free"] >= every:
+            st["free"] = 0.0
+            stream_ring()
 
     if ctx.onsets:
         strength = min(1.0, float(ctx.onset_strength))
@@ -763,33 +795,11 @@ def locket_beat(ctx: Ctx):
             st["beat"] = min(1.5, st["beat"] + 0.3 * strength)
         elif not period or near > _ON_BEAT:
             # No beat clock, or a strong hit well off the beat: a ring of its
-            # own, lighter than one on the beat.
-            st["last"] = send(amp * (1.0 if not period else 0.75), wide)
+            # own.
+            st["last"] = send(amp * (1.0 if not period else 0.8), wide, 0.6 + 0.5 * amp)
 
     glow = _locket_rim(ctx, _g, core, st["beat"])
     sc_at = _g["sc_at"]
-    # How bright the rings are right now, from how loud the music is right
-    # now: like a bar, a ring answers the level every frame, not only the hit
-    # it was born on.
-    live = min(1.0, 0.5 + 1.3 * float(ctx.energy))
-
-    # The rings are a bar graph wrapped round the heart: each bulges outward
-    # where its band is loud and lies in where it is quiet, and moves with the
-    # level every frame the way ``Bars`` does. Resolved on a table of angle by
-    # radius -- the rings are drawn into angle bins, each bin reading its
-    # radius through its band's swell, and every dot reads its cell with one
-    # gather. Bending the whole dot grid by the spectrum instead cost 6 ms a
-    # frame at 400x100.
-    nsc = _g["nsc"]
-    lay = ctx.scratch("locket_beat_geo", lambda: {
-        "flat": ((_g["aidx"].astype(np.int32) * _ANGLE_BINS // _g["nt"]) * nsc
-                 + _g["sidx"].astype(np.int32)),
-    })
-    swell = (np.float32(1.0) + np.float32(_BAR_REACH)
-             * _band_table(ctx, _ANGLE_BINS, _RING_BANDS))[:, None]
-    # at each angle, the radius a dot at each table radius stands for once the
-    # swell is taken out: a loud band's ring lies further out
-    at = sc_at[None, :] / swell
     lut = None
     for i in range(_SHOT_RINGS):
         age = ctx.t - st["born"][i]
@@ -797,16 +807,16 @@ def locket_beat(ctx: Ctx):
         if not (0.0 <= age < span):
             continue
         u = age / span
-        # From the outline it was born on to the edge of the frame, on a gentle
-        # ease: it leaves the heart briskly and slows a little as it goes.
+        # From the outline it was born on to just past the edge of the frame,
+        # on a gentle ease: it leaves the heart briskly and slows as it goes.
         start = float(st["r0"][i])
         sc = start + (_RING_END - start) * (1.0 - (1.0 - u) ** 2.0)
         width = _SHOT_WIDTH * float(st["wide"][i]) * (1.0 + 0.5 * u)
-        a = float(st["amp"][i]) * (1.0 - u) * min(1.0, age / 0.04) * live
-        d = np.abs(at - np.float32(sc)) / np.float32(width)
+        a = float(st["amp"][i]) * (1.0 - u) * min(1.0, age / 0.04)
+        d = np.abs(sc_at - np.float32(sc)) / np.float32(width)
         ring = np.where(d < 1.0, np.float32(a) * (np.float32(1.0) - d * d * d),
                         np.float32(0.0))
         lut = ring if lut is None else np.maximum(lut, ring)
     if lut is not None:
-        np.maximum(glow, lut.ravel()[lay["flat"]], out=glow)
+        np.maximum(glow, lut[_g["sidx"]].astype(np.float32), out=glow)
     return _locket_out(ctx, glow)

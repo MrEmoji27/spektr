@@ -56,7 +56,7 @@
   Valentine               a heart that beats with the track, trailing smaller ones upward
   Valentine (o)           the same heart drawn solid instead of stippled — needs a terminal that draws Unicode 16 octants  (opt-in: settings, or --mode)
   Locket                  an outlined heart, pulsing rings of hearts outward on the beat
-  Locket Beat             the locket heart, sending a ring out on every beat that swells with the music like a ring of bars
+  Locket Beat             the locket heart, sending out a steady stream of rings, bright on every beat
   Maelstrom               a real fluid sim, stirred by the music
   Maelstrom (o)           the same fluid as a solid field at two colours a cell — needs a terminal that draws Unicode 16 octants  (opt-in: settings, or --mode)
   Vinyl                   a record whose grooves light up as a radial spectrum

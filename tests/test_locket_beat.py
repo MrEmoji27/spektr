@@ -1,4 +1,4 @@
-"""Locket Beat: a ring shot for every hit, shaped by it, and none for anything else."""
+"""Locket Beat: a steady stream of rings in time with the music, bright on the beat."""
 from __future__ import annotations
 
 import numpy as np
@@ -17,7 +17,7 @@ W, H = 100, 30
 RESPONSE = 2.55
 
 
-def frame(state, t, onsets=0, level=0.3, **kw):
+def frame(state, t, onsets=0, level=0.0, **kw):
     bands = np.full(N_BANDS, level)
     ctx = Ctx(w=W, h=H, bands=bands, peaks=bands, bands_l=bands, bands_r=bands,
               wave=np.zeros(512), stereo=np.zeros((512, 2)), frame=int(t / DT),
@@ -43,12 +43,12 @@ def test_a_beat_throws_a_ring():
     st: dict = {}
     frame(st, 0.0)
     codes, _ = frame(st, DT, onsets=1)
-    for i in range(6):
+    for i in range(18):
         codes, _ = frame(st, DT * (2 + i))
     assert ring_dots(codes, st) > 20
 
 
-def test_nothing_is_thrown_between_beats():
+def test_silence_sends_nothing():
     st: dict = {}
     for i in range(120):
         codes, _ = frame(st, i * DT)
@@ -108,10 +108,13 @@ def test_with_a_tempo_the_rings_come_on_the_beat_clock():
     phase = 0.0
     for i in range(int(2.0 / DT)):                    # two seconds at 120 BPM
         phase = (i * DT * 2.0) % 1.0
-        frame(st, i * DT, tempo_bpm=120.0, beat_phase=phase)
-        rings = next(v for k, v in st.items() if k[0] == "locket_beat")
-        born = int((rings["born"] > -1).sum())
-    assert born == 3, f"{born} rings in two seconds of 120 BPM"
+        frame(st, i * DT, level=0.3, tempo_bpm=120.0, beat_phase=phase)
+    rings = next(v for k, v in st.items() if k[0] == "locket_beat")
+    born = rings["born"] > -1
+    bright = born & (rings["amp"] >= 0.75)
+    # three beats, each a bright ring, and a lighter one between each pair
+    assert int(bright.sum()) == 3, rings["amp"]
+    assert int(born.sum()) == 7, f"{int(born.sum())} rings in two seconds of 120 BPM"
 
 
 def test_the_rings_are_a_stream_not_a_volley():
@@ -119,17 +122,19 @@ def test_the_rings_are_a_stream_not_a_volley():
     the heart as the one before it is part way out, so there is no gap."""
     st: dict = {}
     for i in range(int(3.25 / DT)):
-        frame(st, i * DT, tempo_bpm=120.0, beat_phase=(i * DT * 2.0) % 1.0)
+        frame(st, i * DT, level=0.3, tempo_bpm=120.0, beat_phase=(i * DT * 2.0) % 1.0)
     rings = next(v for k, v in st.items() if k[0] == "locket_beat")
     t = int(3.25 / DT) * DT
-    flying = [(t - b) for b, life in zip(rings["born"], rings["life"]) if 0 <= t - b < life]
-    assert len(flying) == 2, flying
+    flying = sorted(t - b for b, life in zip(rings["born"], rings["life"]) if 0 <= t - b < life)
+    assert len(flying) >= 3, flying
+    # evenly spaced: no gap in the stream longer than a beat's subdivision
+    assert max(np.diff(flying)) <= 0.26, flying
 
 
 def test_the_rings_land_on_the_beats_of_real_audio(monkeypatch):
-    """Through the real analyser: once the tempo has locked, rings are born
-    within a few tens of milliseconds of the true beats, and almost every
-    beat gets one. A ring that waited for the detector was 30 ms late before
+    """Through the real analyser: once the tempo has locked, the beat's rings
+    are born within a few tens of milliseconds of the true beats, and almost
+    every beat gets one. A ring that waited for the detector was 30 ms late before
     the widget drew it, and was then born inside the heart."""
     import dataclasses
     import sys
@@ -152,7 +157,9 @@ def test_the_rings_land_on_the_beats_of_real_audio(monkeypatch):
         out = original(ctx)
         rings = next((v for k, v in ctx.state.items() if k[0] == "locket_beat"), None)
         if rings is not None:
-            births.update(float(b) for b in rings["born"] if b > -1)
+            # the beat's rings, not the lighter, thinner stream between them
+            births.update(float(b) for b, w in zip(rings["born"], rings["wide"])
+                          if b > -1 and w != 0.7)
         return out
 
     spied = dataclasses.replace(mode, fn=spy)
@@ -176,33 +183,24 @@ def test_the_rings_land_on_the_beats_of_real_audio(monkeypatch):
     assert locked.max() < 0.035, f"rings up to {locked.max() * 1000:.0f} ms off the beat"
 
 
-def test_a_ring_swells_where_its_band_is_loud():
-    """The rings are a bar graph wrapped round the heart: a loud band pushes
-    its part of every ring outward, like a bar standing taller."""
-    from spektr.modes.field_hearts import _band_table
+def _in_flight(level) -> int:
+    st: dict = {}
+    for i in range(int(3.0 / DT)):
+        frame(st, i * DT, level=level, tempo_bpm=120.0, beat_phase=(i * DT * 2.0) % 1.0)
+    rings = next(v for k, v in st.items() if k[0] == "locket_beat")
+    t = int(3.0 / DT) * DT
+    return sum(1 for b, life in zip(rings["born"], rings["life"]) if 0 <= t - b < life)
 
-    def reach(bands) -> float:
-        st: dict = {}
-        for i in range(int(0.75 / DT)):
-            b = np.array(bands)
-            ctx_kw = dict(tempo_bpm=120.0, beat_phase=(i * DT * 2.0) % 1.0)
-            codes, _ = M.get("Locket Beat").fn(Ctx(
-                w=W, h=H, bands=b, peaks=b, bands_l=b, bands_r=b,
-                wave=np.zeros(512), stereo=np.zeros((512, 2)), frame=i,
-                t=i * DT, dt=DT, energy=float(b.mean()), silent=False,
-                palette=PAL, state=st, **ctx_kw))
-        # a plain ring is at about 0.7 of the heart-scale a quarter of the
-        # way through its flight; a swelled one reaches past 0.9
-        return ring_dots(codes, st, beyond=0.9)
 
-    quiet = [0.1] * N_BANDS
-    loud = [0.9] * N_BANDS
-    # a louder spectrum pushes the same rings further out: more of them lies
-    # outside the heart, at larger radii
-    assert reach(loud) > reach(quiet) + 20
-    table = _band_table(Ctx(w=W, h=H, bands=np.linspace(0.0, 1.0, N_BANDS),
-                            peaks=np.zeros(N_BANDS), bands_l=np.zeros(N_BANDS),
-                            bands_r=np.zeros(N_BANDS), wave=np.zeros(512),
-                            stereo=np.zeros((512, 2)), frame=0, t=0.0, dt=DT,
-                            energy=0.5, silent=False, palette=PAL), 32, 16)
-    assert table[-1] > table[0], "the swell does not follow the bands round the ring"
+def test_the_stream_thickens_with_the_music():
+    """Quiet music, a sparse stream; loud music, a dense one; silence, none."""
+    assert _in_flight(0.0) == 0
+    assert 0 < _in_flight(0.15) < _in_flight(0.6)
+
+
+def test_without_a_tempo_the_stream_keeps_its_own_time():
+    st: dict = {}
+    for i in range(int(2.0 / DT)):
+        frame(st, i * DT, level=0.3)
+    rings = next(v for k, v in st.items() if k[0] == "locket_beat")
+    assert int((rings["born"] > 1.0).sum()) >= 3, "the stream stopped with no tempo"
