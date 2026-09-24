@@ -150,17 +150,21 @@ def score(chroma) -> np.ndarray:
         return np.zeros((2, 12))
     c = c / norm
 
-    out = np.zeros((2, 12))
-    for tonic in range(12):
-        # Rotate the profile to the tonic rather than the chroma, so the sign
-        # of the rotation cannot quietly go the wrong way.
-        out[0, tonic] = float(np.dot(c, np.roll(_MAJOR_C, tonic)))
-        out[1, tonic] = float(np.dot(c, np.roll(_MINOR_C, tonic)))
-    denom_major = float(np.sqrt((_MAJOR_C ** 2).sum()))
-    denom_minor = float(np.sqrt((_MINOR_C ** 2).sum()))
-    out[0] /= denom_major
-    out[1] /= denom_minor
-    return out
+    # Each row of the table is a profile rotated to its tonic and normalised,
+    # built once: rotating 24 profiles per call was most of this function.
+    return _PROFILES @ c
+
+
+def _rotated(profile: np.ndarray) -> np.ndarray:
+    """``profile`` rotated to each of the twelve tonics, one per row, and
+    normalised. Rotated rather than the chroma, so the sign of the rotation
+    cannot quietly go the wrong way."""
+    rows = np.stack([np.roll(profile, tonic) for tonic in range(12)])
+    return rows / float(np.sqrt((profile ** 2).sum()))
+
+
+#: Every key's profile, ``(2, 12, 12)``: major then minor, a row per tonic.
+_PROFILES = np.stack((_rotated(_MAJOR_C), _rotated(_MINOR_C)))
 
 
 def name(tonic: int, minor: bool) -> str:

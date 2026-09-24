@@ -71,6 +71,17 @@ _KICK_C = np.asarray(KICK_ON) - np.mean(KICK_ON)
 _SNARE_C = np.asarray(SNARE_ON) - np.mean(SNARE_ON)
 _HARMONY_C = np.asarray(HARMONY_ON) - np.mean(HARMONY_ON)
 
+
+def _rolls(template: np.ndarray) -> np.ndarray:
+    """``template`` at every rotation, one per row: row ``k`` is
+    ``np.roll(template, k)``. Built once rather than on every hit."""
+    return np.stack([np.roll(template, k) for k in range(len(template))])
+
+
+_KICK_R = _rolls(_KICK_C)
+_SNARE_R = _rolls(_SNARE_C)
+_HARMONY_R = _rolls(_HARMONY_C)
+
 #: How much the harmony cue counts against the drums. Set so it decides a
 #: symmetric pattern, where the drum terms cancel exactly, without being able
 #: to overrule a plain backbeat where the drums are unambiguous.
@@ -247,14 +258,8 @@ class BarTracker:
     @staticmethod
     def _rotations(kick, snare, harmony) -> np.ndarray:
         """How well each rotation of a grid fits the evidence on it."""
-        return np.array([
-            float(
-                np.dot(kick, np.roll(_KICK_C, k))
-                + np.dot(snare, np.roll(_SNARE_C, k))
-                + HARMONY_WEIGHT * np.dot(harmony, np.roll(_HARMONY_C, k))
-            )
-            for k in range(BEATS)
-        ])
+        return (_KICK_R @ np.asarray(kick) + _SNARE_R @ np.asarray(snare)
+                + HARMONY_WEIGHT * (_HARMONY_R @ np.asarray(harmony)))
 
 
     def _score(self, residue: int) -> None:

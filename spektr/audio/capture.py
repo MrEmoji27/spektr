@@ -288,7 +288,7 @@ class _LoopbackStream:
 class RingBuffer:
     """Fixed-size circular buffer of interleaved stereo frames."""
 
-    __slots__ = ("_buf", "_cap", "_lock", "_w", "_written")
+    __slots__ = ("_buf", "_cap", "_fresh", "_lock", "_w", "_written")
 
     def __init__(self, capacity: int):
         self._cap = int(capacity)
@@ -296,6 +296,8 @@ class RingBuffer:
         self._w = 0
         self._written = 0
         self._lock = threading.Lock()
+        #: Set by every push, for :meth:`wait`.
+        self._fresh = threading.Event()
 
     @property
     def written(self) -> int:
@@ -341,6 +343,19 @@ class RingBuffer:
                 self._buf[: end - self._cap] = block[split:]
             self._w = end % self._cap
             self._written += n
+        self._fresh.set()
+
+    def wait(self, timeout: float) -> None:
+        """Sleep until the next :meth:`push`, or ``timeout`` seconds.
+
+        For a consumer that would otherwise poll :attr:`written`. The analyser
+        used to, every millisecond -- a thousand wakeups a second, in silence
+        as much as in music, each one costing a little and all of them keeping
+        the processor out of its idle states. A caller must still check
+        :attr:`written` after waking: this says something arrived, not how much.
+        """
+        self._fresh.wait(timeout)
+        self._fresh.clear()
 
     def latest(self, n: int) -> Optional[np.ndarray]:
         """The most recent n frames as ``(n, 2)``, or None if not filled yet."""

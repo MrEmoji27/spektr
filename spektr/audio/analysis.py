@@ -1457,11 +1457,13 @@ class Analyser:
         self._at = 0
         while self._running:
             if self._ring.written - self._at < HOP:
-                # Poll finer than the hop period, which at HOP=256/48 kHz is
-                # 5.3 ms. The old 2 ms sleep was a fifth of a 10.7 ms period
-                # and is over a third of this one — enough quantisation to
-                # show up as jitter in the analysis interval.
-                time.sleep(0.001)
+                # Sleep until the capture thread pushes, rather than polling.
+                # A poll had to run finer than the hop period (5.3 ms at
+                # HOP=256/48 kHz) to keep the analysis interval steady, which
+                # meant a thousand wakeups a second whether anything was
+                # playing or not. Woken by the push itself there is no
+                # quantisation at all. The timeout only keeps stop() prompt.
+                self._ring.wait(0.05)
                 continue
             self._analyse_hops()
 
@@ -1500,9 +1502,14 @@ class Analyser:
 
         A running sum turns 32 slices into two gathers. cava loops; at 94
         analyses a second and three signals, the loop is worth avoiding.
+
+        ``spec`` is one spectrum, or several as rows, summed along the last
+        axis either way.
         """
-        cum = np.concatenate(([0.0], np.cumsum(spec)))
-        return cum[np.minimum(upper + 1, len(spec))] - cum[lower]
+        spec = np.asarray(spec)
+        cum = np.zeros(spec.shape[:-1] + (spec.shape[-1] + 1,))
+        np.cumsum(spec, axis=-1, out=cum[..., 1:])
+        return cum[..., np.minimum(upper + 1, spec.shape[-1])] - cum[..., lower]
 
     def _analyse_once(self, end: int | None = None, now: float | None = None) -> None:
         sr = int(self._get_sr() or 48000)
@@ -1606,28 +1613,26 @@ class Analyser:
         # ── spectra ──
         # Both windows end at the newest sample: the long one reaches further
         # back for bass resolution, the short one stays responsive up top.
-        bass_l = left * _PCM_SCALE
-        bass_r = right * _PCM_SCALE
-        mid_l = bass_l[-plan.mid_size:]
-        mid_r = bass_r[-plan.mid_size:]
-
-        spec_bass_l = np.abs(np.fft.rfft(bass_l * self._bass_win))
-        spec_bass_r = np.abs(np.fft.rfft(bass_r * self._bass_win))
-        spec_mid_l = np.abs(np.fft.rfft(mid_l * self._mid_win))
-        spec_mid_r = np.abs(np.fft.rfft(mid_r * self._mid_win))
+        # Left and right together, one row each: one FFT call per window size
+        # instead of one per channel, and one pass of band sums over both. The
+        # arithmetic is row by row and identical; what goes is the per-call
+        # overhead, which on transforms this small is most of the cost. This
+        # runs 170-190 times a second whatever is on screen.
+        bass = np.stack((left, right)) * _PCM_SCALE
+        spec_bass = np.abs(np.fft.rfft(bass * self._bass_win, axis=1))
+        spec_mid = np.abs(np.fft.rfft(bass[:, -plan.mid_size:] * self._mid_win, axis=1))
+        spec_mid_l, spec_mid_r = spec_mid
 
         cut = plan.bass_bar
         lower, upper = plan.lower, plan.upper
 
         # sized from the plan, not the module constant — the band count is
         # settable and the plan is the only thing that knows the current one
-        raw_l = np.empty(len(lower))
-        raw_r = np.empty(len(lower))
+        raw = np.empty((2, len(lower)))
         if cut:
-            raw_l[:cut] = self._band_sums(spec_bass_l, lower[:cut], upper[:cut])
-            raw_r[:cut] = self._band_sums(spec_bass_r, lower[:cut], upper[:cut])
-        raw_l[cut:] = self._band_sums(spec_mid_l, lower[cut:], upper[cut:])
-        raw_r[cut:] = self._band_sums(spec_mid_r, lower[cut:], upper[cut:])
+            raw[:, :cut] = self._band_sums(spec_bass, lower[:cut], upper[:cut])
+        raw[:, cut:] = self._band_sums(spec_mid, lower[cut:], upper[cut:])
+        raw_l, raw_r = raw
 
         raw_l *= plan.eq
         raw_r *= plan.eq
