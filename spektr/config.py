@@ -12,8 +12,6 @@ import json
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
-from . import palette
-
 #: Band counts offered in the settings panel. 0 means "fit the terminal",
 #: which is what every mode did unconditionally before this was settable.
 BAND_CHOICES = (0, 8, 12, 16, 24, 32, 48, 64)
@@ -279,8 +277,16 @@ def _clamp_number(value, low: float, high: float, default: float) -> float:
 
 
 def _path(config_dir: Path | None = None):
-    root = config_dir if config_dir is not None else palette.config_dir()
-    return root / "config.json"
+    if config_dir is None:
+        # Imported here, not at the top: the palette pulls in the renderer and
+        # the UI toolkit, and ``spektr --version`` should not wait for either.
+        # Still through the palette module rather than a copy of the function,
+        # because that is the one place tests redirect the config folder --
+        # anything that bypassed it would write the real config from a test.
+        from . import palette
+
+        config_dir = palette.config_dir()
+    return config_dir / "config.json"
 
 
 def load(config_dir: Path | None = None) -> Settings:
