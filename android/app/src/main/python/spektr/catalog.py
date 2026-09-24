@@ -69,6 +69,7 @@ CATALOG: tuple[tuple[str, str, str, bool, str], ...] = (
     ('Valentine', 'fields', 'a heart that beats with the track, trailing smaller ones upward', False, 'field_hearts'),
     ('Valentine (o)', 'fields', 'the same heart drawn solid instead of stippled — needs a terminal that draws Unicode 16 octants', True, 'field_hearts'),
     ('Locket', 'fields', 'an outlined heart, pulsing rings of hearts outward on the beat', False, 'field_hearts'),
+    ('Locket Beat', 'fields', 'the locket heart, throwing exactly one ring on every beat', False, 'field_hearts'),
     ('Maelstrom', 'fields', 'a real fluid sim, stirred by the music', False, 'maelstrom'),
     ('Maelstrom (o)', 'fields', 'the same fluid as a solid field at two colours a cell — needs a terminal that draws Unicode 16 octants', True, 'maelstrom'),
     ('Vinyl', 'lofi', 'a record whose grooves light up as a radial spectrum', False, 'lofi'),
@@ -83,9 +84,10 @@ CATALOG: tuple[tuple[str, str, str, bool, str], ...] = (
     ('JP Bars', 'jp', 'a segmented LED meter whose bars peel off and rise as they fall away', False, 'jp'),
     ('JP Drift', 'jp', 'the meter shedding bulbs: they break off the top and fall, piling at the foot', False, 'jp'),
     ('JP Pulse', 'jp', 'the meter bent into a ring — a spoke of bulbs per band, chased on the beat', False, 'jp'),
-    ('JP Kit', 'jp', 'the meter with the drums in it — kick, snare and hat each throw their own ring', False, 'jp_music'),
     ('JP Sequencer', 'jp', 'the meter paged by the bar — four pages, one live, three holding their beat', False, 'jp_music'),
-    ('JP Key', 'jp', 'twelve ladders, one per note in fifths — the key powers its seven, the tonic gets a lamp', False, 'jp_music'),
+    ('JP Demo', 'jp', 'a head-unit demo sunburst: kicks blast it outward, snares turn it, hats twinkle the tips', False, 'jp_music'),
+    ('JP Clock', 'jp', 'a clock face that keeps the bar: the hand writes each bar in, the last four step inward', False, 'jp_music'),
+    ('JP Ribbons', 'jp', "three flowing ribbons of segments — the kick's, the snare's and the hats' — locked to the bar", False, 'jp_music'),
     ('None', 'off', 'nothing at all', False, 'modes'),
 )
 

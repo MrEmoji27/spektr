@@ -65,10 +65,13 @@ def rows() -> list[tuple[str, str, str, bool, str]]:
     for info in pkgutil.iter_modules(M.__path__):
         importlib.import_module(f"{M.__name__}.{info.name}")
     M.load_all()
+    # A name still pending after every module has loaded is one the old
+    # catalogue listed and no module registers any more: a removed mode. It
+    # has to go, or the catalogue would offer a mode that cannot draw.
     return [
         (m.name, m.group, m.blurb, m.hidden, m.fn.__module__.split(".")[-1])
         for m in M.MODES
-        if m.plugin is None
+        if m.plugin is None and m.name not in M._PENDING
     ]
 
 

@@ -56,6 +56,7 @@
   Valentine  a heart that beats with the track, trailing smaller ones upward
   Valentine (o) the same heart drawn solid instead of stippled — needs a terminal that draws Unicode 16 octants  (opt-in — settings, or --mode)
   Locket     an outlined heart, pulsing rings of hearts outward on the beat
+  Locket Beat the locket heart, throwing exactly one ring on every beat
   Maelstrom  a real fluid sim, stirred by the music
   Maelstrom (o) the same fluid as a solid field at two colours a cell — needs a terminal that draws Unicode 16 octants  (opt-in — settings, or --mode)
   Vinyl      a record whose grooves light up as a radial spectrum
@@ -70,7 +71,8 @@
   JP Bars    a segmented LED meter whose bars peel off and rise as they fall away
   JP Drift   the meter shedding bulbs: they break off the top and fall, piling at the foot
   JP Pulse   the meter bent into a ring — a spoke of bulbs per band, chased on the beat
-  JP Kit     the meter with the drums in it — kick, snare and hat each throw their own ring
   JP Sequencer the meter paged by the bar — four pages, one live, three holding their beat
-  JP Key     twelve ladders, one per note in fifths — the key powers its seven, the tonic gets a lamp
+  JP Demo    a head-unit demo sunburst: kicks blast it outward, snares turn it, hats twinkle the tips
+  JP Clock   a clock face that keeps the bar: the hand writes each bar in, the last four step inward
+  JP Ribbons three flowing ribbons of segments — the kick's, the snare's and the hats' — locked to the bar
   None       nothing at all

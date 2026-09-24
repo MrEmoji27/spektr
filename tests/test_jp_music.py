@@ -1,9 +1,9 @@
-"""The JP panels that hear the music say what they heard, and only that.
+"""The JP displays that hear the music say what they heard, and only that.
 
 Each of these stands on one stream of the 0.6.0 analysis, and each is held
-here to two things: it shows the thing it claims to (which drum, which beat,
-which key), and it draws nothing it was not told -- no ring without a drum,
-no downbeat without a known bar, no tonic without a settled key.
+here to two things: it shows the thing it claims to (which drum, where the
+bar is), and it draws nothing it was not told -- no blast without a kick, no
+downbeat without a known bar, no beat marks without a beat.
 """
 from __future__ import annotations
 
@@ -13,14 +13,14 @@ import pytest
 import spektr.modes as M
 from spektr.analysis import N_BANDS
 from spektr.modes import Ctx
-from spektr.modes.jp import _LED, _OFF, _PEAK, _TRAIL, bulb_row_index
+from spektr.modes.jp import _LED, _OFF, _PEAK, _TRAIL
 from spektr.palette import BUILTIN, Palette
 from spektr.render import SPACE
 
 PAL = Palette(BUILTIN["gruvbox"])
 DT = 1 / 60
 W, H = 96, 30
-NEW = ("JP Kit", "JP Sequencer", "JP Key")
+NEW = ("JP Demo", "JP Clock", "JP Ribbons", "JP Sequencer")
 NO_DRUMS = {"kick": 0.0, "snare": 0.0, "hat": 0.0}
 
 
@@ -50,54 +50,6 @@ def test_they_are_in_the_family(name):
 def test_silence_lights_nothing(name):
     codes, _ = draw(name, {}, level=0.0, chroma=np.zeros(12, np.float32))
     assert not (codes == _LED).any()
-
-
-# ── JP Kit ───────────────────────────────────────────────────────────────────
-
-def _rings_after(drums, secs=0.15):
-    """The ring bulbs a single hit leaves, with the plain panel taken away."""
-    st: dict = {}
-    t = 0.0
-    draw("JP Kit", st, t=t, level=0.1, onsets=1, onset_strength=0.9, drums=drums)
-    for _ in range(int(secs / DT)):
-        t += DT
-        out = draw("JP Kit", st, t=t, level=0.1, drums=drums)
-    plain = draw("JP Kit", {}, t=t, level=0.1, drums=NO_DRUMS)
-    return (out[0] == _LED) & (plain[0] != _LED)
-
-
-def _corners(mask):
-    rows, cols = mask.shape
-    low_left = mask[rows // 2:, : cols // 3].mean()
-    high_right = mask[: rows // 2, 2 * cols // 3:].mean()
-    return low_left, high_right
-
-
-def test_a_kick_rolls_out_of_the_bass_corner():
-    ll, hr = _corners(_rings_after({"kick": 1.0, "snare": 0.0, "hat": 0.0}))
-    assert ll > hr and ll > 0.02
-
-
-def test_a_hat_flickers_out_of_the_treble_corner():
-    ll, hr = _corners(_rings_after({"kick": 0.0, "snare": 0.0, "hat": 1.0}, secs=0.08))
-    assert hr > ll and hr > 0.02
-
-
-def test_no_drum_throws_no_ring():
-    assert not _rings_after(NO_DRUMS).any()
-
-
-def test_a_trace_of_a_drum_is_not_that_drum():
-    assert not _rings_after({"kick": 0.2, "snare": 0.1, "hat": 0.1}).any()
-
-
-def test_the_rings_never_cover_the_reading():
-    st: dict = {}
-    draw("JP Kit", st, level=0.5, onsets=1, onset_strength=1.0,
-         drums={"kick": 1.0, "snare": 1.0, "hat": 1.0})
-    ringed = draw("JP Kit", st, t=0.1, level=0.5, drums=NO_DRUMS)[0]
-    plain = draw("JP Kit", {}, t=0.1, level=0.5, drums=NO_DRUMS)[0]
-    assert ((plain == _LED) <= (ringed == _LED)).all()
 
 
 # ── JP Sequencer ─────────────────────────────────────────────────────────────
@@ -145,61 +97,12 @@ def test_held_pages_are_drawn_a_weight_lighter():
     assert (live == _LED).any()
 
 
-# ── JP Key ───────────────────────────────────────────────────────────────────
-
-FIFTHS = tuple((7 * k) % 12 for k in range(12))
-
-
-def _columns(codes):
-    """For each of the 12 note columns, its cells, in fifths order."""
-    from spektr.modes import band_columns
-
-    col, active = band_columns(W, 12)
-    return [codes[:, (col == k) & active] for k in range(12)]
-
-
-def test_a_key_powers_its_seven_notes_and_no_others():
-    codes, _ = draw("JP Key", {}, level=0.3, chroma=np.full(12, 0.5, np.float32),
-                    key="C major", key_confidence=0.9)
-    powered = [bool((c == _OFF).any() or (c == _LED).any() and (c == _OFF).any())
-               for c in _columns(codes)]
-    names = [("C", "G", "D", "A", "E", "B", "F#", "C#", "G#", "D#", "A#", "F")[k]
-             for k in range(12)]
-    lattice = {names[k] for k, c in enumerate(_columns(codes)) if (c == _OFF).any()}
-    assert lattice == {"F", "C", "G", "D", "A", "E", "B"}, (lattice, powered)
-
-
-def test_the_tonic_has_its_lamp():
-    codes, _ = draw("JP Key", {}, level=0.05, chroma=np.full(12, 0.05, np.float32),
-                    key="A minor", key_confidence=0.9)
-    top = bulb_row_index(H)[-1]
-    cols = _columns(codes)
-    a = FIFTHS.index(9)
-    assert (cols[a][top] == _PEAK).any()
-    assert not any((c[top] == _PEAK).any() for k, c in enumerate(cols) if k != a)
-
-
-def test_an_uncertain_key_powers_everything_and_marks_nothing():
-    codes, _ = draw("JP Key", {}, level=0.3, chroma=np.full(12, 0.02, np.float32),
-                    key=None, key_uncertain=True, key_confidence=0.3)
-    assert all((c == _OFF).any() for c in _columns(codes))
-    assert not (codes == _PEAK).any()
-
-
-def test_a_note_lights_its_own_column():
-    chroma = np.zeros(12, np.float32)
-    chroma[2] = 1.0                                   # D
-    codes, _ = draw("JP Key", {}, level=0.5, chroma=chroma)
-    lit = [bool((c == _LED).any()) for c in _columns(codes)]
-    assert lit == [k == FIFTHS.index(2) for k in range(12)]
-
-
 # ── through the real widget, on the drum corpus ──────────────────────────────
 
 #: Beat response on ``four_on_floor``, measured when these were added, as in
 #: ``tests/test_reactivity.py``. Not pinned there: an LED panel is sparse on
 #: purpose and sits under that file's churn floor, as ``JP Bars`` does.
-RESPONSE = {"JP Kit": 3.72, "JP Sequencer": 4.46, "JP Key": 5.22}
+RESPONSE = {"JP Demo": 4.63, "JP Clock": 1.70, "JP Ribbons": 1.90, "JP Sequencer": 4.46}
 
 
 @pytest.mark.parametrize("name", NEW)
@@ -218,3 +121,95 @@ def test_the_beat_shows(name, monkeypatch):
     got = R.measure(name, samples, rate, now)
     assert got["lost"] == 0
     assert got["beat_ratio"] >= RESPONSE[name] * 0.8, got
+
+
+# ── JP Demo ──────────────────────────────────────────────────────────────────
+
+from spektr.render import BRAILLE_BASE  # noqa: E402
+
+
+def lit_dots(codes) -> int:
+    bits = (codes - BRAILLE_BASE).clip(0, 255).astype(np.uint8)
+    return int(np.unpackbits(bits).sum())
+
+
+def _demo_after(drums, secs=0.1, onset=True):
+    st: dict = {}
+    draw("JP Demo", st, t=0.0, level=0.1, onsets=int(onset), onset_strength=0.9, drums=drums)
+    return draw("JP Demo", st, t=secs, level=0.1, drums=drums)[0]
+
+
+def test_a_kick_blasts_the_burst():
+    blast = _demo_after({"kick": 1.0, "snare": 0.0, "hat": 0.0})
+    calm = _demo_after(NO_DRUMS)
+    # The ring is a band two segments deep through every ray: on this frame
+    # about a sixth more dots than the burst alone.
+    assert lit_dots(blast) > lit_dots(calm) * 1.1
+
+
+def test_a_snare_turns_the_burst():
+    turned = _demo_after({"kick": 0.0, "snare": 1.0, "hat": 0.0}, secs=0.3)
+    calm = _demo_after(NO_DRUMS, secs=0.3)
+    assert not np.array_equal(turned, calm)
+
+
+def test_no_drum_no_gesture():
+    assert np.array_equal(_demo_after(NO_DRUMS), _demo_after(NO_DRUMS, onset=False))
+
+
+# ── JP Clock ─────────────────────────────────────────────────────────────────
+
+def test_each_bar_steps_inward():
+    st: dict = {}
+    for i in range(120):                       # one bar at 120 BPM
+        draw("JP Clock", st, t=i * DT, level=0.6, tempo_bpm=120.0,
+             bar_phase=(i * DT / 2.0) % 1.0, bar_confidence=0.9)
+    rec = next(v for k, v in st.items() if k[0] == "jp_clock")["rec"]
+    written = rec[0].copy()
+    for i in range(120, 125):                  # over the downbeat
+        draw("JP Clock", st, t=i * DT, level=0.0, tempo_bpm=120.0,
+             bar_phase=(i * DT / 2.0) % 1.0, bar_confidence=0.9)
+    rec = next(v for k, v in st.items() if k[0] == "jp_clock")["rec"]
+    assert written.max() > 0.3
+    assert np.allclose(rec[1], written)
+
+
+def _marks_lit(**kw) -> int:
+    """Cells of the beat marks drawn in a lit colour rather than the glass's.
+    A lit mark and an unlit one are the same dots; only the colour says."""
+    from spektr.modes.jp import recede_index
+
+    st: dict = {}
+    codes, cidx = draw("JP Clock", st, level=0.0, **kw)
+    geo = next(v for k, v in st.items() if k[0] == "jp_clock_geo")
+    # Cells holding mark dots and nothing from the face inside them: the tip
+    # of the hand can share a cell with the mark at twelve.
+    cells = geo["tick"].reshape(H, 4, W, 2).any(axis=(1, 3))
+    inner = (geo["r"] < 0.87).reshape(H, 4, W, 2).any(axis=(1, 3))
+    cells &= ~inner
+    return int((cells & (cidx != recede_index(PAL))).sum())
+
+
+def test_the_beat_mark_lights_and_only_with_a_beat():
+    assert _marks_lit(tempo_bpm=120.0, bar_phase=0.01, bar_confidence=0.9) > 0
+    assert _marks_lit(tempo_bpm=0.0) == 0
+
+
+# ── JP Ribbons ───────────────────────────────────────────────────────────────
+
+def test_a_kick_throws_the_low_ribbon():
+    st_hit: dict = {}
+    st_calm: dict = {}
+    draw("JP Ribbons", st_hit, level=0.2, onsets=1, onset_strength=1.0,
+         drums={"kick": 1.0, "snare": 0.0, "hat": 0.0}, tempo_bpm=120.0)
+    draw("JP Ribbons", st_calm, level=0.2, tempo_bpm=120.0)
+    hit = draw("JP Ribbons", st_hit, t=DT, level=0.2, tempo_bpm=120.0)[0]
+    calm = draw("JP Ribbons", st_calm, t=DT, level=0.2, tempo_bpm=120.0)[0]
+    low = slice(H // 2, H)
+    assert lit_dots(hit[low]) > lit_dots(calm[low])
+
+
+def test_the_ribbons_come_round_with_the_bar():
+    a = draw("JP Ribbons", {}, level=0.3, tempo_bpm=120.0, bar_phase=0.3, bar_confidence=0.9)[0]
+    b = draw("JP Ribbons", {}, t=7.0, level=0.3, tempo_bpm=120.0, bar_phase=0.3, bar_confidence=0.9)[0]
+    assert np.array_equal(a, b)
