@@ -34,7 +34,7 @@ def _first_frame_ms(name: str, state: dict) -> float:
 
 def test_a_warmed_mode_draws_its_first_frame_at_its_steady_cost():
     cold = _first_frame_ms("Valentine", {})
-    warmer = ModeWarmer()
+    warmer = ModeWarmer(settle=0.0)
     state: dict = {}
     warmer.request("Valentine", state, W, H, PAL)
     assert warmer.wait("Valentine", timeout=10.0)
@@ -51,7 +51,7 @@ def test_the_warmer_works_off_the_calling_thread():
         return M.empty(ctx.w, ctx.h)
 
     M.mode("Warm Spy", group="test")(spy)
-    warmer = ModeWarmer()
+    warmer = ModeWarmer(settle=0.0)
     try:
         warmer.request("Warm Spy", {}, W, H, PAL)
         assert warmer.wait("Warm Spy", timeout=10.0)
@@ -66,7 +66,7 @@ def test_the_warmer_works_off_the_calling_thread():
 def test_a_mode_that_fails_to_warm_is_left_for_the_render_path():
     """The render path owns failures: it quarantines, it reports. A warm-up
     that raised must not take the app down or mark the mode as ready."""
-    warmer = ModeWarmer()
+    warmer = ModeWarmer(settle=0.0)
     state: dict = {}
 
     def boom(ctx):
@@ -88,7 +88,7 @@ def test_the_warm_up_does_not_touch_what_the_mode_will_draw():
     cold: the warm-up builds scratch, it does not advance the animation."""
     cold_state: dict = {}
     warm_state: dict = {}
-    warmer = ModeWarmer()
+    warmer = ModeWarmer(settle=0.0)
     warmer.request("Bars", warm_state, W, H, PAL)
     assert warmer.wait("Bars", timeout=10.0)
     warmer.stop()

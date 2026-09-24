@@ -41,6 +41,13 @@ from ..modes import Ctx
 #: again by the next request, so an idle app is not holding a thread open.
 IDLE_S = 30.0
 
+#: How long after it is first asked the thread starts, and the pause between
+#: one warm-up and the next. The first request comes as the app mounts, and a
+#: warm-up then competes with the first paint for the interpreter -- the one
+#: frame nobody should wait on for the sake of one that may never be shown.
+SETTLE_S = 0.75
+GAP_S = 0.05
+
 
 def warm_ctx(w: int, h: int, palette, state: dict, level: float = 0.0) -> Ctx:
     """A frame with nothing in it: bands at ``level``, no time passing."""
@@ -57,7 +64,9 @@ def warm_ctx(w: int, h: int, palette, state: dict, level: float = 0.0) -> Ctx:
 class ModeWarmer:
     """One background thread drawing first frames for modes not yet shown."""
 
-    def __init__(self) -> None:
+    def __init__(self, settle: float = SETTLE_S, gap: float = GAP_S) -> None:
+        self.settle = settle
+        self.gap = gap
         self._cv = threading.Condition()
         self._queue: list[tuple] = []
         self._running: str | None = None
@@ -113,6 +122,8 @@ class ModeWarmer:
     # ── the thread ───────────────────────────────────────────────────────────
 
     def _run(self) -> None:
+        with self._cv:
+            self._cv.wait_for(lambda: self._stopped, timeout=self.settle)
         while True:
             with self._cv:
                 if not self._queue and not self._stopped:
@@ -130,6 +141,8 @@ class ModeWarmer:
                 with self._cv:
                     self._running = None
                     self._cv.notify_all()
+                    # Leave the render path a breath between two warm-ups.
+                    self._cv.wait_for(lambda: self._stopped, timeout=self.gap)
 
     @staticmethod
     def _warm(name: str, state: dict, w: int, h: int, palette) -> None:

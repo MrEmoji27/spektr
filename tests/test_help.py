@@ -245,11 +245,19 @@ def test_the_footer_still_reaches_quit_at_eighty_columns():
         app = Spektr(settings=Settings(fps=15, chrome=True))
         app.notify = lambda *a, **k: None  # type: ignore[method-assign]
         async with app.run_test(size=(width, 10)) as pilot:
-            await pilot.pause()
-            cons = Console(width=width, record=True, file=io.StringIO())
-            cons.print(app.screen._compositor)
-            text = cons.export_text()
-            return text.splitlines()[-1] if text.strip() else ""
+            # Read the footer once it has been painted. One pause is usually
+            # enough and under a loaded machine sometimes is not, and an
+            # empty row would fail as "Help fell off" when nothing did.
+            row = ""
+            for _ in range(20):
+                await pilot.pause()
+                cons = Console(width=width, record=True, file=io.StringIO())
+                cons.print(app.screen._compositor)
+                text = cons.export_text()
+                row = text.splitlines()[-1] if text.strip() else ""
+                if row.strip():
+                    break
+            return row
 
     row = asyncio.run(footer(80))
     for want in ("Help", "Quit"):
