@@ -222,3 +222,12 @@ def test_a_louder_hit_landing_soon_still_renames_the_beat():
         "sixteenths at 174 BPM are 86 ms apart; a window at or above that "
         "would merge genuine fast drumming into one hit"
     )
+
+
+def test_a_hit_is_named_by_its_strongest_drum_not_a_fixed_floor():
+    """A clean kick reads about 0.2 -- the likelihoods are shares of a hit --
+    so asking for 0.35 before believing in a kick never believed in one."""
+    assert drums.named({"kick": 0.19, "snare": 0.0, "hat": 0.0}) == ["kick"]
+    assert drums.named({"kick": 0.0, "snare": 0.5, "hat": 0.4}) == ["snare", "hat"]
+    assert drums.named({"kick": 0.6, "snare": 0.2, "hat": 0.0}) == ["kick"]
+    assert drums.named({"kick": 0.0, "snare": 0.0, "hat": 0.0}) == []

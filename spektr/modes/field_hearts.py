@@ -7,6 +7,7 @@ import math
 import numpy as np
 
 from ..analysis import resample_bands
+from ..audio.drums import named
 from ..render import (
     cell_max,
     pack_braille,
@@ -628,10 +629,12 @@ def locket(ctx: Ctx):
 _SHOT_RINGS = 8
 
 #: How each drum's ring flies: width against a plain hit, speed against a
-#: plain hit, and brightness. A kick is a thick ring that takes its time, a
-#: hat a thin one that is gone in a moment. Anything the drums cannot name
+#: plain hit, and brightness. A kick is a thick heavy ring, a hat a thin one
+#: that is gone in a moment. The kick flies at a plain hit's speed: slower, it
+#: kept the screen moving through the gap after every beat and the hit read
+#: less. Anything the drums cannot name
 #: (``ctx.drums`` all low) flies as a plain hit.
-_SHOT = {"kick": (1.7, 0.8, 1.0), "snare": (1.1, 1.05, 0.9), "hat": (0.6, 1.5, 0.65)}
+_SHOT = {"kick": (1.8, 1.0, 1.0), "snare": (1.1, 1.05, 0.9), "hat": (0.6, 1.5, 0.65)}
 
 #: A plain hit's ring: seconds to the edge of the frame, and its width as a
 #: share of the heart-scale. Thin, with a crisp edge, so rings in flight
@@ -648,7 +651,7 @@ def locket_beat(ctx: Ctx):
     ``Locket`` keeps its sky full: a free-running release fills in when
     nothing hits and one ring is always kept alive, so its rings read as a
     cascade whatever is playing. Here every ring is a hit. A kick shoots a
-    thick ring that takes its time, a snare a lighter quicker one, a hat a
+    thick heavy ring, a snare a lighter one, a hat a
     thin flick that is gone almost at once; a harder hit is brighter and
     faster. Several can be in flight, so a fill is a burst of rings and a
     sparse verse is one now and then. Nothing hits, nothing flies.
@@ -677,9 +680,10 @@ def locket_beat(ctx: Ctx):
     core = float(0.22 + 0.04 * bass + 0.05 * st["beat"])
 
     if ctx.onsets:
-        drums = ctx.drums or {}
-        name = max(("kick", "snare", "hat"), key=lambda k: float(drums.get(k, 0.0)))
-        wide, speed, bright = _SHOT[name] if float(drums.get(name, 0.0)) >= 0.35             else (1.0, 1.0, 0.85)
+        # The strongest drum in the hit shapes its ring; a hit no drum names
+        # flies as a plain one. See spektr.audio.drums.named.
+        hit = named(ctx.drums or {})
+        wide, speed, bright = _SHOT[hit[0]] if hit else (1.0, 1.0, 0.85)
         slot = int(np.argmin(st["born"]))
         st["born"][slot] = ctx.t
         st["r0"][slot] = core * 0.80

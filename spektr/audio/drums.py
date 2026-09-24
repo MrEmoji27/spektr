@@ -119,6 +119,30 @@ def classify(flux: np.ndarray, freqs: np.ndarray) -> dict[str, float]:
     return {k: round(float(v), 4) if v >= FLOOR else 0.0 for k, v in out.items()}
 
 
+#: A drum is named in a hit when its likelihood is at least this share of the
+#: strongest drum's. A snare with plenty of hat in it names both; a kick with
+#: a trace of snare names the kick.
+NAMED_SHARE = 0.6
+
+
+def named(likely: dict) -> list[str]:
+    """The drums a hit is, strongest first, from :func:`classify`'s answer.
+
+    Relative, not a fixed floor. The likelihoods are shares of a hit's rise,
+    and a clean kick on its own reads about 0.2: a mode that asked for 0.35
+    before it would believe in a kick never believed in one. :data:`FLOOR`
+    has already zeroed what is not a drum at all, so what is left is judged
+    against the strongest.
+    """
+    top = max((float(v) for v in likely.values()), default=0.0)
+    if top <= 0.0:
+        return []
+    return sorted(
+        (k for k, v in likely.items() if float(v) >= top * NAMED_SHARE),
+        key=lambda k: -float(likely[k]),
+    )
+
+
 def band_freqs(n: int, low: float = 50.0, high: float = 10000.0) -> np.ndarray:
     """Centre frequency of each of ``n`` log-spaced bands.
 

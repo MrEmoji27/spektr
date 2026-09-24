@@ -14,7 +14,7 @@ DT = 1 / 60
 W, H = 100, 30
 
 #: Beat response on four_on_floor, measured when the rings became shots.
-RESPONSE = 2.42
+RESPONSE = 2.55
 
 
 def frame(state, t, onsets=0, level=0.3, **kw):
