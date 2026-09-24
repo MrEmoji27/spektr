@@ -1114,6 +1114,15 @@ class Spektr(App):
                 "reactive or smooth movement",
             ),
             Setting(
+                "morph",
+                "morph",
+                config.MORPH_CHOICES,
+                lambda v: v,
+                viz.set_morph,
+                "clean: one front, the new mode's own entrance; "
+                "classic: the 0.5.5 morph, pictures bent into each other",
+            ),
+            Setting(
                 "sensitivity",
                 "sensitivity",
                 (0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0),
@@ -1235,6 +1244,7 @@ class Spektr(App):
             "fps": s.fps,
             "bands": s.bands,
             "motion": s.motion,
+            "morph": s.morph,
             "fine_modes": s.fine_modes,
             "eco": s.eco,
             "cells": s.cells,

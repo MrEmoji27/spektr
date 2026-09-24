@@ -187,12 +187,62 @@ def test_the_clean_front_still_goes_the_family_s_way():
     assert centre > edge + 0.3
 
 
-def test_ahead_of_the_front_the_old_picture_is_untouched():
+def _old_left(entrance: str, progress: float) -> float:
     old, new = _block_pair()
-    out = dissolve.blend(old, new, MID, style=dissolve.Style(entrance="rise", **CLEAN))
-    ahead = out[0] != NEW_GLYPH
-    assert (out[0][ahead] == OLD_GLYPH).all()
-    assert (out[1][ahead] == 5).all()
+    out = dissolve.blend(old, new, progress, style=dissolve.Style(entrance=entrance, **CLEAN))
+    return float((out[0] == OLD_GLYPH).mean())
+
+
+@pytest.mark.parametrize("entrance", dissolve.ENTRANCE_NAMES)
+def test_the_old_picture_does_not_linger_as_a_ghost(entrance):
+    """Ahead of the front the old picture used to stand whole, still moving,
+    until the front reached it -- for a burst that is the very end, and two
+    complete modes on screen at once is what ghosting looks like. It thins
+    away instead, and is gone before the morph is."""
+    assert _old_left(entrance, 0.05) > 0.8          # it starts as itself
+    assert _old_left(entrance, 0.5) < _old_left(entrance, 0.3)
+    assert _old_left(entrance, dissolve.FADE_BY) == 0.0
+
+
+def test_a_new_dot_is_drawn_in_the_new_picture_s_colour():
+    old = _braille_new(5)
+    new = _braille_new(6)
+    new = (new[0], np.full((ROWS, COLS), 40, np.int32))
+    for p in (0.3, 0.5, 0.7):
+        out = dissolve.blend(old, new, p, style=dissolve.Style(entrance="burst", **CLEAN))
+        dots_out = dissolve._braille_dots(out[0])
+        dots_old = dissolve._braille_dots(old[0])
+        # a cell whose lit dots are all new ones is coloured as the new picture
+        only_new = (dissolve._dot_count(dots_out & ~dots_old) > 0) &             (dissolve._dot_count(dots_out & dots_old) == 0)
+        assert (out[1][only_new] == 40).all()
+
+
+def test_the_classic_morph_is_still_there():
+    """The 0.5.5 morph, as a setting: pictures bent onto each other, the swap
+    in the window it shipped with."""
+    style = dissolve.Style(handover=dissolve.CLASSIC_HANDOVER)
+    assert style.travel and style.entrance is None
+    old, new = _block_pair()
+    # Without the wavefront's head start, to read the window itself.
+    windowed = dissolve.Style(handover=dissolve.CLASSIC_HANDOVER, wavefront=0.0)
+    early = dissolve.blend(old, new, 0.28, style=windowed)
+    assert not (early[0] == NEW_GLYPH).any()         # nothing swaps before 0.30
+    assert (dissolve.blend(old, new, 0.95, style=style)[0] == NEW_GLYPH).all()
+
+
+def test_the_setting_picks_the_morph():
+    from spektr.config import Settings
+    from spektr.widget import AudioVisualizer
+
+    viz = AudioVisualizer(settings=Settings())
+    frame = type("F", (), {"tempo_bpm": 0.0})()
+    assert viz._morph_style(frame, False).travel is False
+    assert viz.set_morph("classic") == "classic"
+    assert viz.settings.morph == "classic"
+    style = viz._morph_style(frame, False)
+    assert style.travel and style.handover == dissolve.CLASSIC_HANDOVER
+    assert viz.set_morph("nonsense") == "classic"
+    assert Settings(morph="nonsense").clamp().morph == "clean"
 
 
 def test_a_frame_with_a_background_keeps_it_under_old_glyphs():

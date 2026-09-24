@@ -29,6 +29,13 @@ MOTION_CHOICES = ("snappy", "glide")
 #: What an unknown or missing ``motion`` value falls back to.
 MOTION_DEFAULT = "snappy"
 
+#: How a switch between modes is drawn. ``clean`` is one front arriving the
+#: way the incoming family moves; ``classic`` is the 0.5.5 morph, which bends
+#: the two pictures onto each other's shape while their dots swap. Stored
+#: verbatim, like the motion names.
+MORPH_CHOICES = ("clean", "classic")
+MORPH_DEFAULT = "clean"
+
 #: ``fps`` value meaning "run as fast as the display can show". Stored as the
 #: sentinel rather than as a resolved number so the preference survives moving
 #: the terminal to a different monitor: what was saved is the *intent*.
@@ -97,6 +104,8 @@ class Settings:
     #: animated. Applied live from the settings panel via
     #: ``AudioVisualizer.set_motion``.
     motion: str = MOTION_DEFAULT
+    #: How a switch between modes is drawn, one of :data:`MORPH_CHOICES`.
+    morph: str = MORPH_DEFAULT
     #: Leave the visualizer's empty cells to the terminal instead of painting
     #: the theme's background into them, so a terminal running with opacity
     #: or acrylic shows the desktop through the picture.
@@ -213,6 +222,7 @@ class Settings:
         # renamed profile should fall back rather than be rejected wholesale,
         # same policy as mode/theme above.
         self.motion = self.motion if self.motion in MOTION_CHOICES else MOTION_DEFAULT
+        self.morph = self.morph if self.morph in MORPH_CHOICES else MORPH_DEFAULT
         self.fine_modes = bool(self.fine_modes)
         self.chrome = bool(self.chrome)
         self.transparent_background = bool(self.transparent_background)

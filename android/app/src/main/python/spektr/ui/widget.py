@@ -28,6 +28,7 @@ from ..config import (
     ECO_FPS,
     FPS_MAX,
     FPS_UNLIMITED,
+    MORPH_CHOICES,
     MOTION_CHOICES,
     MOTION_DEFAULT,
     Settings,
@@ -445,6 +446,16 @@ class AudioVisualizer(Widget):
         tempo = float(getattr(frame, "tempo_bpm", 0.0) or 0.0)
         if tempo > 0.0:
             scale *= max(0.7, min(1.4, TEMPO_REFERENCE / tempo))
+        if self.settings.morph == "classic":
+            # The 0.5.5 morph, kept as a choice: both pictures bent onto each
+            # other's shape while the dots swap behind one sweep, in the swap
+            # window it shipped with.
+            return dissolve.Style(
+                sweep=dissolve.SWEEP * scale,
+                wavefront=dissolve.WAVEFRONT * scale,
+                levels=self._spring.x,
+                handover=dissolve.CLASSIC_HANDOVER,
+            )
         # The incoming picture arrives the way its family moves: bars rise,
         # particles burst out, a field ripples. See dissolve.ENTRANCES.
         incoming = mode_registry.get(self.mode_name)
@@ -677,6 +688,16 @@ class AudioVisualizer(Widget):
             self._strips = None
             self.refresh()
         return name
+
+    def set_morph(self, name: str) -> str:
+        """Choose how a switch between modes is drawn -- the settings panel's
+        morph row. ``clean`` is one front in the incoming family's gesture;
+        ``classic`` is the 0.5.5 morph, which bends the two pictures onto each
+        other. Takes effect from the next switch; returns what was taken."""
+        name = str(name)
+        if name in MORPH_CHOICES:
+            self.settings.morph = name
+        return self.settings.morph
 
     def set_transparent_background(self, on: bool) -> bool:
         """Leave empty cells to the terminal, or paint the theme into them, live.

@@ -74,6 +74,11 @@ TRAVEL = 0.80
 #: cross-family morph was one frame held still.
 HANDOVER = (0.22, 0.98)
 
+#: The window the classic morph swaps in, as it shipped in 0.5.5: the shapes
+#: bend onto each other first and the colours land after they have stopped.
+#: Kept because the classic morph is still offered (``morph = "classic"``).
+CLASSIC_HANDOVER = (0.30, 0.90)
+
 #: What one beat adds to the travel, and the most a morph's beats can add
 #: between them. A hit that lands mid-morph shoves the shape on towards the
 #: incoming picture, so a change lands with the music rather than to its own
@@ -190,6 +195,12 @@ ENTRANCE_PUSH = 0.5
 RIPPLE_RINGS = 3.0
 RIPPLE_DEPTH = 0.12
 
+#: The share of a clean morph by which the old picture has thinned away
+#: completely, wherever the front has not yet reached. Before three quarters,
+#: so the last stretch of a burst or a ripple is the new picture arriving into
+#: an empty frame rather than into a ghost of the one it replaced.
+FADE_BY = 0.75
+
 #: Between two kinds of frame, how far the incoming picture travels out of
 #: the old shape on its own before the entrance takes over. All the way, and
 #: it had reached its own form by 0.8 of the morph and the entrance had
@@ -229,6 +240,8 @@ class Style:
     #: most of the cost of a morph and most of the mess. Off, the old picture
     #: holds still ahead of the front and the new one is itself behind it.
     travel: bool = True
+    #: When the swap runs, as shares of the morph. See :data:`HANDOVER`.
+    handover: tuple[float, float] = HANDOVER
 
 
 def ease(p):
@@ -312,15 +325,17 @@ def _travel(progress: float, push: float = 0.0, sweep: float = 0.0,
 
 
 def _handover(progress: float, wavefront: float = 0.0,
-              delay: np.ndarray | None = None):
+              delay: np.ndarray | None = None,
+              window: tuple[float, float] = HANDOVER):
     """Progress through the swap itself, held back until the ink has moved.
 
     ``delay`` gives each column the same head start the sweep gives it, so the
     swap crosses the frame behind the front rather than arriving everywhere at
     once. The trailing column keeps the plain window, so the colours still
-    finish where they finished before.
+    finish where they finished before. ``window`` is when the swap runs; see
+    :data:`HANDOVER` and :data:`CLASSIC_HANDOVER`.
     """
-    lo, hi = HANDOVER
+    lo, hi = window
     if delay is None or wavefront <= 0.0:
         return ease((progress - lo) / (hi - lo))
     return ease((progress + wavefront * (1.0 - delay) - lo) / (hi - lo))
@@ -389,8 +404,8 @@ def _arrival(progress: float, style, shape: tuple[int, int], aspect: float,
     rows, cols = shape
     if style.entrance is None:
         return _handover(progress, style.wavefront,
-                         _sweep(cols, style.levels, style.music))
-    lo, hi = HANDOVER
+                         _sweep(cols, style.levels, style.music), style.handover)
+    lo, hi = style.handover
     order = _order(rows, cols, style.entrance, aspect, style.levels, style.music)
     span = hi - lo
     t = progress + push * ENTRANCE_PUSH - lo - span * ENTRANCE_FRONT * order
@@ -748,28 +763,50 @@ def _grow(old: tuple, new: tuple, kind_old: tuple[int, bool],
 def _reveal(old: tuple, new: tuple, kind_old: tuple[int, bool],
             kind_new: tuple[int, bool], progress: float, push: float,
             style: Style) -> tuple:
-    """The new picture behind the front, the old one still ahead of it.
+    """The new picture behind the front; ahead of it, the old one fading.
 
     No bending of either picture: the front is the whole of the motion. Two
     braille frames mix dot by dot, so the front's edge is a dither of single
     dots; anything else mixes cell by cell, in the incoming frame's kind --
-    a braille cell and a block cell are both just a glyph and a colour, and
-    ahead of the front a cell keeps whatever it was drawing.
+    a braille cell and a block cell are both just a glyph and a colour.
+
+    Ahead of the front the old picture thins away (see :data:`FADE_BY`). It
+    used to stand there whole and still animating until the front reached it,
+    which for a burst or a ripple is the very end: two complete modes on
+    screen at once for most of the change, which is what ghosting is.
     """
+    fade = float(ease(min(1.0, progress / FADE_BY)))
     if kind_old == kind_new == (2, True):
         dots_old = _braille_dots(old[0])
         dots_new = _braille_dots(new[0])
         rank = _rank(*dots_new.shape)
         arrived = rank < _arrival(progress, style, rank.shape, 1.0, push)
-        codes = pack_braille(np.where(arrived, dots_new, dots_old))
-        return codes, np.where(_dot_count(arrived) >= 4, new[1], old[1])
+        # The dots that go first are the ones the front reaches last, so the
+        # thinning and the arrival do not both empty the same place.
+        kept = dots_old & (rank < np.float32(1.0 - fade))
+        showing_new = arrived & dots_new
+        showing_old = ~arrived & kept
+        codes = pack_braille(showing_new | showing_old)
+        # A cell takes the colour of whichever picture owns more of its lit
+        # dots: taking the new colour only once half the cell had arrived drew
+        # the first new dots in the old mode's colour.
+        own = _dot_count(showing_new) >= _dot_count(showing_old)
+        return codes, np.where(own, new[1], old[1])
     rows, cols = new[0].shape
     rank = _rank(rows, cols)
     cells = rank < _arrival(progress, style, rank.shape, 2.0, push)
+    kept = ~cells & (rank < np.float32(1.0 - fade))
+    gone = ~cells & ~kept
     if len(new) == len(old):
-        return tuple(np.where(cells, n, o) for o, n in zip(old, new))
-    codes = np.where(cells, new[0], old[0])
-    fg = np.where(cells, new[1], old[1])
+        out = [np.where(cells, n, o) for o, n in zip(old, new)]
+        out[0] = np.where(gone, SPACE, out[0])
+        # A faded cell shows what the new picture's ground is there, not what
+        # the old one's was.
+        for i in range(1, len(out)):
+            out[i] = np.where(gone, new[i], out[i])
+        return tuple(out)
+    codes = np.where(cells, new[0], np.where(kept, old[0], SPACE))
+    fg = np.where(cells | gone, new[1], old[1])
     if len(new) == 2:
         return codes, fg
     # The old frame had no background of its own: ahead of the front its
