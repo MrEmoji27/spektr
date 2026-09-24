@@ -9,7 +9,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-00c853)](https://github.com/MrEmoji27/spektr/blob/main/LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20·%20Linux%20·%20macOS-546e7a)](#how-it-captures-audio)
-[![Modes](https://img.shields.io/badge/render%20modes-65-ff6d00)](#modes)
+[![Modes](https://img.shields.io/badge/render%20modes-62-ff6d00)](#modes)
 [![Themes](https://img.shields.io/badge/themes-55-7c4dff)](#themes)
 [![Built with Textual](https://img.shields.io/badge/built%20with-Textual-5e35b1)](https://textual.textualize.io/)
 
@@ -22,7 +22,7 @@ Play music anywhere, from Spotify to a browser tab to a game, and spektr draws i
 terminal. You do not point it at a file or sign in to anything. It listens to whatever your
 speakers are playing.
 
-**Sixty-five render modes. Fifty-five themes. 60 fps, or your display's.**
+**Sixty-two render modes. Fifty-five themes. 60 fps, or your display's.**
 
 There is an Android build too: the same engine on a tablet, as an ambient display for your
 desk. See [spektr on Android](#spektr-on-android).
@@ -128,17 +128,13 @@ filter. They are listed here in the order the picker cycles them.
 | **Auroras** | a light ribbon whose lower rim rides the spectrum | **Snow** | snowfall in three planes, gusting and lying in drifts |
 | **JP Bars** | a segmented LED meter whose crest peels off and rises, like notes leaving a key | **JP Drift** | the meter shedding bulbs, they break off the top and fall, piling at the foot |
 | **JP Pulse** | the meter bent into a ring, a spoke of bulbs per band, chased on the beat | **JP Sequencer** | the meter paged by the bar, four pages, one live and three holding their beat |
-| **JP Demo** | a head unit's demo sunburst, kicks blast it out, snares turn it, hats twinkle the tips | **JP Clock** | a clock face that keeps the bar, the hand writes each bar in and the last four step inward |
-| **JP Ribbons** | three flowing ribbons of segments, the kick's, the snare's and the hats', locked to the bar | | |
 
-The seven **JP** modes are inspired by Japanese car audio hardware. The
-first four draw the LED level meter from in-dash head units and equalisers,
-unlit bulbs showing as faint dots, each with one idea from another mode:
-**Keys**' note roll, **Rain**'s falling drops, **Radial**'s circle and
-**Spectro**'s memory. **Demo**, **Clock** and **Ribbons** leave the meter
-behind and take the head unit's graphic displays instead, drawn in segments
-on glass. They listen for more than the level: which drum hit, and where the
-bar is. When they are not sure, they show less rather than guess.
+The four **JP** modes are inspired by Japanese car audio hardware, the LED
+level meters on in-dash head units and equalisers. All four draw the same
+meter, with the unlit bulbs showing as faint dots, and each adds one idea from
+another mode: **Keys**' note roll, **Rain**'s falling drops, **Radial**'s
+circle and **Spectro**'s memory. **JP Sequencer** also listens for where the
+bar is, and when it is not sure, it claims no downbeat.
 
 > [!NOTE]
 > The JP modes are still young. They may be changed, improved or reworked.
@@ -159,8 +155,8 @@ shared reactivity budget. Each one maps real band data into its geometry,
 so what the music changes is what the object is doing, not just how bright
 the picture is.
 
-A sixty-sixth entry, **None**, is registered as the off switch, it draws nothing.
-That is why the test output counts 66 against the sixty-five listed here, and 78
+A sixty-third entry, **None**, is registered as the off switch, it draws nothing.
+That is why the test output counts 63 against the sixty-two listed here, and 75
 in total, because the twelve subcell variants below are registered whether or not
 the setting that offers them is on.
 

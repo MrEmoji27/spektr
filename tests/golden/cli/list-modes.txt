@@ -72,7 +72,4 @@
   JP Drift   the meter shedding bulbs: they break off the top and fall, piling at the foot
   JP Pulse   the meter bent into a ring — a spoke of bulbs per band, chased on the beat
   JP Sequencer the meter paged by the bar — four pages, one live, three holding their beat
-  JP Demo    a head-unit demo sunburst: kicks blast it outward, snares turn it, hats twinkle the tips
-  JP Clock   a clock face that keeps the bar: the hand writes each bar in, the last four step inward
-  JP Ribbons three flowing ribbons of segments — the kick's, the snare's and the hats' — locked to the bar
   None       nothing at all

@@ -39,9 +39,6 @@ PAL = Palette(BUILTIN["gruvbox"])
 #: constant bar chart. Testing those for movement was an error in an earlier
 #: version of this file, and it flagged seven correct modes as broken.
 SELF_ANIMATING = {
-    # the clock's hand on its own slow time when there is no tempo, and the
-    # ribbons flowing between hits (JP Clock, JP Ribbons)
-    "JP Clock", "JP Ribbons",
     "Scatter", "Flame", "Pulse", "Retro", "Tunnel", "Warp",
     "Matrix", "Spectro", "Plasma", "Gonio",
     # scroll (ECG and its octant variant), standing-wave phase (Strings), ring

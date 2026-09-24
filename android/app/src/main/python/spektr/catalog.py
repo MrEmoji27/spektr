@@ -85,9 +85,6 @@ CATALOG: tuple[tuple[str, str, str, bool, str], ...] = (
     ('JP Drift', 'jp', 'the meter shedding bulbs: they break off the top and fall, piling at the foot', False, 'jp'),
     ('JP Pulse', 'jp', 'the meter bent into a ring — a spoke of bulbs per band, chased on the beat', False, 'jp'),
     ('JP Sequencer', 'jp', 'the meter paged by the bar — four pages, one live, three holding their beat', False, 'jp_music'),
-    ('JP Demo', 'jp', 'a head-unit demo sunburst: kicks blast it outward, snares turn it, hats twinkle the tips', False, 'jp_music'),
-    ('JP Clock', 'jp', 'a clock face that keeps the bar: the hand writes each bar in, the last four step inward', False, 'jp_music'),
-    ('JP Ribbons', 'jp', "three flowing ribbons of segments — the kick's, the snare's and the hats' — locked to the bar", False, 'jp_music'),
     ('None', 'off', 'nothing at all', False, 'modes'),
 )
 
