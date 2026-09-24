@@ -67,10 +67,11 @@ GATHER = 0.22
 TRAVEL = 0.80
 
 #: When the handover from old ink to new runs, as a share of the morph. The
-#: first third is the old picture bending into the new shape, the last of it
-#: is the new one settling; the swap happens in between, where the two are
-#: closest and it is least visible.
-HANDOVER = (0.30, 0.90)
+#: first part is the old picture bending into the new shape; the swap runs
+#: from there to the very end. It used to stop at 0.9 of an already eased
+#: clock, and with the travel done by then too, the last third of every
+#: cross-family morph was one frame held still.
+HANDOVER = (0.22, 0.98)
 
 #: What one beat adds to the travel, and the most a morph's beats can add
 #: between them. A hit that lands mid-morph shoves the shape on towards the
@@ -142,6 +143,55 @@ WAVEFRONT = 0.15
 #: through the loud parts of the picture. Zero sweeps by position alone.
 MUSIC = 0.5
 
+# ── entrances ────────────────────────────────────────────────────────────────
+#
+# How the incoming picture arrives, by the family it belongs to. Every switch
+# used to hand over in one order -- a blue-noise scatter behind a single
+# left-to-right front -- so a bar mode arrived exactly the way a starfield or a
+# fluid did. An entrance is an order field over the frame, 0 where the new
+# picture lands first and 1 where it lands last, and the blue-noise rank still
+# dithers every cell inside its own window, so the front is a soft band of
+# mixed cells rather than a slideshow wipe.
+
+#: The gesture each family arrives with. A family missing here arrives by the
+#: plain sweep; ``tests/test_morph_entrances.py`` checks none is missing.
+ENTRANCES = {
+    "spectrum": "rise",     # bars grow up out of the floor
+    "jp": "rise",
+    "stereo": "rise",
+    "terrain": "rise",      # a sea comes up to its horizon
+    "lofi": "fall",         # rain, snow and embers come down from the top
+    "scope": "draw",        # a trace is drawn across, the way a scope sweeps
+    "particles": "burst",   # thrown out of the centre
+    "cosmos": "burst",
+    "fields": "ripple",     # rings running outward through the field
+    "scenes": "dive",       # the view closes in from the edges
+}
+ENTRANCE_NAMES = ("rise", "fall", "draw", "burst", "ripple", "dive")
+
+#: How much of the handover the front takes to cross the frame. The rest of
+#: the window is each cell's own dither, which is what keeps the front soft:
+#: at 0.6 about two thirds of the frame is mid-change at the height of it.
+ENTRANCE_FRONT = 0.6
+
+#: How much of the morph a beat moves the front on by, per unit of ``push``.
+#: The travel already takes the beats; this lets the front take them too, so a
+#: hit mid-morph visibly throws the new picture further in.
+ENTRANCE_PUSH = 0.5
+
+#: Ripple's rings: how many run across the frame, and how deep each is as a
+#: share of the whole order. Shallow enough that the rings ride on a front
+#: moving outward rather than breaking it into separate bands.
+RIPPLE_RINGS = 3.0
+RIPPLE_DEPTH = 0.12
+
+#: Between two kinds of frame, how far the incoming picture travels out of
+#: the old shape on its own before the entrance takes over. All the way, and
+#: it had reached its own form by 0.8 of the morph and the entrance had
+#: nothing left to reveal; this far, the picture is still visibly in the old
+#: shape when the front reaches it, and the front is what sets it free.
+GROW_HOLD = 0.55
+
 
 @dataclass(frozen=True)
 class Style:
@@ -165,6 +215,9 @@ class Style:
     levels: np.ndarray | None = None
     #: How much of the sweep those bands may reorder.
     music: float = MUSIC
+    #: How the incoming picture arrives, one of :data:`ENTRANCE_NAMES`.
+    #: None: the plain left-to-right sweep.
+    entrance: str | None = None
 
 
 def ease(p):
@@ -260,6 +313,65 @@ def _handover(progress: float, wavefront: float = 0.0,
     if delay is None or wavefront <= 0.0:
         return ease((progress - lo) / (hi - lo))
     return ease((progress + wavefront * (1.0 - delay) - lo) / (hi - lo))
+
+
+def _order(rows: int, cols: int, entrance: str, aspect: float,
+           levels: np.ndarray | None = None, music: float = MUSIC) -> np.ndarray:
+    """Where each cell sits in an entrance, 0 first to 1 last.
+
+    ``aspect`` is how tall one unit of the grid is against how wide: a cell
+    is about twice as tall as it is wide, a braille dot about as tall. The
+    round entrances need it, or a burst from the centre is an ellipse lying
+    on its side.
+
+    The straight ones are reordered by the music the way the sweep is: a loud
+    column rises (or falls, or is drawn) ahead of a quiet one, so the front is
+    shaped by the frame's own spectrum rather than being a ruled line.
+    """
+    y, x = np.indices((rows, cols), dtype=np.float32)
+    if entrance == "draw":
+        return np.broadcast_to(_sweep(cols, levels, music)[None, :],
+                               (rows, cols)).astype(np.float32)
+    if entrance in ("rise", "fall"):
+        fy = y / max(1, rows - 1)
+        base = 1.0 - fy if entrance == "rise" else fy
+        # How far the music moves each column's front, from the sweep's own
+        # reordering of it: a loud column is ahead, a quiet one behind.
+        plain = np.arange(cols, dtype=np.float32) / max(1, cols - 1)
+        lead = _sweep(cols, levels, music) - plain
+        return np.clip(base * 0.8 + 0.1 + 0.2 * lead[None, :], 0.0, 1.0)
+    dy = (y - (rows - 1) / 2.0) * aspect
+    dx = x - (cols - 1) / 2.0
+    d = np.hypot(dy, dx)
+    d /= max(float(d.max()), 1e-6)
+    if entrance == "burst":
+        return d
+    if entrance == "dive":
+        return 1.0 - d
+    if entrance == "ripple":
+        ring = np.sin(d * np.float32(np.pi * 2.0 * RIPPLE_RINGS)) * np.float32(RIPPLE_DEPTH)
+        return np.clip(d * np.float32(1.0 - RIPPLE_DEPTH) + ring
+                       + np.float32(RIPPLE_DEPTH / 2), 0.0, 1.0)
+    raise ValueError(f"unknown entrance {entrance!r}")
+
+
+def _arrival(progress: float, style, shape: tuple[int, int], aspect: float,
+             push: float = 0.0):
+    """Per cell of ``shape``, the rank below which it has handed over.
+
+    With an entrance, each cell has its own window inside the handover,
+    placed by its order and ``ENTRANCE_FRONT`` of the way across it; without,
+    the plain sweep along the columns.
+    """
+    rows, cols = shape
+    if style.entrance is None:
+        return _handover(progress, style.wavefront,
+                         _sweep(cols, style.levels, style.music))
+    lo, hi = HANDOVER
+    order = _order(rows, cols, style.entrance, aspect, style.levels, style.music)
+    span = hi - lo
+    t = progress + push * ENTRANCE_PUSH - lo - span * ENTRANCE_FRONT * order
+    return ease(t / (span * (1.0 - ENTRANCE_FRONT)))
 
 
 def _rank(rows: int, cols: int) -> np.ndarray:
@@ -576,21 +688,38 @@ def _grow(old: tuple, new: tuple, kind_old: tuple[int, bool],
     """
     rows, cols = new[0].shape
     cells_old = _ink_onto(old, kind_old, False)
+    # With an entrance, the travel out of the old shape only goes part way:
+    # the rest of the change is the front arriving (see GROW_HOLD).
+    travel = progress * GROW_HOLD if style.entrance is not None else progress
     if kind_new == (2, True):
         # A braille frame is moved on two grids at once: the dots that make
         # the picture, and one colour per cell for where they are.
         dots_new = _ink(new, True)
         (moved,), _ = _settle((dots_new,), _ink_onto(old, kind_old, True),
-                              dots_new, progress, gather, push,
+                              dots_new, travel, gather, push,
                               _rank(*dots_new.shape), style)
         (moved_cidx,), keep = _settle((new[1],), cells_old,
-                                      new[0] != BRAILLE_BASE, progress,
+                                      new[0] != BRAILLE_BASE, travel,
                                       gather, push, _rank(rows, cols), style)
-        return pack_braille(moved), np.where(keep, moved_cidx, new[1])
-    moved, keep = _settle(new, cells_old, _ink(new, False), progress, gather,
+        cidx = np.where(keep, moved_cidx, new[1])
+        if style.entrance is None:
+            return pack_braille(moved), cidx
+        # Along the entrance, the picture lets go of the old shape and snaps
+        # to its own: the dots that have arrived are the new frame's own.
+        rank = _rank(*dots_new.shape)
+        arrived = rank < _arrival(progress, style, rank.shape, 1.0, push)
+        dots = np.where(arrived, dots_new, moved)
+        cidx = np.where(_dot_count(arrived) >= 4, new[1], cidx)
+        return pack_braille(dots), cidx
+    moved, keep = _settle(new, cells_old, _ink(new, False), travel, gather,
                           push, _rank(rows, cols), style)
     blanks = (SPACE,) + new[1:]
-    return tuple(np.where(keep, m, f) for m, f in zip(moved, blanks))
+    grown = tuple(np.where(keep, m, f) for m, f in zip(moved, blanks))
+    if style.entrance is None:
+        return grown
+    rank = _rank(rows, cols)
+    arrived = rank < _arrival(progress, style, rank.shape, 2.0, push)
+    return tuple(np.where(arrived, n, g) for g, n in zip(grown, new))
 
 
 def _refit(frame: tuple, shape: tuple[int, int]) -> tuple:
@@ -625,9 +754,7 @@ def _dots(old: tuple, new: tuple, progress: float, gather: float,
     # there any more: the mask says which cells the move reached at all.
     warped_old = moved_old & keep_old
     warped_new = moved_new & keep_new
-    arrived = rank < _handover(
-        progress, style.wavefront, _sweep(cols * 2, style.levels, style.music)
-    )
+    arrived = rank < _arrival(progress, style, rank.shape, 1.0, push)
     mixed = np.where(arrived, warped_new, warped_old)
     codes = pack_braille(mixed)
     # Colour travels with the shape: the ramp indices are moved by the same
@@ -664,9 +791,7 @@ def _cells(old: tuple, new: tuple, progress: float, gather: float,
                        for m, f in zip(moved_old, (SPACE,) + old[1:]))
     warped_new = tuple(np.where(keep_new, m, f)
                        for m, f in zip(moved_new, (SPACE,) + new[1:]))
-    cells = rank < _handover(
-        progress, style.wavefront, _sweep(cols, style.levels, style.music)
-    )
+    cells = rank < _arrival(progress, style, rank.shape, 2.0, push)
     return tuple(np.where(cells, n, o) for o, n in zip(warped_old, warped_new))
 
 

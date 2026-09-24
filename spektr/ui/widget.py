@@ -436,16 +436,22 @@ class AudioVisualizer(Widget):
         by a fast tempo, so the change crosses the screen in time with the
         music rather than to a schedule of its own. The bands go in as they
         are and the morph reorders its own sweep with them: the loud parts of
-        the picture set off first.
+        the picture set off first. And the new picture enters the way its
+        family moves, rather than every switch arriving in one order.
         """
         scale = dissolve.SWEEP_FAMILY if family else 1.0
         tempo = float(getattr(frame, "tempo_bpm", 0.0) or 0.0)
         if tempo > 0.0:
             scale *= max(0.7, min(1.4, TEMPO_REFERENCE / tempo))
+        # The incoming picture arrives the way its family moves: bars rise,
+        # particles burst out, a field ripples. See dissolve.ENTRANCES.
+        incoming = mode_registry.get(self.mode_name)
+        entrance = dissolve.ENTRANCES.get(incoming.group) if incoming else None
         return dissolve.Style(
             sweep=dissolve.SWEEP * scale,
             wavefront=dissolve.WAVEFRONT * scale,
             levels=self._spring.x,
+            entrance=entrance,
         )
 
     def _start_morph(self, source: str, *, quick: bool) -> None:
