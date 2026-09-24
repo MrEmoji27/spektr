@@ -71,18 +71,6 @@ def _pack(codes, cidx, bidx, palette, clear):
     return (cidx * base + bidx).astype(np.int32, copy=False), base, True, codes
 
 
-def _runs(row: np.ndarray, first: int, last: int) -> list[tuple[int, int]]:
-    """Stretches of one colour inside ``[first, last)``, as (start, end)."""
-    edges = (np.flatnonzero(row[1:] != row[:-1]) + 1).tolist()
-    starts = [0, *edges]
-    ends = [*edges, row.size]
-    return [
-        (max(s, first), min(e, last))
-        for s, e in zip(starts, ends)
-        if e > first and s < last
-    ]
-
-
 class Screen:
     """One widget's worth of cells, diffed frame to frame.
 
@@ -145,27 +133,52 @@ class Screen:
         cells = key.astype(np.int64) * GLYPH + glyphs
         prev, self._keys = self._keys, cells
         if prev is None or prev.shape != cells.shape:
-            rows = range(h)
-            changed = None
+            ys = np.arange(h)
+            first = np.zeros(h, dtype=np.intp)
+            last = np.full(h, w, dtype=np.intp)
         else:
             changed = cells != prev
-            rows = np.flatnonzero(changed.any(axis=1)).tolist()
-            if not rows:
+            ys = np.flatnonzero(changed.any(axis=1))
+            if ys.size == 0:
                 return ""
+            sub = changed[ys]
+            first = np.argmax(sub, axis=1)
+            last = w - np.argmax(sub[:, ::-1], axis=1)
+
+        # Every run in every changed row, found in one pass rather than a
+        # Python loop per row: a run starts at the first changed cell of its
+        # row and wherever the colour changes after it, and ends where the
+        # next one starts or at the row's last changed cell. Per-row work was
+        # most of the frame on a many-coloured mode -- Ember spent four times
+        # as long here as drawing itself.
+        k = key[ys]
+        cols = np.arange(w)
+        inside = (cols[None, :] >= first[:, None]) & (cols[None, :] < last[:, None])
+        starts = np.zeros(k.shape, dtype=bool)
+        starts[:, 1:] = k[:, 1:] != k[:, :-1]
+        starts[np.arange(ys.size), first] = True
+        ri, ci = np.nonzero(starts & inside)
+        ends = np.empty_like(ci)
+        ends[:-1] = ci[1:]
+        row_end = np.ones(ri.size, dtype=bool)
+        row_end[:-1] = ri[1:] != ri[:-1]
+        ends[row_end] = last[ri[row_end]]
+        vals = k[ri, ci]
+
+        sgr = {int(v): self._escape(int(v), base, pair, palette) for v in np.unique(vals)}
+        offs = (ys[ri] * w).tolist()
+        opens = np.ones(ri.size, dtype=bool)
+        opens[1:] = ri[1:] != ri[:-1]
+        oy, ox = self.y + 1, self.x + 1
         out: list[str] = []
-        for y in rows:
-            if changed is None:
-                first, last = 0, w
-            else:
-                row_changed = changed[y]
-                first = int(np.argmax(row_changed))
-                last = w - int(np.argmax(row_changed[::-1]))
-            out.append(MOVE.format(self.y + y + 1, self.x + first + 1))
-            row = key[y]
-            base_at = y * w
-            for start, end in _runs(row, first, last):
-                out.append(self._escape(int(row[start]), base, pair, palette))
-                out.append(text[base_at + start:base_at + end])
+        for new_row, y, s, e, v, off in zip(
+            opens.tolist(), ys[ri].tolist(), ci.tolist(), ends.tolist(),
+            vals.tolist(), offs,
+        ):
+            if new_row:
+                out.append(MOVE.format(oy + y, ox + s))
+            out.append(sgr[v])
+            out.append(text[off + s:off + e])
         return "".join(out)
 
     def _escape(self, key: int, base: int, pair: bool, palette) -> str:
