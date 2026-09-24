@@ -240,3 +240,24 @@ def test_song_change_timing_is_off_by_default_and_clamped():
     assert config.Settings().shuffle_timing == "timer"
     assert config.Settings(shuffle_timing="track").clamp().shuffle_timing == "track"
     assert config.Settings(shuffle_timing="unknown").clamp().shuffle_timing == "timer"
+
+
+def test_shuffle_picks_a_turn_ahead_and_keeps_its_word(tmp_path):
+    """The next mode is chosen when the last switch happens, so the widget can
+    draw its first frame in the background -- and the switch that follows
+    goes to exactly that mode, not to a fresh coin toss."""
+    async def run() -> None:
+        app = Spektr(settings=config.Settings(shuffle=True, shuffle_scope="modes"),
+                     config_dir=tmp_path)
+        async with app.run_test(size=(80, 24)):
+            for _ in range(3):
+                expected = app._shuffle_next
+                assert expected is not None
+                assert app.viz._upcoming == expected
+                assert expected in app.viz._mode_state
+                app._shuffle_tick()
+                assert app.viz.mode_name == expected
+            app.action_toggle_shuffle()
+            assert app.viz._upcoming is None
+
+    asyncio.run(run())

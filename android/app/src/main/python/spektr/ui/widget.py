@@ -45,6 +45,7 @@ from ..motion import (
 from ..palette import AUTO, RAMP_STEPS, Palette, all_themes, theme_from_textual
 from ..plugins import BadModeOutput, Quarantine, validate
 from ..render import SPACE, direct, make_strips
+from .warm import ModeWarmer
 
 #: A plugin allowed to eat the whole frame budget would stutter the entire UI,
 #: so anything slower than this gets its previous frame reused on alternate
@@ -141,6 +142,13 @@ class AudioVisualizer(Widget):
         self._punch_until = -1.0
 
         self._mode_state: dict[str, dict] = {}
+        #: The mode shown before this one, most recent first, and the mode
+        #: shuffle has already chosen for next. Both are what the window holds
+        #: ahead of the menu order; see :meth:`_mode_window`.
+        self._recent: list[str] = []
+        self._upcoming: str | None = None
+        #: Draws the window's first frames off the render path.
+        self._warmer = ModeWarmer()
         self._strips: list[Strip] | None = None
         #: The picture's own cells, for the frames that are written straight to
         #: the terminal rather than composed by Textual. See :meth:`_paint`.
@@ -214,6 +222,7 @@ class AudioVisualizer(Widget):
         self._retime(self.settings.fps, requested=True)
 
     def on_unmount(self) -> None:
+        self._warmer.stop()
         self.analyser.stop()
         self.capture.stop()
 
@@ -285,7 +294,15 @@ class AudioVisualizer(Widget):
         return kept or names
 
     def _mode_window(self, extra: str | None = None) -> list[str]:
-        """The selected mode and next four names in the existing order."""
+        """The five modes that keep their working memory, likeliest first.
+
+        The mode on screen; the one it is morphing out of; the one shuffle has
+        already picked for next; the one shown before this; then the menu
+        order from here, which is what the cycle keys reach. It used to be the
+        menu order alone, which is the one thing shuffle and the picker never
+        follow -- and the mode just left was the first to be evicted, so going
+        straight back to it paid for its whole setup again.
+        """
         names = self.mode_names
         if self.mode_name not in names:
             names = [mode.name for mode in mode_registry.MODES]
@@ -296,9 +313,17 @@ class AudioVisualizer(Widget):
         except ValueError:
             start = 0
         count = min(5, len(names))
-        window = [names[(start + offset) % len(names)] for offset in range(count)]
-        if extra is not None and extra not in window:
-            window = [extra, *window[: max(0, count - 1)]]
+        if extra is None:
+            extra = getattr(self, "_dissolve_from", None)
+        likely = [self.mode_name, extra, self._upcoming, *self._recent[:1]]
+        likely += [names[(start + offset) % len(names)] for offset in range(1, count)]
+        window: list[str] = []
+        for name in likely:
+            if name is None or name in window or mode_registry.get(name) is None:
+                continue
+            window.append(name)
+            if len(window) == count:
+                break
         return window
 
     def _refresh_mode_window(self, extra: str | None = None) -> None:
@@ -307,6 +332,31 @@ class AudioVisualizer(Widget):
         self._mode_state = {name: previous.get(name, {}) for name in window}
         for name in window:
             mode_registry.ensure_loaded(name)
+        size = self.size
+        self._warm_window(size.width, size.height)
+
+    def _warm_window(self, w: int, h: int) -> None:
+        """Have the warmer draw a first frame for every mode the window holds
+        that has not drawn one at this size. Not the mode on screen, or the
+        one it is morphing out of: those are being drawn right now."""
+        if w < 2 or h < 1:
+            return
+        busy = (self.mode_name, self._dissolve_from)
+        for name, state in self._mode_state.items():
+            if name in busy:
+                continue
+            if any(isinstance(k, tuple) and k[1:] == (w, h) for k in state):
+                continue
+            self._warmer.request(name, state, w, h, self.palette)
+
+    def expect(self, name: str | None) -> None:
+        """Name the mode that is coming next, so its memory is kept and its
+        first frame drawn before it is shown. Shuffle calls this as soon as it
+        has picked."""
+        if name == self.mode_name:
+            name = None
+        self._upcoming = name
+        self._refresh_mode_window(self._dissolve_from)
 
     def redraw(self) -> None:
         """Throw away the cached frame and build the next one from scratch.
@@ -347,6 +397,10 @@ class AudioVisualizer(Widget):
             return
         previous = self.mode_name
         source = from_mode or previous
+        if name != previous:
+            self._recent = [previous, *(n for n in self._recent if n not in (previous, name))][:3]
+        if name == self._upcoming:
+            self._upcoming = None
         if dissolve and name != source:
             self._start_morph(source, quick=quick)
         else:
@@ -823,6 +877,13 @@ class AudioVisualizer(Widget):
         self._dt = dt
         self._frame_data = frame
 
+        # Twice a second, see whether a mode the window holds needs its first
+        # frame drawn -- after a resize every one of them does. Cheap when
+        # there is nothing to do: five dictionary scans.
+        if self._frame % 30 == 0:
+            size = self.size
+            self._warm_window(size.width, size.height)
+
         # Pacing is safe to adapt now that the physics is expressed in seconds —
         # changing fps no longer changes how the animation feels, only how
         # finely it is sampled. That was not true before.
@@ -950,6 +1011,8 @@ class AudioVisualizer(Widget):
             key_uncertain=frame.key_uncertain,
         )
 
+        # A warm-up of this mode may still be drawing into the same scratch.
+        self._warmer.claim(name)
         t0 = time.perf_counter()
         try:
             out = m.fn(ctx)

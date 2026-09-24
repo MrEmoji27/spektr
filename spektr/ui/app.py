@@ -199,6 +199,9 @@ class Spektr(App):
         #: the shuffle timer, or None when shuffle is off
         self._shuffle_timer = None
         self._shuffle_count = 0
+        #: The mode shuffle will switch to next, chosen a turn early so the
+        #: widget can have its first frame drawn before it is needed.
+        self._shuffle_next: str | None = None
         self._loadouts = loadouts_module.load(config_dir)
         #: the capture/device status text — what the header falls back to
         #: when nothing is playing that the OS will report on
@@ -635,13 +638,36 @@ class Spektr(App):
             self.notify("shuffle off", timeout=2)
 
     def _start_shuffle(self) -> None:
+        if self.settings.shuffle_scope in ("modes", "both"):
+            self._pick_shuffle_next()
         if self.settings.shuffle_timing == "track":
             self._shuffle_track = self._now_playing
         elif self._shuffle_timer is None:
             self._shuffle_count = 0
             self._shuffle_timer = self.set_interval(SHUFFLE_MODE_SECONDS, self._shuffle_tick)
 
+    def _shuffle_candidates(self) -> list[str]:
+        viz = self.viz
+        others = [n for n in viz.mode_names if n != viz.mode_name]
+        if viz.eco_active():
+            # In eco, shuffle stops offering the modes this machine cannot
+            # draw at rate. Judged on what they measured here rather than a
+            # fixed list, so it follows the terminal size too: the same
+            # mode is cheap in a small window and expensive fullscreen.
+            affordable = [n for n in others if viz.affordable(n)]
+            others = affordable or others
+        return others
+
+    def _pick_shuffle_next(self) -> None:
+        """Choose the next shuffle mode now, and tell the widget, so it is
+        warm by the time the switch comes. See ``AudioVisualizer.expect``."""
+        others = self._shuffle_candidates()
+        self._shuffle_next = random.choice(others) if others else None
+        self.viz.expect(self._shuffle_next)
+
     def _stop_shuffle(self) -> None:
+        self._shuffle_next = None
+        self.viz.expect(None)
         if self._shuffle_timer is not None:
             self._shuffle_timer.stop()
             self._shuffle_timer = None
@@ -658,17 +684,16 @@ class Spektr(App):
         self._shuffle_count += 1
 
         if scope in ("modes", "both"):
-            others = [n for n in viz.mode_names if n != viz.mode_name]
-            if viz.eco_active():
-                # In eco, shuffle stops offering the modes this machine cannot
-                # draw at rate. Judged on what they measured here rather than a
-                # fixed list, so it follows the terminal size too: the same
-                # mode is cheap in a small window and expensive fullscreen.
-                affordable = [n for n in others if viz.affordable(n)]
-                others = affordable or others
+            others = self._shuffle_candidates()
             if others:
-                viz.set_mode(random.choice(others), dissolve=True)
+                # The pick made a turn ago, if it is still allowed: the roster
+                # or eco may have changed since, and then it is chosen afresh.
+                chosen = self._shuffle_next
+                if chosen not in others:
+                    chosen = random.choice(others)
+                viz.set_mode(chosen, dissolve=True)
                 viz.commit_mode()
+                self._pick_shuffle_next()
 
         # Every tick when themes are the only thing moving, every
         # SHUFFLE_THEME_EVERY-th when they ride along with the modes. Changing
