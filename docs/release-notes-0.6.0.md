@@ -88,7 +88,7 @@ bar, chords, key) are available to plugins too.
 
 0.6.5 brings spektr to macOS properly, with no extra audio setup needed.
 
-### Which download
+### Which file
 
 | You have | Do this |
 |---|---|
@@ -96,8 +96,9 @@ bar, chords, key) are available to plugins too.
 | Windows, no install | download `spektr.exe` and double-click it |
 | Windows, classic installer | `spektr-0.6.0.0-setup.exe` |
 | Linux or macOS | paste into a terminal: `curl -fsSL https://raw.githubusercontent.com/MrEmoji27/spektr/main/install.sh \| sh` |
+| Linux, no install | download `spektr`, then `chmod +x spektr` and run it. Needs Ubuntu 18.10, Debian 10, Fedora 29 or newer |
 | Python | `pip install spektr-audio` |
-| Android | the `.apk` file, Android 10 or newer |
+| Android | `spektr-android-0.4.0-arm64-v8a.apk`, Android 10 or newer |
 
 Windows may warn the first time because the app isn't signed: choose **More
 info**, then **Run anyway**.

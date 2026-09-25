@@ -9,6 +9,91 @@ line because it moves at its own pace, and ships inside a spektr release: the
 APK carries the release's version number, and the heading below says which
 port version that is.
 
+## spektr 0.6.0
+
+The release where spektr listens to the music rather than its level: which
+drum hit, where the bar starts, what the chords are, and which hits are the
+ones that matter. Nine new modes are built on it.
+
+### The main hits, not every sound
+
+The most common complaint was that spektr reacted to the quiet things: a
+shaker, a ghost note, a reverb tail. Modes are now handed only the main hits,
+judged by how far a hit jumps above what came just before it. On the test
+tracks, a background part at -28 dB went from triggering almost every beat to
+almost none. The raw detector still sees everything, because the tempo, the
+drums and the bar need it.
+
+Glide motion smooths between hits, and that made it feel late. A main hit now
+punches through it for a moment at snappy's speed.
+
+Songs above 150 BPM were read at half their tempo, which halved every motion
+tied to the beat. The tempo range was folded the wrong way; it is right now.
+
+### Drums, bar, harmony
+
+- Kick, snare and hi-hat come as likelihoods, and a hit is named by its
+  strongest drum. A clean kick reads about 0.2 on its own, so a fixed
+  threshold missed every real one.
+- The downbeat is found from the pattern the drums make, or from the
+  harmony when the drums cannot tell, and reported as unknown when neither
+  can.
+- The twelve pitch classes every frame, and a key once enough has been
+  heard. It says when it has not heard enough, and when nothing fits.
+- Build, drop and breakdown detection is written but not switched on. It
+  was tuned on one synthetic track and needs real music first.
+
+### Nine new modes
+
+- JP Sequencer, JP Chords, JP Panel and JP Tracker: music machines played
+  by the song, built on the drums, the bar and the chords.
+- Riptide, Twin Storms, Arc Storm and Shatter, a new wild family: as wild as
+  Crosscurrent without the tunnel.
+- Locket Beat: a steady stream of rings, bright on the beat.
+
+JP Bars, Drift and Pulse gained colour zones, peak lamps that drop, caps on
+the bars and a beat ring. Two rounds of other JP designs were tried and cut.
+
+### On the beat
+
+Fireworks sends a salvo up ahead of each beat, timed on the beat clock to
+burst on it, within about 20 ms on the test tracks. The beat used to fire
+bursts with no rocket under them, which looked like misfires. Pulse and
+Shooting Star answer the beat more sharply.
+
+### Changing mode
+
+The new default morph, clean, gives each family its own entrance and fades
+the old picture out ahead of it. It is under half the old morph's cost. The
+0.5.5 morph stays as classic. The modes likeliest next are drawn once in the
+background, so a first switch no longer stutters.
+
+### Lighter
+
+- NumPy capped to one thread: committed memory from 527 MB to 45 MB.
+- The analyser reads both channels in one pass and sleeps until audio
+  arrives, instead of polling a thousand times a second.
+- The direct writer finds changed runs in one pass: 27 to 40% cheaper on
+  colourful modes, byte-identical output.
+- In silence with nothing moving, 15 fps until the music is back.
+
+### Using it
+
+- One-line installers for Windows, Linux and macOS.
+- `pip install spektr-audio`.
+- `--version` and `--help` without loading the interface; `python -m
+  spektr`; a suggestion for a mistyped flag, mode or theme; flags for
+  motion, morph, eco, bands and shuffle.
+- The settings panel shows one line per setting and explains only the one
+  you are on. The help says what every key does, and shows how many modes
+  are held in memory.
+
+### Fixed
+
+- A visualiser that was built but never shown started a thread nobody
+  stopped, which rebuilt the morph's mask. The test suite builds dozens, and
+  twenty rebuilding at once froze the one on screen for ten seconds.
+
 ## spektr 0.5.5
 
 A foundations release. No new modes and no new themes: this one is about what
