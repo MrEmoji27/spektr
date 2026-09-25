@@ -1,4 +1,4 @@
-"""JP Sequencer shows the bar it was told, and claims no downbeat it was not."""
+"""The JP music machines: pad grid, chord display, drum panel and tracker."""
 from __future__ import annotations
 
 import numpy as np
@@ -7,14 +7,14 @@ import pytest
 import spektr.modes as M
 from spektr.analysis import N_BANDS
 from spektr.modes import Ctx
-from spektr.modes.jp import _LED, _PEAK, _TRAIL
+from spektr.modes.jp import _LED, _TRAIL
 from spektr.palette import BUILTIN, Palette
 from spektr.render import SPACE
 
 PAL = Palette(BUILTIN["gruvbox"])
 DT = 1 / 60
 W, H = 96, 30
-NEW = ("JP Sequencer",)
+NEW = ("JP Sequencer", "JP Chords", "JP Panel", "JP Tracker")
 NO_DRUMS = {"kick": 0.0, "snare": 0.0, "hat": 0.0}
 
 
@@ -46,67 +46,140 @@ def test_silence_lights_nothing(name):
     assert not (codes == _LED).any()
 
 
-# ── JP Sequencer ─────────────────────────────────────────────────────────────
+# ── JP Sequencer: the pad grid ───────────────────────────────────────────────
 
 KICK = {"kick": 0.9, "snare": 0.0, "hat": 0.0}
 SNARE = {"kick": 0.0, "snare": 0.9, "hat": 0.0}
+HAT = {"kick": 0.0, "snare": 0.0, "hat": 0.9}
 BAR = dict(tempo_bpm=120.0, bar_confidence=0.9)
+HIT = dict(onsets=1, onset_strength=0.9)
 
 
-def _grid(state) -> tuple[np.ndarray, np.ndarray]:
-    st = next(v for k, v in state.items() if k[0] == "jp_seq")
-    return st["cur"], st["prev"]
+def _chroma(*pitches):
+    c = np.zeros(12, np.float32)
+    c[list(pitches)] = 1.0
+    return c
 
 
-def test_a_hit_is_written_on_its_drum_s_row_at_its_step():
+def _state(state, key):
+    return next(v for k, v in state.items() if k[0] == key)
+
+
+@pytest.mark.parametrize("drums, kind", [(KICK, "ring"), (SNARE, "cross"), (NO_DRUMS, "wipe")])
+def test_each_drum_plays_its_own_show(drums, kind):
     st: dict = {}
-    draw("JP Sequencer", st, onsets=1, onset_strength=0.9, drums=KICK, bar_phase=0.0, **BAR)
-    draw("JP Sequencer", st, t=0.5, onsets=1, onset_strength=0.9, drums=SNARE,
-         bar_phase=0.25, **BAR)
-    cur, _ = _grid(st)
-    kick, snare = 2, 1                       # rows: hat, snare, kick
-    assert cur[kick, 0] > 0 and cur[snare, 4] > 0
-    assert cur.astype(bool).sum() == 2
+    draw("JP Sequencer", st, drums=drums, onsets=1, onset_strength=0.2, **BAR)
+    assert [s[0] for s in _state(st, "jp_pads")["shows"]] == [kind]
 
 
-def test_nothing_is_written_without_a_drum():
+def test_a_hard_hit_sends_its_show_twice():
     st: dict = {}
-    draw("JP Sequencer", st, onsets=1, onset_strength=0.9, drums=NO_DRUMS, bar_phase=0.1, **BAR)
-    cur, _ = _grid(st)
-    assert not cur.any()
+    draw("JP Sequencer", st, drums=KICK, **HIT, **BAR)
+    shows = _state(st, "jp_pads")["shows"]
+    assert [s[0] for s in shows] == ["ring", "ring"] and shows[1][3] > shows[0][3]
 
 
-def test_the_bar_just_played_becomes_the_last_bar():
+def test_snares_take_turns_between_a_cross_and_an_x():
     st: dict = {}
-    draw("JP Sequencer", st, onsets=1, onset_strength=0.9, drums=KICK, bar_phase=0.0, **BAR)
-    draw("JP Sequencer", st, t=1.9, bar_phase=0.95, **BAR)
-    draw("JP Sequencer", st, t=2.05, bar_phase=0.02, **BAR)       # over the one
-    cur, prev = _grid(st)
-    assert not cur.any() and prev[2, 0] > 0
-    codes, _ = draw("JP Sequencer", st, t=2.1, bar_phase=0.05, **BAR)
-    assert (codes == _TRAIL).any(), "last bar's hit is not drawn"
+    for i in range(2):
+        draw("JP Sequencer", st, t=i * 0.02, drums=SNARE, onsets=1, onset_strength=0.2, **BAR)
+    assert [s[0] for s in _state(st, "jp_pads")["shows"]] == ["cross", "x"]
+
+
+def test_the_bar_opens_with_a_square():
+    st: dict = {}
+    draw("JP Sequencer", st, bar_phase=0.97, **BAR)
+    draw("JP Sequencer", st, t=0.02, bar_phase=0.01, **BAR)
+    assert [s[0] for s in _state(st, "jp_pads")["shows"]] == ["square"]
+
+
+def test_a_kick_rings_out_from_the_centre():
+    st: dict = {}
+    draw("JP Sequencer", st, drums=KICK, **HIT, **BAR)
+    draw("JP Sequencer", st, t=0.1, **BAR)
+    glow = _state(st, "jp_pads")["glow"]
+    assert glow[3:5, 3:5].max() > 0.2, "the ring has not left the centre"
+    assert glow[0, 0] == 0.0 and glow[7, 7] == 0.0, "the ring is at the corners already"
+
+
+def test_a_hat_blinks_a_few_pads_at_once():
+    st: dict = {}
+    draw("JP Sequencer", st, drums=HAT, **HIT, **BAR)
+    lit = int((_state(st, "jp_pads")["glow"] > 0.5).sum())
+    assert 2 <= lit <= 4 and not _state(st, "jp_pads")["shows"]
+
+
+def test_the_grid_goes_dark_between_hits():
+    st: dict = {}
+    draw("JP Sequencer", st, drums=SNARE, **HIT, **BAR)
+    for i in range(1, 90):
+        draw("JP Sequencer", st, t=i / 60, **BAR)
+    assert _state(st, "jp_pads")["glow"].max() < 0.02
 
 
 def _lamps(codes):
-    return [int(c) for c in codes[0] if c != SPACE]
+    top = next(r for r in codes if (r != SPACE).any())
+    return [int(c) for c in top if c != SPACE]
 
 
-def test_the_playhead_follows_the_bar_and_marks_one_when_it_is_known():
-    codes, _ = draw("JP Sequencer", {}, bar_phase=0.55, **BAR)
-    lamps = _lamps(codes)
-    assert lamps.index(_LED) == 8 and lamps[0] == _PEAK
+def test_the_top_lamps_run_across_the_bar():
+    lamps = _lamps(draw("JP Sequencer", {}, bar_phase=0.55, **BAR)[0])
+    assert len(lamps) == 8 and lamps.index(_LED) == 4
 
 
-def test_no_one_is_claimed_for_a_bar_that_is_not_known():
-    codes, _ = draw("JP Sequencer", {}, tempo_bpm=120.0, bar_confidence=0.1,
-                    beat_phase=0.3)
-    assert _PEAK not in _lamps(codes)
-
-
-def test_without_a_beat_the_playhead_runs_dim():
-    codes, _ = draw("JP Sequencer", {}, tempo_bpm=0.0)
-    lamps = _lamps(codes)
+def test_without_a_beat_the_lamps_run_dim():
+    lamps = _lamps(draw("JP Sequencer", {}, tempo_bpm=0.0)[0])
     assert _LED not in lamps and _TRAIL in lamps
+
+
+# ── JP Chords ────────────────────────────────────────────────────────────────
+
+def _listen(st, chroma, since=0.0, seconds=0.6):
+    for i in range(int(seconds * 60)):
+        draw("JP Chords", st, t=since + i / 60, chroma=chroma)
+    return _state(st, "jp_chords")
+
+
+@pytest.mark.parametrize("pitches, chord", [
+    ((0, 4, 7), (0, "")), ((9, 0, 4), (9, "m")), ((9, 0, 4, 7), (9, "m7")),
+    ((7, 11, 2, 5), (7, "7")), ((0, 7), (0, "5")),
+])
+def test_it_names_the_chord_it_hears(pitches, chord):
+    assert _listen({}, _chroma(*pitches))["chord"] == chord
+
+
+def test_no_chord_in_silence():
+    st: dict = {}
+    for i in range(30):
+        draw("JP Chords", st, t=i / 60, level=0.0, chroma=_chroma(0, 4, 7))
+    assert _state(st, "jp_chords")["chord"] is None
+
+
+def test_a_passing_note_is_not_a_chord_change():
+    st: dict = {}
+    _listen(st, _chroma(0, 4, 7))
+    got = _listen(st, _chroma(7, 11, 2), since=0.6, seconds=0.15)
+    assert got["chord"] == (0, "")
+    got = _listen(st, _chroma(7, 11, 2), since=0.75, seconds=0.8)
+    assert got["chord"] == (7, "") and got["hist"] == [(0, "")]
+
+
+# ── JP Panel and JP Tracker ──────────────────────────────────────────────────
+
+def test_panel_lights_the_pad_the_drum_landed_on():
+    st: dict = {}
+    draw("JP Panel", st, onsets=1, onset_strength=0.9, drums=SNARE, bar_phase=0.25, **BAR)
+    cur = _state(st, "jp_panel")["cur"]
+    assert cur[1, 4] > 0 and cur.astype(bool).sum() == 1
+
+
+def test_tracker_scrolls_a_hit_to_the_left():
+    st: dict = {}
+    draw("JP Tracker", st, onsets=1, onset_strength=0.9, drums=KICK, **BAR)
+    at = int(np.flatnonzero(_state(st, "jp_tracker")["drums"][2])[-1])
+    draw("JP Tracker", st, t=0.5, dt=0.5, **BAR)
+    now = int(np.flatnonzero(_state(st, "jp_tracker")["drums"][2])[-1])
+    assert now == at - 8, "half a second at 120 BPM is a beat: eight columns"
 
 
 # ── through the real widget, on the drum corpus ──────────────────────────────
@@ -114,7 +187,10 @@ def test_without_a_beat_the_playhead_runs_dim():
 #: Beat response on ``four_on_floor``, measured when these were added, as in
 #: ``tests/test_reactivity.py``. Not pinned there: an LED panel is sparse on
 #: purpose and sits under that file's churn floor, as ``JP Bars`` does.
-RESPONSE = {"JP Sequencer": 2.46}
+#: The Sequencer's light shows and the Tracker's scroll keep moving after a
+#: hit by design, so they read near 1.0 here while in time; this only guards
+#: them from falling.
+RESPONSE = {"JP Sequencer": 1.6, "JP Chords": 5.4, "JP Panel": 3.9, "JP Tracker": 0.98}
 
 
 @pytest.mark.parametrize("name", NEW)
