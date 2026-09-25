@@ -1002,22 +1002,22 @@ def orbit(ctx: Ctx):
 #: speed, gravity and lifetime, so a hit-heavy stretch doesn't just replay the
 #: same spherical pop over and over.
 _FW_SHELL, _FW_WILLOW, _FW_CRACKLE = 0, 1, 2
-#: The beat's own burst. Not in the ``pick_kind`` draw — only a detected onset
-#: fires one — and built to a different brief from the weather shells: twice
-#: the sparks of a crackle, thrown faster, gone in half a second. What a beat
-#: has to do is change a lot of the screen at once and then get out of the way
-#: before the next one, and a burst that lingers does neither. Measured over a
-#: four-on-the-floor at 120x30: the shell that climbs and bursts on its own
-#: schedule leaves churn flat at 0.12 across the bar, this leaves 0.066 on the
-#: frames around a beat against 0.019 between them.
-_FW_MINE = 3
 _FW_KIND_PARAMS = {
     #        count       speed (x dr)   gravity (x dr)  life (s)
     _FW_SHELL:   ((34, 52), (0.28, 0.80), 1.6, (1.1, 1.5)),
     _FW_WILLOW:  ((26, 40), (0.14, 0.34), 0.9, (1.8, 2.4)),
     _FW_CRACKLE: ((48, 72), (0.35, 0.95), 1.9, (0.45, 0.75)),
-    _FW_MINE:    ((22, 34), (0.9, 1.7), 1.7, (0.22, 0.34)),
 }
+
+#: The beat's rockets: how long one takes from the ground to its burst, in
+#: seconds, and the most of a beat that flight may take at a fast tempo.
+_FW_BEAT_FLIGHT = 0.5
+_FW_BEAT_SHARE = 0.9
+
+#: How far a beat rocket's burst has already spread on the frame it breaks,
+#: as a share of the frame's height: the flash of the break, so the burst
+#: lands on the beat rather than blooming after it.
+_FW_BEAT_FLASH = (0.02, 0.10)
 
 #: A spark is drawn as a small cross rather than a single dot. One dot per
 #: spark left the mode covering ~2% of the screen — the sparsest in the file
@@ -1060,6 +1060,11 @@ def fireworks(ctx: Ctx):
             "ry": np.full(r_cap, -1.0), "rx": np.zeros(r_cap),
             "rvy": np.zeros(r_cap), "rtarget": np.zeros(r_cap),
             "rkind": np.zeros(r_cap, dtype=np.int32),
+            # a beat rocket flies on the clock, not on its velocity: where it
+            # left from, when, and how long it has to reach its burst
+            "rtimed": np.zeros(r_cap, dtype=bool), "ry0": np.zeros(r_cap),
+            "rt0": np.zeros(r_cap), "rflight": np.ones(r_cap),
+            "beats": 0, "last_phase": 0.0, "armed": -1,
             "sy": np.full(s_cap, -1.0), "sx": np.zeros(s_cap),
             "svy": np.zeros(s_cap), "svx": np.zeros(s_cap), "sage": np.zeros(s_cap),
             "sgrav": np.zeros(s_cap), "slife": np.full(s_cap, 1.1),
@@ -1119,42 +1124,64 @@ def fireworks(ctx: Ctx):
         st["launch_acc"] -= want
         st["launched"] += want
 
-    # A detected onset fires a salvo of mines: shells that burst where they are
-    # lit rather than climbing first, which is what a mine is. This is the fix
-    # for the mode measuring 1.02.
+    # A detected onset sends up more rockets on top of the barrage, more for
+    # a harder hit. Several onsets inside one frame each count: at a low frame
+    # rate or on fast drums ctx.onsets can be 2 or 3, and collapsing that to
+    # one would quietly drop beats the analyser did detect.
     #
-    # Two things were wrong with what a beat used to do. It added one to three
-    # *climbers* to a sky that already had ten, and a climber is five lit dots
-    # that become a burst a second later — outside the frames a beat is
-    # measured over, and invisible against the sparks of the last one. And a
-    # burst is *small* on the frame it happens: a shell's sparks all leave one
-    # dot and take a second to spread, so its change arrives as a slow bloom
-    # rather than as a hit. Both are fixed by the same move — several mines at
-    # once, spread across the width, each bursting immediately — so what lands
-    # on the beat is a line of eruptions across the sky instead of a dot that
-    # grows.
+    # The beat used to fire a salvo of "mines" as well, bursts lit in the
+    # lower sky with no rocket under them. A burst with nothing that climbed
+    # to it looks like a rocket that went off just after leaving the ground,
+    # and the mode read as misfiring; a ground fountain in their place was
+    # tried and cut too. Every burst on screen is a rocket's.
     #
-    # Several onsets inside one frame each earn their own salvo — at a low
-    # frame rate or on fast drums ctx.onsets can be 2 or 3, and collapsing
-    # that to one would quietly drop beats the analyser did detect. A harder
-    # hit widens the salvo.
-    mines = 0
-    if hit:
-        mines = ctx.onsets * (3 + int(ctx.onset_strength >= 0.6))
+    # With a tempo, the beat is not left to the hits at all: a salvo goes up
+    # just before each beat, timed on the beat clock to burst on it. A rocket
+    # sent up by a hit bursts half a second after the hit, which is off the
+    # beat by a rocket's flight; one sent up ahead of the beat arrives on it.
+    # The beat clock runs ahead of the detector and lands within about 10 ms
+    # of the true beat, so this is what can be on time.
+    tempo = float(ctx.tempo_bpm)
+    playing = tempo > 0.0 and not ctx.silent and ctx.energy > 0.04
+    salvo = 0
+    flight = 0.0
+    if tempo > 0.0:
+        period = 60.0 / tempo
+        phase = float(ctx.beat_phase)
+        if phase < st["last_phase"] - 0.5:
+            st["beats"] += 1
+        st["last_phase"] = phase
+        flight = min(_FW_BEAT_FLIGHT, _FW_BEAT_SHARE * period)
+        until = (1.0 - phase) * period
+        upcoming = st["beats"] + 1
+        if playing and until <= flight and st["armed"] != upcoming:
+            st["armed"] = upcoming
+            salvo = 3 if ctx.energy > 0.35 else 2
+            flight = max(until, 1e-3)
+    if hit and not playing:
+        extra = ctx.onsets + int(min(2, ctx.onset_strength * 2.5))
+        want += extra
+        st["launched"] += extra
 
     # stage 1: rockets climb toward a randomly chosen burst height, easing
     # off their speed over the final stretch — a constant-velocity climb that
     # just stops and pops read as mechanical; slowing into the burst reads as
     # a rocket fighting gravity, cresting, and letting go.
     ralive = st["ry"] >= 0.0
-    dist = st["ry"][ralive] - st["rtarget"][ralive]
+    free_run = ralive & ~st["rtimed"]
+    dist = st["ry"][free_run] - st["rtarget"][free_run]
     ease = np.clip(dist / (dr * 0.3), 0.3, 1.0)
-    st["ry"][ralive] -= st["rvy"][ralive] * ease * ctx.dt
+    st["ry"][free_run] -= st["rvy"][free_run] * ease * ctx.dt
+    # a beat rocket is wherever the clock says: fast off the ground, slowing
+    # into its burst, and at its burst height exactly when its time is up
+    timed = ralive & st["rtimed"]
+    if timed.any():
+        u = np.clip((ctx.t - st["rt0"][timed]) / st["rflight"][timed], 0.0, 1.0)
+        y0, y1 = st["ry0"][timed], st["rtarget"][timed]
+        st["ry"][timed] = np.where(u >= 1.0, y1, y0 + (y1 - y0) * (1.0 - (1.0 - u) ** 2))
 
-    if want or mines:
-        free = np.flatnonzero(~ralive)[:want + mines]
-        n_climb = max(0, free.size - mines)
-        for i in free[:n_climb]:
+    if want:
+        for i in np.flatnonzero(~ralive)[:want]:
             st["ry"][i] = dr - 1.0
             st["rx"][i] = rng.uniform(dc * 0.10, dc * 0.90)
             # Loud throws higher and faster. Height and speed were drawn from
@@ -1178,25 +1205,19 @@ def fireworks(ctx: Ctx):
             top = dr * (0.42 - 0.30 * min(1.0, ctx.energy * 2.2))
             st["rtarget"][i] = rng.uniform(max(dr * 0.06, top * 0.7), max(top, dr * 0.10))
             st["rkind"][i] = pick_kind()
-        for j, i in enumerate(free[n_climb:n_climb + mines]):
-            # Lit and burst in the same breath: `rtarget` at or above where it
-            # is lit, so the burst test below fires on this very frame — the
-            # `ralive` mask is recomputed after the spawn for exactly that
-            # reason, or the beat's own burst would land one frame late.
-            #
-            # Spread across the width rather than scattered at random, so a
-            # salvo reads as one gesture spanning the sky. Random x put two or
-            # three of them in the same corner — and a salvo is only a wide
-            # event if it is wide.
-            span = 1 + max(1, mines)
-            st["ry"][i] = dr * rng.uniform(0.60, 0.78)
-            st["rx"][i] = dc * (0.10 + 0.80 * ((j + rng.uniform(0.2, 0.8)) / span))
-            st["rvy"][i] = 0.0
-            st["rtarget"][i] = st["ry"][i] + 1.0
-            st["rkind"][i] = _FW_MINE
-
-    # Recomputed, not the copy from stage 1: a mine is written into a slot and
-    # bursts on the frame it was written to.
+            st["rtimed"][i] = False
+    if salvo:
+        slots = np.flatnonzero(st["ry"] < 0.0)[:salvo]
+        for j, i in enumerate(slots):
+            # spread across the width, so a beat is one gesture over the sky
+            st["ry"][i] = st["ry0"][i] = dr - 1.0
+            st["rx"][i] = dc * (0.12 + 0.76 * (j + rng.uniform(0.25, 0.75)) / len(slots))
+            top = dr * (0.42 - 0.30 * min(1.0, ctx.energy * 2.2))
+            st["rtarget"][i] = rng.uniform(max(dr * 0.06, top * 0.7), max(top, dr * 0.10))
+            st["rkind"][i] = _FW_CRACKLE if j % 2 else _FW_SHELL
+            st["rtimed"][i] = True
+            st["rt0"][i] = ctx.t
+            st["rflight"][i] = flight
     ralive = st["ry"] >= 0.0
     burst = ralive & (st["ry"] <= st["rtarget"])
 
@@ -1211,16 +1232,11 @@ def fireworks(ctx: Ctx):
             slots = free[:k]
             ang = rng.uniform(0.0, 2 * math.pi, k)
             spd = rng.uniform(dr * spd_lo, dr * spd_hi, k)
-            # A burst leaves one dot and spreads, so on the frame it goes off
-            # the shower is a point and it blooms outward over the second that
-            # follows — which is why churn measured *lowest* on the beat and
-            # climbed for the rest of the bar. A mine's sparks are laid out
-            # already part-way along their own flight paths instead, at the
-            # radius the shell would have reached in a few frames. Nobody can
-            # see the frames it did not spend spreading; what they see is the
-            # beat arriving. Same trick, and the same reason, as the staggered
-            # train a meteor cluster is thrown on.
-            r0 = rng.uniform(dr * 0.03, dr * 0.14, k) if kind == _FW_MINE else 0.0
+            # a beat rocket's burst opens already spread a little -- the
+            # flash of the break -- so it lands on the beat instead of
+            # blooming out of one dot over the frames after it
+            r0 = rng.uniform(dr * _FW_BEAT_FLASH[0], dr * _FW_BEAT_FLASH[1], k) \
+                if st["rtimed"][i] else 0.0
             st["sy"][slots] = st["ry"][i] - np.sin(ang) * r0
             st["sx"][slots] = st["rx"][i] + np.cos(ang) * r0
             # Isotropic, because a shell bursts as a sphere and only gravity
@@ -1241,6 +1257,7 @@ def fireworks(ctx: Ctx):
             st["slife"][slots] = rng.uniform(life_lo, life_hi, k)
             st["skind"][slots] = kind
         st["ry"][i] = -1.0
+        st["rtimed"][i] = False
 
     # stage 3: sparks fall under their own gravity and fade over their own life
     salive = st["sy"] >= 0.0

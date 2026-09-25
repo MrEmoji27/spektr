@@ -172,6 +172,7 @@ ENTRANCES = {
     "cosmos": "burst",
     "fields": "ripple",     # rings running outward through the field
     "scenes": "dive",       # the view closes in from the edges
+    "wild": "burst",        # blown out from the middle
 }
 ENTRANCE_NAMES = ("rise", "fall", "draw", "burst", "ripple", "dive")
 

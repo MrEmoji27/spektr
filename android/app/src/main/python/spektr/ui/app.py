@@ -122,8 +122,23 @@ class Spektr(App):
     Picker > #panel {
         width: 40;
     }
-    SettingsPanel > #panel, NamePrompt > #panel {
+    SettingsPanel > #panel {
+        width: 48;
+    }
+    NamePrompt > #panel {
         width: 42;
+    }
+    /* What the row you are on does: its own box under the list, so a long
+       explanation wraps to the box and not to the edge of the panel. */
+    /* The list takes what is left, no taller than its rows (set on mount),
+       so what a row does sits right under it; on a short terminal the list
+       scrolls and the explanation keeps its room. */
+    SettingsPanel #about {
+        height: auto;
+        max-height: 8;
+        padding: 1 1 0 1;
+        border-top: solid $accent 30%;
+        color: $text-muted;
     }
     /* The help panel is two columns — a key and what it does — where the
        others are one, so it needs the room. It was in none of these rules
@@ -1119,23 +1134,46 @@ class Spektr(App):
             # Says when the setting is inert. Changing a scope while shuffle is
             # off does nothing visible, and a row that looks like it did
             # something is worse than one that admits it did not.
-            return f"{v}" if s.shuffle else f"{v}  (off — press s)"
+            return f"{v}" if s.shuffle else f"{v} (off)"
 
         def show_shuffle_timing(v):
-            label = "every track change" if v == "track" else "every 15 seconds"
-            return label if s.shuffle else f"{label}  (off — press s)"
+            label = "each new song" if v == "track" else f"every {int(SHUFFLE_MODE_SECONDS)} s"
+            return label if s.shuffle else f"{label} (off)"
+
+        def shuffle_off() -> str:
+            return "" if s.shuffle else " Shuffle is off: press s to turn it on."
+
+        def source_now() -> str:
+            # the capture thread says "listening — <device>"; the row wants
+            # the device, and the rest of the app reads the status as it is
+            status = viz.status
+            return status.split(" — ", 1)[1] if status.startswith("listening — ") else status
+
+        def about_source() -> str:
+            if viz.status.startswith("listening"):
+                said = f"Listening to {source_now()}."
+            else:
+                said = viz.status[:1].upper() + viz.status[1:]
+                said += "" if said.endswith((".", "…", "!")) else "."
+            said = said.replace(" — ", ", ")
+            return said + " Press → for the next device, ← to go back to the default."
 
         def show_fps(v):
-            if v != config.FPS_UNLIMITED:
-                return f"{v} fps"
-            # Show what was actually detected, not just the resolved rate. A
+            return f"{v} fps" if v != config.FPS_UNLIMITED else "unlimited"
+
+        def about_fps() -> str:
+            text = ("How often the picture is redrawn. Motion is timed in seconds, "
+                    "so this only changes how smooth it looks.")
+            if s.fps != config.FPS_UNLIMITED:
+                return text + " Unlimited follows your display, if you have power to spare."
+            # Say what was actually detected, not just the resolved rate. A
             # probe that silently guessed wrong and a probe that failed and
             # fell back both produce a number; only one of them is worth
             # reporting, and the user cannot tell which from the number alone.
             got, detected = viz.unlimited_info()
             if detected is None:
-                return f"unlimited (experimental) — display rate unknown, using {got}"
-            return f"unlimited (experimental) — detected {detected} Hz"
+                return text + f" Unlimited is experimental. Your display's rate is unknown, so it runs at {got}."
+            return text + f" Unlimited is experimental. It follows your display: {detected} Hz."
 
         rows = [
             Setting(
@@ -1144,9 +1182,7 @@ class Spektr(App):
                 config.FPS_CHOICES,
                 show_fps,
                 lambda v: viz._retime(v, requested=True),
-                "motion is timed in seconds, so this is smoothness only; "
-                "unlimited caps to the detected display rate and is only worth "
-                "it with resources to spare",
+                about_fps,
             ),
             Setting(
                 "bands",
@@ -1154,7 +1190,8 @@ class Spektr(App):
                 config.BAND_CHOICES,
                 show_bands,
                 viz.set_bands,
-                "more bars, more detail",
+                "How many bars the spectrum is split into. More bars, more detail. "
+                "Fit the terminal uses as many as there is room for.",
             ),
             Setting(
                 "motion",
@@ -1162,7 +1199,8 @@ class Spektr(App):
                 config.MOTION_CHOICES,
                 lambda v: v,
                 viz.set_motion,
-                "reactive or smooth movement",
+                "How the picture moves. Snappy jumps to every hit; glide eases "
+                "between them, and still snaps to the main hits.",
             ),
             Setting(
                 "morph",
@@ -1170,8 +1208,9 @@ class Spektr(App):
                 config.MORPH_CHOICES,
                 lambda v: v,
                 viz.set_morph,
-                "clean: one front, the new mode's own entrance; "
-                "classic: the 0.5.5 morph, pictures bent into each other",
+                "How one mode turns into the next. Clean sweeps the new mode in "
+                "with its own entrance; classic bends the two pictures into each "
+                "other, the way 0.5.5 did.",
             ),
             Setting(
                 "sensitivity",
@@ -1179,7 +1218,8 @@ class Spektr(App):
                 (0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0),
                 lambda v: f"x{v:g}",
                 viz.set_sensitivity,
-                "scales the input",
+                "How loud the sound coming in is taken to be. Raise it for quiet "
+                "music; lower it if everything sits at the top.",
             ),
             Setting(
                 "gate",
@@ -1187,7 +1227,8 @@ class Spektr(App):
                 (1e-5, 3e-5, 8e-5, 2e-4, 5e-4, 1e-3),
                 lambda v: f"{v:.0e}",
                 viz.set_gate,
-                "quieter than this is silence",
+                "Anything quieter than this counts as silence, so the picture "
+                "rests between songs instead of drawing the hiss.",
             ),
             Setting(
                 "shuffle_scope",
@@ -1195,7 +1236,7 @@ class Spektr(App):
                 config.SHUFFLE_SCOPES,
                 show_shuffle,
                 self._set_shuffle_scope,
-                f"cycles modes/themes every {int(SHUFFLE_MODE_SECONDS)}s",
+                lambda: "What shuffle changes: the mode, the theme, or both." + shuffle_off(),
             ),
             Setting(
                 "shuffle_timing",
@@ -1203,27 +1244,33 @@ class Spektr(App):
                 config.SHUFFLE_TIMINGS,
                 show_shuffle_timing,
                 self._set_shuffle_timing,
-                (
-                    "song changes use the OS now-playing service"
-                    if nowplaying.available()
-                    else "song changes unavailable here — no OS now-playing service"
+                lambda: (
+                    "When shuffle moves on: on a timer, or on each new song. New songs "
+                    + ("are read from your system's now-playing service."
+                       if nowplaying.available()
+                       else "need a now-playing service, which this system does not have.")
+                    + shuffle_off()
                 ),
             ),
             Setting(
                 "transparent_background",
                 "background",
                 (False, True),
-                lambda v: "terminal (see-through)" if v else "theme (solid)",
+                lambda v: "see-through" if v else "theme colour",
                 viz.set_transparent_background,
-                "see-through shows terminal opacity; light themes want a light terminal",
+                "Theme colour fills the back with the theme's own background. "
+                "See-through shows your terminal behind the picture, transparency "
+                "and all; light themes want a light terminal.",
             ),
             Setting(
                 "chrome_mode",
                 "header + footer",
                 ("shown", "auto", "hidden"),
-                lambda v: {"auto": f"auto, hides after {CHROME_IDLE_S:.0f}s"}.get(v, v),
+                lambda v: v,
                 self._set_chrome_mode,
-                "f toggles; auto hides them once you stop pressing keys",
+                "The title at the top and the keys at the bottom. Auto hides them "
+                f"{CHROME_IDLE_S:.0f} seconds after your last key press; f shows or "
+                "hides them at any time.",
             ),
             Setting(
                 "fine_modes",
@@ -1231,7 +1278,8 @@ class Spektr(App):
                 (False, True),
                 lambda v: "shown" if v else "hidden",
                 self._set_fine_modes,
-                "higher-resolution variants",
+                "Sharper versions of some modes, drawn with smaller blocks. They "
+                "need a terminal font that has those blocks.",
             ),
             Setting(
                 "eco",
@@ -1239,8 +1287,8 @@ class Spektr(App):
                 config.ECO_CHOICES,
                 lambda v: v,
                 self._set_eco,
-                "easier on an older machine: 30 fps, fewer bars, and shuffle "
-                "keeps away from the heaviest visuals",
+                "Easier on an older machine: 30 fps, fewer bars, and shuffle "
+                "keeps away from the heaviest modes.",
             ),
             Setting(
                 "cells",
@@ -1248,7 +1296,8 @@ class Spektr(App):
                 ("octant", "quadrant"),
                 lambda v: v,
                 self._set_cells,
-                "rounder vs blockier edges",
+                "The shape of the small blocks the sharper modes draw with: "
+                "octants give rounder edges, quadrants blockier ones.",
             ),
             # An action row, not a value. It lives here because the editor is
             # otherwise only reachable from a keybinding nobody has been told
@@ -1261,11 +1310,12 @@ class Spektr(App):
                 "theme_editor",
                 "theme editor",
                 [],
-                live=lambda: "→ build a new theme",
+                live=lambda: "press → to start",
                 step=lambda delta: (
                     self.call_after_refresh(self.action_new_theme) if delta > 0 else None
                 ),
-                note="tweak four colours live",
+                note="Build a theme of your own from four colours, with the "
+                "picture changing as you pick them.",
             ),
             # No fixed choices to step through and nothing to read out of
             # values — the audio source is whatever the capture thread
@@ -1279,9 +1329,9 @@ class Spektr(App):
                 "source",
                 "source",
                 [],
-                live=lambda: viz.status,
+                live=source_now,
                 step=lambda delta: viz.restart_capture() if delta > 0 else viz.reset_capture(),
-                note="→ next device · ← default",
+                note=about_source,
             ),
         ]
         values = {

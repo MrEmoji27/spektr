@@ -8,7 +8,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.widget import Widget
-from textual.widgets import Label, OptionList
+from textual.widgets import Label, OptionList, Static
 
 from .pickers import markup_safe
 
@@ -40,7 +40,7 @@ class Setting:
         choices: list,
         render: Callable[[object], str] | None = None,
         apply: Callable[[object], None] | None = None,
-        note: str = "",
+        note: "str | Callable[[], str]" = "",
         step: Callable[[int], None] | None = None,
         live: Callable[[], object] | None = None,
     ):
@@ -55,6 +55,15 @@ class Setting:
 
     def render(self, value) -> str:
         return self._render(value)
+
+    def about(self) -> str:
+        """What this setting does, said when its row is the one you are on.
+
+        A note can be a callable, for a row whose explanation depends on the
+        state it is in: shuffle's says whether shuffle is on at all, and the
+        frame rate's says what display rate was detected.
+        """
+        return self.note() if callable(self.note) else self.note
 
     def apply(self, value) -> None:
         if self._apply:
@@ -76,6 +85,12 @@ class SettingsPanel(Widget):
     Everything applies as you move — the visualiser is right there behind the
     panel, and a settings screen you have to close to see the effect of is a
     settings screen you fight with. There is no OK button for the same reason.
+
+    Each row is one line, its name and its value, and the values line up in
+    one column. What a setting does is said once, in the box under the list,
+    for the row you are on. Every row used to carry its note underneath it,
+    wrapped to the panel's edge rather than to the row's indent, so the panel
+    was a column of half-sentences that the rows had to be picked out of.
     """
 
     BINDINGS = [
@@ -88,6 +103,10 @@ class SettingsPanel(Widget):
         Binding("l", "step(1)", "Raise", show=False),
     ]
 
+    #: Characters a row has for its name and value: the panel's width, less
+    #: its border, padding and scrollbar, and the list's own margin.
+    ROW_WIDTH = 42
+
     def __init__(
         self,
         settings: Sequence[Setting],
@@ -98,16 +117,23 @@ class SettingsPanel(Widget):
         self._settings = list(settings)
         self._values = dict(values)
         self._on_done = on_done
+        self._on: int | None = None
+        self._label_width = max((len(s.label) for s in self._settings), default=0)
 
     def compose(self) -> ComposeResult:
         with Vertical(id="panel"):
             yield Label("settings", id="title")
             yield OptionList(id="rows")
-            yield Label("↑↓ row · ←→ change · esc done", id="hint")
+            yield Static("", id="about")
+            yield Label("↑↓ choose · ←→ change · esc done", id="hint")
 
     def on_mount(self) -> None:
-        self._repaint()
-        self.query_one("#rows", OptionList).focus()
+        rows = self.query_one("#rows", OptionList)
+        rows.add_options([self._row_text(i) for i in range(len(self._settings))])
+        rows.styles.max_height = len(self._settings)
+        rows.highlighted = 0 if self._settings else None
+        rows.focus()
+        self._show(0)
         # a `live` row (source) can keep changing after the key that
         # triggered it — the capture thread settles on its own schedule, not
         # on the next keypress — so it needs its own refresh rather than
@@ -115,18 +141,39 @@ class SettingsPanel(Widget):
         if any(s.live is not None for s in self._settings):
             self.set_interval(1.0, self._repaint)
 
-    def _row_text(self, s: Setting) -> str:
-        value = s.render(s.live() if s.live is not None else self._values[s.key])
-        pad = " " * max(1, 14 - len(s.label))
-        line = f"  {markup_safe(s.label)}{pad}{markup_safe(value)}"
-        return f"{line}\n    [dim]{markup_safe(s.note)}[/dim]" if s.note else line
+    def _value(self, s: Setting) -> str:
+        return s.render(s.live() if s.live is not None else self._values[s.key])
+
+    def _row_text(self, i: int) -> str:
+        s = self._settings[i]
+        label = s.label.ljust(self._label_width)
+        room = max(4, self.ROW_WIDTH - self._label_width - 2)
+        value = self._value(s)
+        if i == self._on:
+            # the row you are on shows it can be changed, left and right
+            value = f"‹ {_fit(value, room - 4)} ›"
+            return f"{markup_safe(label)}  [b]{markup_safe(value)}[/b]"
+        return f"{markup_safe(label)}  [dim]{markup_safe(_fit(value, room))}[/dim]"
+
+    def _show(self, i: int | None) -> None:
+        """Make row ``i`` the one you are on: mark it, and say what it does."""
+        rows = self.query_one("#rows", OptionList)
+        old, self._on = self._on, i
+        for j in {old, i} - {None}:
+            if j < len(self._settings):
+                rows.replace_option_prompt_at_index(j, self._row_text(j))
+        about = self._settings[i].about() if i is not None and i < len(self._settings) else ""
+        self.query_one("#about", Static).update(markup_safe(about))
+
+    def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
+        if event.option_list.id == "rows":
+            self._show(event.option_index)
 
     def _repaint(self) -> None:
         rows = self.query_one("#rows", OptionList)
-        keep = rows.highlighted or 0
-        rows.clear_options()
-        rows.add_options([self._row_text(s) for s in self._settings])
-        rows.highlighted = min(keep, len(self._settings) - 1)
+        for i in range(len(self._settings)):
+            rows.replace_option_prompt_at_index(i, self._row_text(i))
+        self._show(self._on)
 
     def _current(self) -> Setting | None:
         i = self.query_one("#rows", OptionList).highlighted
@@ -159,3 +206,8 @@ class SettingsPanel(Widget):
         if cb is not None:
             self._on_done = None
             cb()
+
+
+def _fit(text: str, room: int) -> str:
+    """``text`` cut to ``room`` characters, with an ellipsis when it was cut."""
+    return text if len(text) <= room else text[: max(0, room - 1)] + "…"
