@@ -1042,6 +1042,9 @@ class Spektr(App):
                 ("", "sweeps the new one in its own way;"),
                 ("", "classic bends the two into each other."),
                 ("eco", "30 fps and fewer bars, for a slow machine."),
+                ("memory", "at most five modes are kept in memory: the"),
+                ("", "one on screen and the likeliest next. the"),
+                ("", "rest are let go and come back when needed."),
                 ("idle", "in silence, with nothing moving, spektr"),
                 ("", "drops to 15 fps until the music is back."),
                 ("subcells", "(o) draws 2x4 dots per character, (q) 2x2."),
@@ -1068,6 +1071,7 @@ class Spektr(App):
                 ("motion", s.motion),
                 ("morph", s.morph),
                 ("eco", s.eco),
+                ("memory", f"{len(viz.held_modes())} of 5 modes held"),
                 ("frame rate", rate),
                 ("shuffle", (f"on, {s.shuffle_scope}, by {s.shuffle_timing}"
                              if s.shuffle else "off")),
@@ -1289,6 +1293,22 @@ class Spektr(App):
                 self._set_eco,
                 "Easier on an older machine: 30 fps, fewer bars, and shuffle "
                 "keeps away from the heaviest modes.",
+            ),
+            # Not a choice: a readout. How much spektr keeps in memory is
+            # already decided (five modes at most, see
+            # AudioVisualizer._mode_window), and a row that says so, live,
+            # answers the question before anyone has to ask it.
+            Setting(
+                "memory",
+                "mode memory",
+                [],
+                live=lambda: f"{len(viz.held_modes())} of 5 held",
+                step=lambda _delta: None,
+                fixed=True,
+                note="spektr keeps at most five modes in memory: the one on "
+                "screen and the ones you are likely to pick next. The rest are "
+                "let go as you move on, and come back in a moment when you "
+                "return to them.",
             ),
             Setting(
                 "cells",

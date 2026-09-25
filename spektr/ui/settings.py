@@ -43,6 +43,7 @@ class Setting:
         note: "str | Callable[[], str]" = "",
         step: Callable[[int], None] | None = None,
         live: Callable[[], object] | None = None,
+        fixed: bool = False,
     ):
         self.key = key
         self.label = label
@@ -52,6 +53,9 @@ class Setting:
         self._render = render or str
         self.step = step
         self.live = live
+        #: A readout, not a choice: shown without the arrows that say a row
+        #: can be changed.
+        self.fixed = fixed
 
     def render(self, value) -> str:
         return self._render(value)
@@ -149,7 +153,7 @@ class SettingsPanel(Widget):
         label = s.label.ljust(self._label_width)
         room = max(4, self.ROW_WIDTH - self._label_width - 2)
         value = self._value(s)
-        if i == self._on:
+        if i == self._on and not s.fixed:
             # the row you are on shows it can be changed, left and right
             value = f"‹ {_fit(value, room - 4)} ›"
             return f"{markup_safe(label)}  [b]{markup_safe(value)}[/b]"

@@ -347,6 +347,12 @@ class AudioVisualizer(Widget):
                 break
         return window
 
+    def held_modes(self) -> list[str]:
+        """The modes keeping their working memory now, at most five: the one on
+        screen and the ones likeliest next. For the settings panel and the help,
+        so the cap can be seen rather than taken on trust."""
+        return list(self._mode_state)
+
     def _refresh_mode_window(self, extra: str | None = None) -> None:
         previous = self._mode_state
         window = self._mode_window(extra)
