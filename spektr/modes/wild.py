@@ -157,15 +157,15 @@ def riptide(ctx: Ctx):
         on_a &= sa - np.floor(sa) > 0.3
         on_b &= sb - np.floor(sb) > 0.3
     dots = on_a | on_b
-    # the bass current low on the ramp, the top end's higher, sparks hot:
-    # a line's colour falls off from its centre, and only lit dots are read
-    ka = 0.25 + 0.3 * bass + 0.2 * st["flash"]
-    kb = 0.5 + 0.3 * treble + 0.2 * st["flash"]
-    da *= np.float32(-ka / _RT_WIDTH)
-    da += np.float32(ka)
-    db *= np.float32(-kb / _RT_WIDTH)
-    db += np.float32(kb)
-    heat = np.maximum(da, db, out=da)
+    # One flat colour per current, the bass one low on the ramp and the top
+    # end's higher, and the crossings hot. It used to shade each line from
+    # its centre out, which put a different colour in nearly every cell: the
+    # picture cost 8 ms to draw and another 9 ms to hand to the terminal, as
+    # a colour change every few characters, and went over a 60 fps frame at
+    # 400x100. Flat colours say the same thing about which current is which.
+    heat = on_a.astype(np.float32)
+    heat *= np.float32(0.25 + 0.3 * bass + 0.2 * st["flash"])
+    np.maximum(heat, on_b * np.float32(0.5 + 0.3 * treble + 0.2 * st["flash"]), out=heat)
     heat[on_a & on_b] = 1.0
     return pack_braille(dots), ctx.ramp(cell_max(heat))
 
