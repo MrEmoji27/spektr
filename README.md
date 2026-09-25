@@ -88,7 +88,7 @@ pip install -e .
 spektr
 ```
 
-Or from PyPI, once 0.6.0 is out:
+Or from PyPI:
 
 ```bash
 pip install spektr-audio
@@ -507,8 +507,8 @@ Two terminal visualisers got there first, so their ideas are credited here.
 
 ## Use of AI in this project
 
-Parts of spektr were built with AI. **Opus 5**, **GPT-5.6 Luna** and **DeepSeek v4 Flash**
-helped build, debug and fix it. That is said here rather than left to be worked out from the
+Parts of spektr were built with AI. **Opus 5**, **Opus 5.5**, **GPT-5.6 Luna** and
+**DeepSeek v4 Flash** helped build, debug and fix it. That is said here rather than left to be worked out from the
 commit history.
 
 They worked under direction and within limits. No model decided where the project was
@@ -544,7 +544,8 @@ Without them they move risk quietly into your codebase, which is the worst place
 
 Assisted work, on the terms above:
 
-- **Opus 5**, most of it.
+- **Opus 5**, most of it, up to 0.5.5.
+- **Opus 5.5**, most of 0.6.0: the music analysis, the new modes and the reworks.
 - **GPT-5.6 Luna**, individual modes.
 - **DeepSeek v4 Flash**, debugging and second opinions.
 
