@@ -164,7 +164,6 @@ class AudioVisualizer(Widget):
         #: Draws the window's first frames off the render path, and builds the
         #: morph's mask before the first morph needs it.
         self._warmer = ModeWarmer()
-        self._warmer.prime(lambda: dissolve.bluenoise.mask(dissolve.MASK))
         self._strips: list[Strip] | None = None
         #: The picture's own cells, for the frames that are written straight to
         #: the terminal rather than composed by Textual. See :meth:`_paint`.
@@ -220,6 +219,12 @@ class AudioVisualizer(Widget):
     # ── lifecycle ────────────────────────────────────────────────────────────
 
     def on_mount(self) -> None:
+        # Build the morph's mask ahead of the first morph. On mount, not in the
+        # constructor: a visualiser that is built and never shown (the tests
+        # make dozens) started a thread that nothing would ever stop, and
+        # twenty of them building the same mask at once starved the one on
+        # screen for ten seconds.
+        self._warmer.prime(lambda: dissolve.bluenoise.mask(dissolve.MASK))
         self.apply_theme(self._theme_name, remember=False)
         self.mode_name = (
             self.settings.mode if mode_registry.get(self.settings.mode) else "Bars"

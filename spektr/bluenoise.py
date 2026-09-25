@@ -16,6 +16,7 @@ when ``mask < p``. Generation is not cheap and is not meant to run per frame:
 """
 from __future__ import annotations
 
+import threading
 from functools import lru_cache
 
 import numpy as np
@@ -72,7 +73,13 @@ def _initial_pattern(n: int, seed: int) -> np.ndarray:
         binary[vy, vx] = 1
 
 
-@lru_cache(maxsize=8)
+#: One build at a time. ``lru_cache`` does not stop two threads that miss the
+#: cache together from both building the mask, and it costs a few hundred
+#: milliseconds of solid work: the warmer and the render path asking at once
+#: would each pay it, and every caller after the first can simply wait.
+_BUILDING = threading.Lock()
+
+
 def mask(n: int = 64, seed: int = 0x5EED) -> np.ndarray:
     """An ``n`` x ``n`` rank mask of floats in ``[0, 1)``, each value once.
 
@@ -80,6 +87,12 @@ def mask(n: int = 64, seed: int = 0x5EED) -> np.ndarray:
     every machine and every run — the same rule the rest of spektr follows for
     anything that should look settled.
     """
+    with _BUILDING:
+        return _mask(n, seed)
+
+
+@lru_cache(maxsize=8)
+def _mask(n: int, seed: int) -> np.ndarray:
     if n < 2 or n & (n - 1):
         raise ValueError("mask size must be a power of two, 2 or larger")
 
