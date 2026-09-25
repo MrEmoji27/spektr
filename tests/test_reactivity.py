@@ -41,9 +41,13 @@ MIN_CHURN = 0.004
 #: its shockwaves are thrown from the blob's rim and cross it in a quarter of
 #: a second instead of hanging in flight for longer than a bar — before that
 #: its idle animation moved more of the screen than its waves did, and it
-#: measured 0.81 here. ``Fireworks`` answered a beat with one more climbing
-#: shell in a sky that already held ten, which measured 1.02; a beat now fires
-#: a salvo of mines that burst where they are lit, and it measures 1.93.
+#: measured 0.81 here. ``Fireworks`` measures about 1.0 and that is not a
+#: late mode: with a tempo it sends a salvo up ahead of each beat, timed on
+#: the beat clock to burst on the true beat, which is ~30 ms before the
+#: detector reports the hit these windows are keyed to. Its timing is checked
+#: against the true beats in ``tests/test_fireworks.py`` instead. (A salvo of
+#: "mines" lit on the detected hit measured 1.93, but a burst with no rocket
+#: under it read as a misfire and was taken out: every burst is a rocket's.)
 #: ``Shooting Star`` laid a beat's meteor train behind the edge of the frame,
 #: so the beat landed as one fragment and the rest arrived over the next third
 #: of a second; the train now enters head-first and whole, and it measures 1.32.
@@ -58,7 +62,7 @@ MIN_CHURN = 0.004
 #:
 #: These are here so a change that damps a mode's response shows up as a
 #: number that fell, not as something someone notices months later.
-BASELINE = {"Bars": 2.45, "Pulse": 1.89, "Bubbles": 1.01, "Fireworks": 1.93,
+BASELINE = {"Bars": 2.45, "Pulse": 1.89, "Bubbles": 1.01, "Fireworks": 1.01,
             "Shooting Star": 1.32}
 
 #: How far a baseline may fall before it counts as a regression. Generous,
