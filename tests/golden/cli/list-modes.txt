@@ -32,6 +32,10 @@
   Tunnel                  flying down a pipe, ribbed by the beat
   Tunnel In               rings thrown out of the centre on the beat, rushing past you
   Crosscurrent            a spinning tunnel of two ring streams, rushing out and drawn in, flickering on the beat
+  Riptide                 two currents of wave lines sweeping across each other, sparking where they cross, bent by every hit
+  Twin Storms             two whirlpools of particles spinning opposite ways, trading streams and colliding in the middle
+  Arc Storm               lightning across the screen, an arc per slice of the spectrum, forking on every hit
+  Shatter                 a pane of glass in shards that fill with the music and blow apart where a hit lands
   Warp                    starfield, accelerating with the music
   Matrix                  digital rain, falling faster when it's loud
   Boot                    an old PC waking up — BIOS POST, a boot log, a blinking cursor
@@ -71,5 +75,8 @@
   JP Bars                 a segmented LED meter whose bars peel off and rise, with peak lamps that hold and drop
   JP Drift                the meter shedding bulbs: they break off and fall, landing on the bars in a cap that melts
   JP Pulse                the meter bent into a ring, a spoke of bulbs per band, flashing and chased on the beat
-  JP Sequencer            a drum machine's step grid, written by the song: kick, snare and hat where each hit landed
+  JP Sequencer            a grid of light-up pads: every drum plays its own light show across it
+  JP Chords               a synth's chord display: the chord it hears in big letters, lit on a keyboard, and the ones before it
+  JP Panel                a drum machine's front panel: sixteen pads, a running light, and the drums lighting the pads they land on
+  JP Tracker              the song scrolling past like a tracker: the notes on top, the drums in their lanes, the beats marked
   None                    nothing at all

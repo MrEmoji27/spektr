@@ -9,7 +9,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-00c853)](https://github.com/MrEmoji27/spektr/blob/main/LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20·%20Linux%20·%20macOS-546e7a)](#how-it-captures-audio)
-[![Modes](https://img.shields.io/badge/render%20modes-62-ff6d00)](#modes)
+[![Modes](https://img.shields.io/badge/render%20modes-69-ff6d00)](#modes)
 [![Themes](https://img.shields.io/badge/themes-55-7c4dff)](#themes)
 [![Built with Textual](https://img.shields.io/badge/built%20with-Textual-5e35b1)](https://textual.textualize.io/)
 
@@ -22,7 +22,7 @@ Play music anywhere, from Spotify to a browser tab to a game, and spektr draws i
 terminal. You do not point it at a file or sign in to anything. It listens to whatever your
 speakers are playing.
 
-**Sixty-two render modes. Fifty-five themes. 60 fps, or your display's.**
+**Sixty-nine render modes. Fifty-five themes. 60 fps, or your display's.**
 
 There is an Android build too: the same engine on a tablet, as an ambient display for your
 desk. See [spektr on Android](#spektr-on-android).
@@ -33,11 +33,19 @@ desk. See [spektr on Android](#spektr-on-android).
 > **Windows, one line, no Python needed.** Paste this into PowerShell:
 >
 > ```powershell
-> irm https://github.com/MrEmoji27/spektr/releases/latest/download/spektr.exe -OutFile spektr.exe; ./spektr.exe
+> irm https://raw.githubusercontent.com/MrEmoji27/spektr/main/install.ps1 | iex
 > ```
 >
-> It downloads spektr next to you and starts it. Nothing is installed and nothing is
-> written outside that folder, so deleting the file is the uninstall.
+> It installs spektr in your user folder, puts it on your PATH and in the Start
+> Menu, and checks it runs. No admin rights needed. Run it again to update, and
+> `spektr-uninstall` to remove it.
+>
+> Or run it without installing anything: this downloads spektr next to you and
+> starts it, and deleting the file is the uninstall.
+>
+> ```powershell
+> irm https://github.com/MrEmoji27/spektr/releases/latest/download/spektr.exe -OutFile spektr.exe; ./spektr.exe
+> ```
 >
 > You can also grab `spektr.exe` from the
 > [latest release](https://github.com/MrEmoji27/spektr/releases) and double-click it. A
@@ -47,7 +55,14 @@ desk. See [spektr on Android](#spektr-on-android).
 > installer in the same release if you want a Start Menu entry and a faster start.
 
 > [!TIP]
-> **Linux, no Python needed.** Download the `spektr` binary from the
+> **Linux or macOS, one line.** This installs spektr in `~/.local/bin` (the Linux
+> binary, or from PyPI on macOS) and tells you if any audio library is missing:
+>
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/MrEmoji27/spektr/main/install.sh | sh
+> ```
+>
+> **Linux, by hand, no Python needed.** Download the `spektr` binary from the
 > [latest release](https://github.com/MrEmoji27/spektr/releases), then:
 >
 > ```bash
@@ -103,6 +118,10 @@ filter. They are listed here in the order the picker cycles them.
 | **Ladder** | segmented LED stack | **Warp** | starfield, accelerating with the music |
 | **Mirror** | grows out from the centre line | **Matrix** | digital rain, falling faster when it's loud |
 | **Readout** | scrolling numeric ticker, band levels as plain digits | **Boot** | an old PC waking up, BIOS POST, a boot log, a blinking cursor |
+| | | **Riptide** | two currents of wave lines sweeping across each other, sparking where they cross, bent by every hit |
+| | | **Twin Storms** | two whirlpools of particles spinning opposite ways, trading streams and colliding in the middle |
+| | | **Arc Storm** | lightning across the screen, an arc per slice of the spectrum, forking on every hit |
+| | | **Shatter** | a pane of glass in shards that fill with the music and blow apart where a hit lands |
 | **Stereo** | per-band L/R meters, mirrored from centre | **Spectro** | scrolling waterfall, frequency up, time across |
 | **Wave** | smoothed waveform | **Plasma** | solid colour field, warped by the spectrum |
 | **Scope** | trigger-synced oscilloscope, the trace holds still | **Chladni** | vibrating-plate figure that snaps between real resonances |
@@ -127,16 +146,24 @@ filter. They are listed here in the order the picker cycles them.
 | **Retro** | sunset grid, with the spectrum as the horizon | **Ember** | a coal bed burning by band, sparks off the hot spots |
 | **Auroras** | a light ribbon whose lower rim rides the spectrum | **Snow** | snowfall in three planes, gusting and lying in drifts |
 | **JP Bars** | a segmented LED meter whose crest peels off and rises, with peak lamps that hold and drop | **JP Drift** | the meter shedding bulbs: they break off and fall, landing on the bars in a cap that melts |
-| **JP Pulse** | the meter bent into a ring, a spoke of bulbs per band, flashing and chased on the beat | **JP Sequencer** | a drum machine's step grid, written by the song: kick, snare and hat where each hit landed |
+| **JP Pulse** | the meter bent into a ring, a spoke of bulbs per band, flashing and chased on the beat | **JP Sequencer** | a grid of light-up pads: every drum plays its own light show across it |
+| **JP Chords** | a synth's chord display: the chord it hears in big letters, lit on a keyboard, and the ones before it | **JP Panel** | a drum machine's front panel: sixteen pads, a running light, and the drums lighting the pads they land on |
+| **JP Tracker** | the song scrolling past like a tracker: the notes on top, the drums in their lanes, the beats marked | | |
 
-The four **JP** modes are inspired by Japanese car audio hardware, the LED
-level meters on in-dash head units and equalisers. The first three draw
-the same meter, with the unlit bulbs showing as faint dots, and each adds one
-idea from another mode: **Keys**' note roll, **Rain**'s falling drops, **Radial**'s
-circle. They light in three colour zones, low, middle and top, the way car
-stereo meters are printed. **JP Sequencer** is the odd one out: a drum machine's step grid that
-the song writes into, kick, snare and hat at the step each hit landed on. When
-it is not sure where the bar starts, it claims no downbeat.
+The seven **JP** modes are inspired by Japanese audio hardware. The first three
+are the LED level meters on in-dash head units and equalisers: the same meter,
+with the unlit bulbs showing as faint dots, and each adds one idea from another
+mode: **Keys**' note roll, **Rain**'s falling drops, **Radial**'s circle. They
+light in three colour zones, low, middle and top, the way car stereo meters are
+printed.
+
+The other four are music machines the song plays. **JP Sequencer** is a pad grid
+where each drum draws its own light show: a kick rings out from the centre, a
+snare throws a cross, a hat blinks a few pads. **JP Chords** names the chord it
+hears on a synth's display. **JP Panel** lights a drum machine's pads where each
+drum lands, and **JP Tracker** scrolls the notes and drums past like a tracker.
+They read the drums, the bar and the harmony the analyser now hears, and when
+they are not sure, of the bar or the chord, they say so rather than guess.
 
 > [!NOTE]
 > The JP modes are still young. They may be changed, improved or reworked.
@@ -151,14 +178,19 @@ beat, **Star Trails** spins up with percussion while arcs accumulate around a
 fixed pole, and **Supernova** spends its whole budget on rare, hard hits ,
 a shell that expands for five seconds and a core that glows on after it.
 
+**Riptide**, **Twin Storms**, **Arc Storm** and **Shatter** are the *wild* group:
+as wild as **Crosscurrent**, without the tunnel. Each one runs two things against
+each other and lets the music collide them: two currents of lines, two storms,
+lightning across the whole screen, glass that breaks where a hit lands.
+
 Vinyl, Rain, Snow and Ember are the lofi group, a
 shared *look* (warm objects, soft edges, nothing strobing) rather than a
 shared reactivity budget. Each one maps real band data into its geometry,
 so what the music changes is what the object is doing, not just how bright
 the picture is.
 
-A sixty-third entry, **None**, is registered as the off switch, it draws nothing.
-That is why the test output counts 63 against the sixty-two listed here, and 75
+A seventieth entry, **None**, is registered as the off switch, it draws nothing.
+That is why the test output counts 70 against the sixty-nine listed here, and 82
 in total, because the twelve subcell variants below are registered whether or not
 the setting that offers them is on.
 

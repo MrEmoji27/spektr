@@ -45,6 +45,10 @@ CATALOG: tuple[tuple[str, str, str, bool, str], ...] = (
     ('Tunnel', 'scenes', 'flying down a pipe, ribbed by the beat', False, 'scenes'),
     ('Tunnel In', 'scenes', 'rings thrown out of the centre on the beat, rushing past you', False, 'scenes'),
     ('Crosscurrent', 'scenes', 'a spinning tunnel of two ring streams, rushing out and drawn in, flickering on the beat', False, 'scenes'),
+    ('Riptide', 'wild', 'two currents of wave lines sweeping across each other, sparking where they cross, bent by every hit', False, 'wild'),
+    ('Twin Storms', 'wild', 'two whirlpools of particles spinning opposite ways, trading streams and colliding in the middle', False, 'wild'),
+    ('Arc Storm', 'wild', 'lightning across the screen, an arc per slice of the spectrum, forking on every hit', False, 'wild'),
+    ('Shatter', 'wild', 'a pane of glass in shards that fill with the music and blow apart where a hit lands', False, 'wild'),
     ('Warp', 'scenes', 'starfield, accelerating with the music', False, 'scenes'),
     ('Matrix', 'scenes', "digital rain, falling faster when it's loud", False, 'scenes'),
     ('Boot', 'scenes', 'an old PC waking up — BIOS POST, a boot log, a blinking cursor', False, 'scenes'),
@@ -84,7 +88,10 @@ CATALOG: tuple[tuple[str, str, str, bool, str], ...] = (
     ('JP Bars', 'jp', 'a segmented LED meter whose bars peel off and rise, with peak lamps that hold and drop', False, 'jp'),
     ('JP Drift', 'jp', 'the meter shedding bulbs: they break off and fall, landing on the bars in a cap that melts', False, 'jp'),
     ('JP Pulse', 'jp', 'the meter bent into a ring, a spoke of bulbs per band, flashing and chased on the beat', False, 'jp'),
-    ('JP Sequencer', 'jp', "a drum machine's step grid, written by the song: kick, snare and hat where each hit landed", False, 'jp_music'),
+    ('JP Sequencer', 'jp', 'a grid of light-up pads: every drum plays its own light show across it', False, 'jp_music'),
+    ('JP Chords', 'jp', "a synth's chord display: the chord it hears in big letters, lit on a keyboard, and the ones before it", False, 'jp_music'),
+    ('JP Panel', 'jp', "a drum machine's front panel: sixteen pads, a running light, and the drums lighting the pads they land on", False, 'jp_music'),
+    ('JP Tracker', 'jp', 'the song scrolling past like a tracker: the notes on top, the drums in their lanes, the beats marked', False, 'jp_music'),
     ('None', 'off', 'nothing at all', False, 'modes'),
 )
 
