@@ -1,0 +1,2 @@
+# curl | sh on Linux and macOS breaks on CRLF line endings
+install.sh text eol=lf
