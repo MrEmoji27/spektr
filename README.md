@@ -91,9 +91,11 @@ spektr
 Or from PyPI:
 
 ```bash
-pip install spektr-audio
+pipx install spektr-audio
 spektr
 ```
+
+`pipx` gives spektr its own environment. Plain `pip install spektr-audio` works too. One rare catch: an unrelated logging package on PyPI is also called `spektr`, and if both are pip-installed into the same environment they overwrite each other's files. The chance of that is very low, and `pipx` or the installers above avoid it entirely.
 
 > [!NOTE]
 > The package is `spektr-audio`, because `spektr` on PyPI belongs to an unrelated
