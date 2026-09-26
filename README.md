@@ -109,48 +109,46 @@ spektr
 <sub>Valentine and Auroras, on the `citrine` ramp.</sub>
 
 Press `v` for a picker that previews each mode live as you arrow through it, and `/` to
-filter. They are listed here in the order the picker cycles them.
+filter. They are listed here in the order the picker cycles them, down the left
+column and then the right.
 
 | | | | |
 |---|---|---|---|
-| **Bars** | the classic, bars with peak markers | **Keys** | a lit keyboard; struck bands scroll away as notes |
-| **Bricks** | chunky, no partial cells | **Tunnel** | flying down a pipe, ribbed by the beat |
-| **Columns** | gapless, interpolated across the full width | **Tunnel In** | rings thrown out of the centre on the beat, rushing past you |
-| | | **Crosscurrent** | two streams in one spinning tunnel, round rings rushing out, octagons drawn in, sparking where they cross; the turn speeds up with the tempo and a busy track, and spokes strobe on the beat |
-| **Ladder** | segmented LED stack | **Warp** | starfield, accelerating with the music |
-| **Mirror** | grows out from the centre line | **Matrix** | digital rain, falling faster when it's loud |
-| **Readout** | scrolling numeric ticker, band levels as plain digits | **Boot** | an old PC waking up, BIOS POST, a boot log, a blinking cursor |
-| | | **Riptide** | two currents of wave lines sweeping across each other, sparking where they cross, bent by every hit |
-| | | **Twin Storms** | two whirlpools of particles spinning opposite ways, trading streams and colliding in the middle |
-| | | **Arc Storm** | lightning across the screen, an arc per slice of the spectrum, forking on every hit |
-| | | **Shatter** | a pane of glass in shards that fill with the music and blow apart where a hit lands |
-| **Stereo** | per-band L/R meters, mirrored from centre | **Spectro** | scrolling waterfall, frequency up, time across |
-| **Wave** | smoothed waveform | **Plasma** | solid colour field, warped by the spectrum |
-| **Scope** | trigger-synced oscilloscope, the trace holds still | **Chladni** | vibrating-plate figure that snaps between real resonances |
-| **ECG** | scrolling trace, like a heart monitor | **Chladni Flow** | the same plate, melting continuously from one figure to the next |
-| **Strings** | plucked strings, bowed by their own band | **Chladni Extreme** | the plate driven past its modes, morphs and escalates |
-| **Helix** | two strands rotating, split by true L/R phase | **VFD** | vacuum-fluorescent bargraph with phosphor afterglow |
-| **Gonio** | stereo phase scope with a phosphor trail | **Needle** | analogue VU, one sweeping needle, one red zone |
-| **Scatter** | density sparkle, thicker where it's loud | **VU** | big L/R LED meters with peak hold |
-| **Flame** | fire, licking upward from each band | **Kaleidoscope** | radial mirror symmetry, the wedge count follows the spectrum |
-| **Pulse** | radial pulse with shockwaves | **Dither** | the spectrum printed as a newspaper halftone |
-| **Arcs** | hollow rings, one per band, pushed out by level | **Dither Storm** | the same crosshatch, but moving, each band drives its own wave, and beats throw rings through it |
-| **Bubbles** | bubbles from the low end, popping at the top | **Dither Storm Extreme** | Dither Storm with nothing holding it back, hits pile up and a dense passage blows the field to white |
-| **Radial** | the spectrum wrapped into a circle | **Valentine** | a heart that beats with the track, trailing smaller ones upward |
-| **Sonar** | one sweep, not the whole spectrum, returns fade like a scope | **Locket** | an outlined heart, pulsing rings of hearts outward on the beat |
-| **Orbit** | bodies on real elliptical orbits; loud bands swing out | **Shooting Star** | a night sky, with meteors thrown from a drifting radiant on the beat |
-| **Constellations** | beats draw lines between fixed stars; the figures fade like film | **Star Trails** | a long exposure: the sky turns and leaves its arcs behind |
-| **Supernova** | a mostly dark sky, waiting for the one hit worth a catastrophe | **Locket Beat** | the locket heart, sending out a steady stream of rings, bright on every beat |
-| **Swell** | an open sea, bass drives the swell, hits land ripples | | |
-| **Fireworks** | beat-triggered launches, bursts, and fall | **Maelstrom** | a real fluid sim, stirred by the music |
-| **Dune** | sand piles up by band, avalanching past a threshold | **Vinyl** | a record whose grooves light up as a radial spectrum |
-| **Murmuration** | a flock wheeling and scattering with the beat | **Rain** | rain on the glass, falling harder when it's loud |
-| **Retro** | sunset grid, with the spectrum as the horizon | **Ember** | a coal bed burning by band, sparks off the hot spots |
-| **Auroras** | a light ribbon whose lower rim rides the spectrum | **Snow** | snowfall in three planes, gusting and lying in drifts |
-| **JP Bars** | a segmented LED meter whose crest peels off and rises, with peak lamps that hold and drop | **JP Drift** | the meter shedding bulbs: they break off and fall, landing on the bars in a cap that melts |
-| **JP Pulse** | the meter bent into a ring, a spoke of bulbs per band, flashing and chased on the beat | **JP Sequencer** | a grid of light-up pads: every drum plays its own light show across it |
-| **JP Chords** | a synth's chord display: the chord it hears in big letters, lit on a keyboard, and the ones before it | **JP Panel** | a drum machine's front panel: sixteen pads, a running light, and the drums lighting the pads they land on |
-| **JP Tracker** | the song scrolling past like a tracker: the notes on top, the drums in their lanes, the beats marked | | |
+| **Bars** | the classic, bars with peak markers | **Matrix** | digital rain, falling faster when it's loud |
+| **Bricks** | chunky, no partial cells | **Boot** | an old PC waking up, BIOS POST, a boot log, a blinking cursor |
+| **Columns** | gapless, interpolated across the full width | **Spectro** | scrolling waterfall, frequency up, time across |
+| **Ladder** | segmented LED stack | **Plasma** | solid colour field, warped by the spectrum |
+| **Mirror** | grows out from the centre line | **Chladni** | vibrating-plate figure that snaps between real resonances |
+| **Readout** | scrolling numeric ticker, band levels as plain digits | **Chladni Flow** | the same plate, melting continuously from one figure to the next |
+| **Stereo** | per-band L/R meters, mirrored from centre | **Chladni Extreme** | the plate driven past its modes, morphs and escalates |
+| **Wave** | smoothed waveform | **VFD** | vacuum-fluorescent bargraph with phosphor afterglow |
+| **Scope** | trigger-synced oscilloscope, the trace holds still | **Needle** | analogue VU, one sweeping needle, one red zone |
+| **ECG** | scrolling trace, like a heart monitor | **VU** | big L/R LED meters with peak hold |
+| **Strings** | plucked strings, bowed by their own band | **Kaleidoscope** | radial mirror symmetry, the wedge count follows the spectrum |
+| **Helix** | two strands rotating, split by true L/R phase | **Dither** | the spectrum printed as a newspaper halftone |
+| **Gonio** | stereo phase scope with a phosphor trail | **Dither Storm** | the same crosshatch, but moving, each band drives its own wave, and beats throw rings through it |
+| **Scatter** | density sparkle, thicker where it's loud | **Dither Storm Extreme** | Dither Storm with nothing holding it back, hits pile up and a dense passage blows the field to white |
+| **Flame** | fire, licking upward from each band | **Valentine** | a heart that beats with the track, trailing smaller ones upward |
+| **Pulse** | radial pulse with shockwaves | **Locket** | an outlined heart, pulsing rings of hearts outward on the beat |
+| **Arcs** | hollow rings, one per band, pushed out by level | **Locket Beat** | the locket heart, sending out a steady stream of rings, bright on every beat |
+| **Bubbles** | bubbles from the low end, popping at the top | **Maelstrom** | a real fluid sim, stirred by the music |
+| **Radial** | the spectrum wrapped into a circle | **Vinyl** | a record whose grooves light up as a radial spectrum |
+| **Sonar** | one sweep, not the whole spectrum, returns fade like a scope | **Rain** | rain on the glass, falling harder when it's loud |
+| **Orbit** | bodies on real elliptical orbits; loud bands swing out | **Snow** | snowfall in three planes, gusting and lying in drifts |
+| **Fireworks** | beat-triggered launches, bursts, and fall | **Ember** | a coal bed burning by band, sparks off the hot spots |
+| **Dune** | sand piles up by band, avalanching past a threshold | **Swell** | an open sea, bass drives the swell, hits land ripples |
+| **Murmuration** | a flock wheeling and scattering with the beat | **Shooting Star** | a night sky, with meteors thrown from a drifting radiant on the beat |
+| **Retro** | sunset grid, with the spectrum as the horizon | **Constellations** | beats draw lines between fixed stars; the figures fade like film |
+| **Auroras** | a light ribbon whose lower rim rides the spectrum | **Star Trails** | a long exposure: the sky turns and leaves its arcs behind |
+| **Keys** | a lit keyboard; struck bands scroll away as notes | **Supernova** | a mostly dark sky, waiting for the one hit worth a catastrophe |
+| **Tunnel** | flying down a pipe, ribbed by the beat | **JP Bars** | a segmented LED meter whose crest peels off and rises, with peak lamps that hold and drop |
+| **Tunnel In** | rings thrown out of the centre on the beat, rushing past you | **JP Drift** | the meter shedding bulbs: they break off and fall, landing on the bars in a cap that melts |
+| **Crosscurrent** | two streams in one spinning tunnel, round rings rushing out, octagons drawn in, sparking where they cross; the turn speeds up with the tempo and a busy track, and spokes strobe on the beat | **JP Pulse** | the meter bent into a ring, a spoke of bulbs per band, flashing and chased on the beat |
+| **Riptide** | two currents of wave lines sweeping across each other, sparking where they cross, bent by every hit | **JP Sequencer** | a grid of light-up pads: every drum plays its own light show across it |
+| **Twin Storms** | two whirlpools of particles spinning opposite ways, trading streams and colliding in the middle | **JP Chords** | a synth's chord display: the chord it hears in big letters, lit on a keyboard, and the ones before it |
+| **Arc Storm** | lightning across the screen, an arc per slice of the spectrum, forking on every hit | **JP Panel** | a drum machine's front panel: sixteen pads, a running light, and the drums lighting the pads they land on |
+| **Shatter** | a pane of glass in shards that fill with the music and blow apart where a hit lands | **JP Tracker** | the song scrolling past like a tracker: the notes on top, the drums in their lanes, the beats marked |
+| **Warp** | starfield, accelerating with the music |  |  |
 
 The seven **JP** modes are inspired by Japanese audio hardware. The first three
 are the LED level meters on in-dash head units and equalisers: the same meter,
